@@ -323,10 +323,24 @@ export default function VendorDetailPage() {
         setLoading(true)
         setError(null)
         
-        // Load vendor data and ratings in parallel
-        const [vendorData, ratingsData] = await Promise.all([
-          vendorApi.getById(vendorId),
-          vendorApi.getRatings(vendorId).catch(() => []) // Don't fail if ratings endpoint fails
+        // Load vendor data first (required), then load other data in parallel
+        const vendorData = await vendorApi.getById(vendorId)
+        
+        // Load other data in parallel (all optional, so catch errors)
+        const [
+          ratingsData,
+          productsData,
+          ordersData,
+          contractsData,
+          documentsData,
+          issuesData
+        ] = await Promise.all([
+          vendorApi.getRatings(vendorId).catch(() => []),
+          vendorApi.getProducts(vendorId).catch(() => []),
+          purchaseOrderApi.getByVendor(vendorId).catch(() => []),
+          vendorApi.getContracts(vendorId).catch(() => []),
+          vendorApi.getDocuments(vendorId).catch(() => []),
+          vendorApi.getIssues(vendorId).catch(() => [])
         ])
         
         // Transform ratings to match expected format
@@ -435,9 +449,16 @@ export default function VendorDetailPage() {
           costSavings: 0,
         }
         setVendor(transformedData)
+        setError(null) // Clear any previous errors
       } catch (err: any) {
-        setError(err.message || 'Failed to load vendor')
         console.error('Error loading vendor:', err)
+        // Check if it's a 404 or "not found" error
+        if (err.status === 404 || err.message?.toLowerCase().includes('not found')) {
+          setError(`Vendor with ID ${vendorId} not found`)
+        } else {
+          setError(err.message || 'Failed to load vendor')
+        }
+        setVendor(null) // Ensure vendor is null on error
       } finally {
         setLoading(false)
       }
