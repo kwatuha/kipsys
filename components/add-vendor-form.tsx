@@ -1,5 +1,6 @@
 "use client"
 
+import { useState } from "react"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useForm } from "react-hook-form"
 import * as z from "zod"
@@ -9,6 +10,8 @@ import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { toast } from "@/components/ui/use-toast"
+import { vendorApi } from "@/lib/api"
+import { Loader2 } from "lucide-react"
 
 const vendorFormSchema = z.object({
   name: z.string().min(2, {
@@ -48,31 +51,83 @@ const defaultValues: Partial<VendorFormValues> = {
 
 interface AddVendorFormProps {
   onSuccess?: () => void
+  vendor?: any | null
 }
 
-export function AddVendorForm({ onSuccess }: AddVendorFormProps) {
+export function AddVendorForm({ onSuccess, vendor }: AddVendorFormProps) {
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
   const form = useForm<VendorFormValues>({
     resolver: zodResolver(vendorFormSchema),
-    defaultValues,
+    defaultValues: vendor ? {
+      name: vendor.vendorName || "",
+      contactPerson: vendor.contactPerson || "",
+      email: vendor.email || "",
+      phone: vendor.phone || "",
+      address: vendor.address || "",
+      category: vendor.category || "",
+      taxId: vendor.taxId || "",
+      notes: vendor.notes || "",
+    } : defaultValues,
   })
 
-  function onSubmit(data: VendorFormValues) {
-    toast({
-      title: "Vendor added successfully",
-      description: `${data.name} has been added to your vendors list.`,
-    })
+  async function onSubmit(data: VendorFormValues) {
+    setIsSubmitting(true)
+    setError(null)
+    
+    try {
+      const submitData = {
+        vendorName: data.name,
+        contactPerson: data.contactPerson,
+        email: data.email,
+        phone: data.phone,
+        address: data.address,
+        category: data.category,
+        taxId: data.taxId || null,
+        notes: data.notes || null,
+        status: "active",
+      }
 
-    console.log(data)
-    form.reset()
+      if (vendor) {
+        await vendorApi.update(vendor.vendorId.toString(), submitData)
+        toast({
+          title: "Success",
+          description: `Vendor ${data.name} has been updated.`,
+        })
+      } else {
+        await vendorApi.create(submitData)
+        toast({
+          title: "Success",
+          description: `${data.name} has been added to your vendors list.`,
+        })
+      }
 
-    if (onSuccess) {
-      onSuccess()
+      form.reset()
+      if (onSuccess) {
+        onSuccess()
+      }
+    } catch (err: any) {
+      console.error("Error saving vendor:", err)
+      setError(err.message || "Failed to save vendor")
+      toast({
+        title: "Error",
+        description: err.message || "Failed to save vendor",
+        variant: "destructive",
+      })
+    } finally {
+      setIsSubmitting(false)
     }
   }
 
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+        {error && (
+          <div className="bg-destructive/15 text-destructive text-sm p-3 rounded-md">
+            {error}
+          </div>
+        )}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <FormField
             control={form.control}
@@ -101,15 +156,17 @@ export function AddVendorForm({ onSuccess }: AddVendorFormProps) {
                     </SelectTrigger>
                   </FormControl>
                   <SelectContent>
-                    <SelectItem value="medical-supplies">Medical Supplies</SelectItem>
-                    <SelectItem value="pharmaceuticals">Pharmaceuticals</SelectItem>
-                    <SelectItem value="equipment">Medical Equipment</SelectItem>
-                    <SelectItem value="laboratory">Laboratory Supplies</SelectItem>
-                    <SelectItem value="office">Office Supplies</SelectItem>
-                    <SelectItem value="cleaning">Cleaning Supplies</SelectItem>
-                    <SelectItem value="food">Food Services</SelectItem>
-                    <SelectItem value="it">IT Equipment</SelectItem>
-                    <SelectItem value="other">Other</SelectItem>
+                    <SelectItem value="Medical Supplies">Medical Supplies</SelectItem>
+                    <SelectItem value="Pharmaceuticals">Pharmaceuticals</SelectItem>
+                    <SelectItem value="Medical Equipment">Medical Equipment</SelectItem>
+                    <SelectItem value="Laboratory Equipment">Laboratory Equipment</SelectItem>
+                    <SelectItem value="Office Supplies">Office Supplies</SelectItem>
+                    <SelectItem value="Cleaning Supplies">Cleaning Supplies</SelectItem>
+                    <SelectItem value="Food Services">Food Services</SelectItem>
+                    <SelectItem value="IT Equipment">IT Equipment</SelectItem>
+                    <SelectItem value="Maintenance Services">Maintenance Services</SelectItem>
+                    <SelectItem value="Safety Equipment">Safety Equipment</SelectItem>
+                    <SelectItem value="Other">Other</SelectItem>
                   </SelectContent>
                 </Select>
                 <FormMessage />
@@ -204,10 +261,13 @@ export function AddVendorForm({ onSuccess }: AddVendorFormProps) {
         />
 
         <div className="flex justify-end gap-2">
-          <Button type="button" variant="outline" onClick={() => form.reset()}>
+          <Button type="button" variant="outline" onClick={() => form.reset()} disabled={isSubmitting}>
             Cancel
           </Button>
-          <Button type="submit">Add Vendor</Button>
+          <Button type="submit" disabled={isSubmitting}>
+            {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {vendor ? "Update Vendor" : "Add Vendor"}
+          </Button>
         </div>
       </form>
     </Form>

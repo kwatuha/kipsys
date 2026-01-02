@@ -4,6 +4,7 @@ import { useState } from "react"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useForm } from "react-hook-form"
 import * as z from "zod"
+import { vendorApi } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form"
 import { Textarea } from "@/components/ui/textarea"
@@ -50,24 +51,45 @@ export function VendorRatingForm({ vendorId, vendorName, onSuccess }: VendorRati
     defaultValues,
   })
 
-  function onSubmit(data: VendorRatingValues) {
+  async function onSubmit(data: VendorRatingValues) {
     setIsSubmitting(true)
 
-    // Simulate API call
-    setTimeout(() => {
-      console.log(data)
+    try {
+      // Map form data to API format
+      const ratingData = {
+        qualityRating: data.qualityRating,
+        deliveryRating: data.deliveryRating,
+        serviceRating: data.serviceRating,
+        pricingRating: data.pricingRating,
+        communicationRating: data.communicationRating,
+        recommendationLevel: data.recommendationLevel,
+        feedback: data.feedback,
+        // TODO: Get actual user ID from auth context
+        ratedBy: null, // Will be set from session/auth in production
+      }
+
+      await vendorApi.createRating(vendorId, ratingData)
+
       toast({
         title: "Vendor rating submitted",
-        description: `Your rating for ${vendorName} has been recorded.`,
+        description: `Your rating for ${vendorName} has been recorded successfully.`,
       })
 
-      setIsSubmitting(false)
       form.reset(defaultValues)
 
       if (onSuccess) {
         onSuccess()
       }
-    }, 1500)
+    } catch (error: any) {
+      console.error('Error submitting rating:', error)
+      toast({
+        title: "Error",
+        description: error.message || "Failed to submit rating. Please try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   return (

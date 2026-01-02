@@ -1,13 +1,14 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useParams } from "next/navigation"
+import { vendorApi, purchaseOrderApi } from "@/lib/api"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { FileEdit, Mail, Phone, Printer, Download, Star, Calendar, FileText, AlertTriangle } from "lucide-react"
+import { FileEdit, Mail, Phone, Printer, Download, Star, Calendar, FileText, AlertTriangle, Loader2, PlusCircle, Trash2, Eye } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -19,8 +20,8 @@ import {
 import { VendorRatingForm } from "@/components/vendor-rating-form"
 import { Progress } from "@/components/ui/progress"
 
-// Sample vendor data - in a real app, this would come from an API call
-const vendors = {
+// Legacy sample data for sections that don't have API support yet
+const sampleVendorData = {
   V001: {
     id: "V001",
     name: "MediSupply Co.",
@@ -310,36 +311,188 @@ const vendors = {
 export default function VendorDetailPage() {
   const params = useParams()
   const vendorId = params.id as string
-  const vendor = vendors[vendorId] || null
+  const [vendor, setVendor] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [isRatingDialogOpen, setIsRatingDialogOpen] = useState(false)
+  const [refreshKey, setRefreshKey] = useState(0)
 
-  if (!vendor) {
+  useEffect(() => {
+    const loadVendor = async () => {
+      try {
+        setLoading(true)
+        setError(null)
+        
+        // Load vendor data and ratings in parallel
+        const [vendorData, ratingsData] = await Promise.all([
+          vendorApi.getById(vendorId),
+          vendorApi.getRatings(vendorId).catch(() => []) // Don't fail if ratings endpoint fails
+        ])
+        
+        // Transform ratings to match expected format
+        // Map database fields: onTimeDeliveryScore->delivery, qualityScore->quality, 
+        // responseTimeScore->service, costScore->pricing
+        const transformedRatings = ratingsData.map((rating: any) => ({
+          id: rating.ratingId,
+          user: rating.firstName && rating.lastName 
+            ? `${rating.firstName} ${rating.lastName}` 
+            : rating.department || "Anonymous",
+          department: rating.department || "Unknown",
+          date: rating.ratingDate || rating.createdAt,
+          overall: parseFloat(rating.overallRating || 0),
+          quality: parseInt(rating.qualityScore) || 0,
+          delivery: parseInt(rating.onTimeDeliveryScore) || 0,
+          service: parseInt(rating.responseTimeScore) || 0,
+          pricing: parseInt(rating.costScore) || 0,
+          communication: 0, // Not stored in DB, but included for display compatibility
+          comment: rating.comments || ""
+        }))
+        
+        // Calculate performance metrics from ratings
+        const avgQuality = transformedRatings.length > 0
+          ? transformedRatings.reduce((sum, r) => sum + r.quality, 0) / transformedRatings.length
+          : 0
+        const avgDelivery = transformedRatings.length > 0
+          ? transformedRatings.reduce((sum, r) => sum + r.delivery, 0) / transformedRatings.length
+          : 0
+        const avgService = transformedRatings.length > 0
+          ? transformedRatings.reduce((sum, r) => sum + r.service, 0) / transformedRatings.length
+          : 0
+        
+        // Transform products data
+        const transformedProducts = productsData.map((product: any) => ({
+          id: product.productId?.toString() || product.productCode || `P${product.productId}`,
+          name: product.productName,
+          category: product.category || "Uncategorized",
+          unitPrice: parseFloat(product.unitPrice || 0),
+          unit: product.unit || "Unit"
+        }))
+
+        // Transform orders data
+        const transformedOrders = ordersData.map((order: any) => ({
+          id: order.poNumber || order.purchaseOrderId?.toString(),
+          date: order.orderDate,
+          amount: `KES ${parseFloat(order.totalAmount || 0).toLocaleString()}`,
+          status: order.status?.charAt(0).toUpperCase() + order.status?.slice(1) || "Draft"
+        }))
+
+        // Transform contracts data (get the most recent active contract)
+        const activeContract = contractsData.find((c: any) => c.status === 'active') || contractsData[0] || null
+        const transformedContract = activeContract ? {
+          id: activeContract.contractNumber || activeContract.contractId?.toString(),
+          type: activeContract.contractType || "Standard",
+          startDate: activeContract.startDate,
+          endDate: activeContract.endDate,
+          status: activeContract.status?.charAt(0).toUpperCase() + activeContract.status?.slice(1) || "Draft",
+          value: `KES ${parseFloat(activeContract.contractValue || 0).toLocaleString()}`,
+          renewalOption: activeContract.renewalOption ? "Yes" : "No",
+          keyTerms: activeContract.keyTerms ? activeContract.keyTerms.split('\n').filter((t: string) => t.trim()) : []
+        } : null
+
+        // Transform documents data
+        const transformedDocuments = documentsData.map((doc: any) => ({
+          id: doc.documentId?.toString(),
+          name: doc.documentName,
+          type: doc.documentType || "Document",
+          date: doc.uploadDate || doc.createdAt,
+          size: doc.fileSize ? `${(doc.fileSize / 1024 / 1024).toFixed(2)} MB` : "Unknown"
+        }))
+
+        // Transform issues data
+        const transformedIssues = issuesData.map((issue: any) => ({
+          id: issue.issueId?.toString(),
+          title: issue.issueTitle,
+          date: issue.issueDate || issue.createdAt,
+          status: issue.status?.charAt(0).toUpperCase() + issue.status?.slice(1) || "Open",
+          description: issue.description,
+          resolution: issue.resolution || null
+        }))
+
+        // Transform API response
+        const transformedData = {
+          ...vendorData,
+          rating: vendorData.rating ? parseFloat(vendorData.rating) : 0,
+          totalSpent: vendorData.totalSpent ? parseFloat(vendorData.totalSpent) : 0,
+          totalOrders: vendorData.totalOrders ? parseInt(vendorData.totalOrders) : 0,
+          // Real data from APIs
+          products: transformedProducts,
+          orders: transformedOrders,
+          contracts: contractsData, // Keep full data for contracts tab
+          contract: transformedContract, // Single active contract for display
+          contacts: vendorData.contactPerson ? [{
+            name: vendorData.contactPerson,
+            position: "Primary Contact",
+            phone: vendorData.phone || "",
+            email: vendorData.email || ""
+          }] : [],
+          documents: transformedDocuments,
+          ratings: transformedRatings,
+          issues: transformedIssues,
+          // Performance metrics calculated from ratings
+          onTimeDelivery: Math.round((avgDelivery / 5) * 100), // Convert 1-5 scale to percentage
+          qualityScore: Math.round((avgQuality / 5) * 100),
+          responseTime: avgService,
+          costSavings: 0,
+        }
+        setVendor(transformedData)
+      } catch (err: any) {
+        setError(err.message || 'Failed to load vendor')
+        console.error('Error loading vendor:', err)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    if (vendorId) {
+      loadVendor()
+    }
+  }, [vendorId, refreshKey])
+
+  const handleRatingSuccess = () => {
+    setIsRatingDialogOpen(false)
+    setRefreshKey(prev => prev + 1) // Trigger reload
+  }
+
+  if (loading) {
     return (
       <div className="flex flex-col items-center justify-center h-[50vh]">
-        <h1 className="text-2xl font-bold">Vendor Not Found</h1>
-        <p className="text-muted-foreground">The vendor with ID {vendorId} could not be found.</p>
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        <p className="text-muted-foreground mt-4">Loading vendor details...</p>
       </div>
     )
   }
 
-  // Calculate average ratings
-  const avgQuality = vendor.ratings?.reduce((sum, rating) => sum + rating.quality, 0) / vendor.ratings.length
-  const avgDelivery = vendor.ratings?.reduce((sum, rating) => sum + rating.delivery, 0) / vendor.ratings.length
-  const avgService = vendor.ratings?.reduce((sum, rating) => sum + rating.service, 0) / vendor.ratings.length
-  const avgPricing = vendor.ratings?.reduce((sum, rating) => sum + rating.pricing, 0) / vendor.ratings.length
-  const avgCommunication =
-    vendor.ratings?.reduce((sum, rating) => sum + rating.communication, 0) / vendor.ratings.length
+  if (error || !vendor) {
+    return (
+      <div className="flex flex-col items-center justify-center h-[50vh]">
+        <h1 className="text-2xl font-bold">Vendor Not Found</h1>
+        <p className="text-muted-foreground">
+          {error || `The vendor with ID ${vendorId} could not be found.`}
+        </p>
+      </div>
+    )
+  }
+
+  // Calculate average ratings (if available)
+  const ratings = vendor.ratings || []
+  const avgQuality = ratings.length > 0 ? ratings.reduce((sum: number, rating: any) => sum + rating.quality, 0) / ratings.length : 0
+  const avgDelivery = ratings.length > 0 ? ratings.reduce((sum: number, rating: any) => sum + rating.delivery, 0) / ratings.length : 0
+  const avgService = ratings.length > 0 ? ratings.reduce((sum: number, rating: any) => sum + rating.service, 0) / ratings.length : 0
+  const avgPricing = ratings.length > 0 ? ratings.reduce((sum: number, rating: any) => sum + rating.pricing, 0) / ratings.length : 0
+  const avgCommunication = ratings.length > 0 ? ratings.reduce((sum: number, rating: any) => sum + rating.communication, 0) / ratings.length : 0
 
   return (
     <div className="flex flex-col gap-4 p-4 md:p-6">
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold">{vendor.name}</h1>
-            <Badge variant={vendor.status === "Active" ? "default" : "secondary"}>{vendor.status}</Badge>
+            <h1 className="text-2xl font-bold">{vendor.vendorName || vendor.name}</h1>
+            <Badge variant={vendor.status === "active" || vendor.status === "Active" ? "default" : "secondary"}>
+              {vendor.status?.charAt(0).toUpperCase() + vendor.status?.slice(1) || "Unknown"}
+            </Badge>
           </div>
           <p className="text-muted-foreground">
-            {vendor.category} • Vendor ID: {vendor.id}
+            {vendor.category || "No category"} • Vendor ID: {vendor.vendorCode || vendor.vendorId || vendor.id}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -364,13 +517,13 @@ export default function VendorDetailPage() {
             </DialogTrigger>
             <DialogContent className="sm:max-w-[600px]">
               <DialogHeader>
-                <DialogTitle>Rate Vendor: {vendor.name}</DialogTitle>
+                <DialogTitle>Rate Vendor: {vendor.vendorName || vendor.name}</DialogTitle>
                 <DialogDescription>Share your experience working with this vendor</DialogDescription>
               </DialogHeader>
               <VendorRatingForm
-                vendorId={vendor.id}
-                vendorName={vendor.name}
-                onSuccess={() => setIsRatingDialogOpen(false)}
+                vendorId={vendor.vendorId?.toString() || vendor.id}
+                vendorName={vendor.vendorName || vendor.name}
+                onSuccess={handleRatingSuccess}
               />
             </DialogContent>
           </Dialog>
@@ -395,30 +548,30 @@ export default function VendorDetailPage() {
             <div className="flex flex-col">
               <div className="flex justify-between mb-1">
                 <span className="text-sm font-medium">On-Time Delivery</span>
-                <span className="text-sm font-medium">{vendor.onTimeDelivery}%</span>
+                <span className="text-sm font-medium">{vendor.onTimeDelivery || 0}%</span>
               </div>
-              <Progress value={vendor.onTimeDelivery} className="h-2" />
+              <Progress value={vendor.onTimeDelivery || 0} className="h-2" />
             </div>
             <div className="flex flex-col">
               <div className="flex justify-between mb-1">
                 <span className="text-sm font-medium">Quality Score</span>
-                <span className="text-sm font-medium">{vendor.qualityScore}%</span>
+                <span className="text-sm font-medium">{vendor.qualityScore || 0}%</span>
               </div>
-              <Progress value={vendor.qualityScore} className="h-2" />
+              <Progress value={vendor.qualityScore || 0} className="h-2" />
             </div>
             <div className="flex flex-col">
               <div className="flex justify-between mb-1">
                 <span className="text-sm font-medium">Response Time</span>
-                <span className="text-sm font-medium">{vendor.responseTime} hrs</span>
+                <span className="text-sm font-medium">{vendor.responseTime || 0} hrs</span>
               </div>
-              <Progress value={vendor.responseTime * 10} className="h-2" />
+              <Progress value={(vendor.responseTime || 0) * 10} className="h-2" />
             </div>
             <div className="flex flex-col">
               <div className="flex justify-between mb-1">
                 <span className="text-sm font-medium">Cost Savings</span>
-                <span className="text-sm font-medium">{vendor.costSavings}%</span>
+                <span className="text-sm font-medium">{vendor.costSavings || 0}%</span>
               </div>
-              <Progress value={vendor.costSavings * 5} className="h-2" />
+              <Progress value={(vendor.costSavings || 0) * 5} className="h-2" />
             </div>
           </div>
         </CardContent>
@@ -432,45 +585,47 @@ export default function VendorDetailPage() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <h3 className="text-sm font-medium text-muted-foreground">Primary Contact</h3>
-              <p className="text-sm">{vendor.contact}</p>
+              <p className="text-sm">{vendor.contactPerson || vendor.contact || "-"}</p>
             </div>
             <div>
               <h3 className="text-sm font-medium text-muted-foreground">Email</h3>
-              <p className="text-sm">{vendor.email}</p>
+              <p className="text-sm">{vendor.email || "-"}</p>
             </div>
             <div>
               <h3 className="text-sm font-medium text-muted-foreground">Phone</h3>
-              <p className="text-sm">{vendor.phone}</p>
+              <p className="text-sm">{vendor.phone || "-"}</p>
             </div>
             <div>
               <h3 className="text-sm font-medium text-muted-foreground">Address</h3>
-              <p className="text-sm">{vendor.address}</p>
+              <p className="text-sm">{vendor.address || "-"}</p>
             </div>
             <div>
               <h3 className="text-sm font-medium text-muted-foreground">Website</h3>
-              <p className="text-sm">{vendor.website}</p>
+              <p className="text-sm">{vendor.website || "-"}</p>
             </div>
             <div>
               <h3 className="text-sm font-medium text-muted-foreground">Tax ID</h3>
-              <p className="text-sm">{vendor.taxId}</p>
+              <p className="text-sm">{vendor.taxId || "-"}</p>
             </div>
             <div>
               <h3 className="text-sm font-medium text-muted-foreground">Registration Date</h3>
-              <p className="text-sm">{vendor.registrationDate}</p>
+              <p className="text-sm">{vendor.createdAt ? new Date(vendor.createdAt).toLocaleDateString() : vendor.registrationDate || "-"}</p>
             </div>
             <div>
               <h3 className="text-sm font-medium text-muted-foreground">Payment Terms</h3>
-              <p className="text-sm">{vendor.paymentTerms}</p>
+              <p className="text-sm">{vendor.paymentTerms || "-"}</p>
             </div>
             <div>
               <h3 className="text-sm font-medium text-muted-foreground">Rating</h3>
-              <p className="text-sm">{vendor.rating}/5.0</p>
+              <p className="text-sm">{vendor.rating?.toFixed(1) || "0.0"}/5.0</p>
             </div>
           </div>
-          <div className="mt-4">
-            <h3 className="text-sm font-medium text-muted-foreground">Notes</h3>
-            <p className="text-sm">{vendor.notes}</p>
-          </div>
+          {vendor.notes && (
+            <div className="mt-4">
+              <h3 className="text-sm font-medium text-muted-foreground">Notes</h3>
+              <p className="text-sm">{vendor.notes}</p>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -486,9 +641,15 @@ export default function VendorDetailPage() {
         <div className="mt-4">
           <TabsContent value="products">
             <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-lg">Products & Services</CardTitle>
-                <CardDescription>Products and services offered by this vendor</CardDescription>
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <div>
+                  <CardTitle className="text-lg">Products & Services</CardTitle>
+                  <CardDescription>Products and services offered by this vendor</CardDescription>
+                </div>
+                <Button size="sm" onClick={() => {/* TODO: Open add product dialog */}}>
+                  <PlusCircle className="h-4 w-4 mr-2" />
+                  Add Product
+                </Button>
               </CardHeader>
               <CardContent>
                 <Table>
@@ -499,18 +660,37 @@ export default function VendorDetailPage() {
                       <TableHead>Category</TableHead>
                       <TableHead>Unit Price</TableHead>
                       <TableHead>Unit</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {vendor.products.map((product) => (
-                      <TableRow key={product.id}>
-                        <TableCell>{product.id}</TableCell>
-                        <TableCell className="font-medium">{product.name}</TableCell>
-                        <TableCell>{product.category}</TableCell>
-                        <TableCell>KES {product.unitPrice.toLocaleString()}</TableCell>
-                        <TableCell>{product.unit}</TableCell>
+                    {vendor.products && vendor.products.length > 0 ? (
+                      vendor.products.map((product: any) => (
+                        <TableRow key={product.id}>
+                          <TableCell>{product.id}</TableCell>
+                          <TableCell className="font-medium">{product.name}</TableCell>
+                          <TableCell>{product.category}</TableCell>
+                          <TableCell>KES {product.unitPrice.toLocaleString()}</TableCell>
+                          <TableCell>{product.unit}</TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex justify-end gap-2">
+                              <Button variant="ghost" size="sm" onClick={() => {/* TODO: Edit product */}}>
+                                <FileEdit className="h-4 w-4" />
+                              </Button>
+                              <Button variant="ghost" size="sm" onClick={() => {/* TODO: Delete product */}}>
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    ) : (
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-center py-4 text-muted-foreground">
+                          No products available
+                        </TableCell>
                       </TableRow>
-                    ))}
+                    )}
                   </TableBody>
                 </Table>
               </CardContent>
@@ -518,9 +698,15 @@ export default function VendorDetailPage() {
           </TabsContent>
           <TabsContent value="orders">
             <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-lg">Purchase Orders</CardTitle>
-                <CardDescription>Order history with this vendor</CardDescription>
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <div>
+                  <CardTitle className="text-lg">Purchase Orders</CardTitle>
+                  <CardDescription>Order history with this vendor</CardDescription>
+                </div>
+                <Button size="sm" onClick={() => {/* TODO: Open add order dialog */}}>
+                  <PlusCircle className="h-4 w-4 mr-2" />
+                  New Order
+                </Button>
               </CardHeader>
               <CardContent>
                 <Table>
@@ -534,31 +720,44 @@ export default function VendorDetailPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {vendor.orders.map((order) => (
-                      <TableRow key={order.id}>
-                        <TableCell>{order.id}</TableCell>
-                        <TableCell>{order.date}</TableCell>
-                        <TableCell>{order.amount}</TableCell>
-                        <TableCell>
-                          <Badge
-                            variant={
-                              order.status === "Delivered"
-                                ? "default"
-                                : order.status === "Processing"
-                                  ? "secondary"
-                                  : "outline"
-                            }
-                          >
-                            {order.status}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Button variant="ghost" size="sm">
-                            View
-                          </Button>
+                    {vendor.orders && vendor.orders.length > 0 ? (
+                      vendor.orders.map((order: any) => (
+                        <TableRow key={order.id}>
+                          <TableCell>{order.id}</TableCell>
+                          <TableCell>{order.date}</TableCell>
+                          <TableCell>{order.amount}</TableCell>
+                          <TableCell>
+                            <Badge
+                              variant={
+                                order.status === "Received" || order.status === "received"
+                                  ? "default"
+                                  : order.status === "Partial_received" || order.status === "partial_received"
+                                    ? "secondary"
+                                    : "outline"
+                              }
+                            >
+                              {order.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex justify-end gap-2">
+                              <Button variant="ghost" size="sm" onClick={() => {/* TODO: View order */}}>
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                              <Button variant="ghost" size="sm" onClick={() => {/* TODO: Edit order */}}>
+                                <FileEdit className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    ) : (
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-center py-4 text-muted-foreground">
+                          No purchase orders found
                         </TableCell>
                       </TableRow>
-                    ))}
+                    )}
                   </TableBody>
                 </Table>
               </CardContent>
@@ -572,82 +771,99 @@ export default function VendorDetailPage() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
-                  {vendor.contacts.map((contact, index) => (
-                    <Card key={index}>
-                      <CardContent className="p-4">
-                        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-                          <div>
-                            <h3 className="font-medium">{contact.name}</h3>
-                            <p className="text-sm text-muted-foreground">{contact.position}</p>
-                          </div>
-                          <div className="flex flex-col gap-1">
-                            <div className="flex items-center gap-2">
-                              <Phone className="h-4 w-4 text-muted-foreground" />
-                              <span className="text-sm">{contact.phone}</span>
+                  {vendor.contacts && vendor.contacts.length > 0 ? (
+                    vendor.contacts.map((contact: any, index: number) => (
+                      <Card key={index}>
+                        <CardContent className="p-4">
+                          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                            <div>
+                              <h3 className="font-medium">{contact.name}</h3>
+                              <p className="text-sm text-muted-foreground">{contact.position}</p>
                             </div>
-                            <div className="flex items-center gap-2">
-                              <Mail className="h-4 w-4 text-muted-foreground" />
-                              <span className="text-sm">{contact.email}</span>
+                            <div className="flex flex-col gap-1">
+                              {contact.phone && (
+                                <div className="flex items-center gap-2">
+                                  <Phone className="h-4 w-4 text-muted-foreground" />
+                                  <span className="text-sm">{contact.phone}</span>
+                                </div>
+                              )}
+                              {contact.email && (
+                                <div className="flex items-center gap-2">
+                                  <Mail className="h-4 w-4 text-muted-foreground" />
+                                  <span className="text-sm">{contact.email}</span>
+                                </div>
+                              )}
                             </div>
                           </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
+                        </CardContent>
+                      </Card>
+                    ))
+                  ) : (
+                    <p className="text-center py-4 text-muted-foreground">No contacts available</p>
+                  )}
                 </div>
               </CardContent>
             </Card>
           </TabsContent>
           <TabsContent value="contract">
             <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-lg">Contract Information</CardTitle>
-                <CardDescription>Contract details and terms</CardDescription>
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <div>
+                  <CardTitle className="text-lg">Contract Information</CardTitle>
+                  <CardDescription>Contract details and terms</CardDescription>
+                </div>
+                <Button size="sm" onClick={() => {/* TODO: Open add contract dialog */}}>
+                  <PlusCircle className="h-4 w-4 mr-2" />
+                  New Contract
+                </Button>
               </CardHeader>
               <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                  <div>
-                    <h3 className="text-sm font-medium text-muted-foreground">Contract ID</h3>
-                    <p className="text-sm">{vendor.contract.id}</p>
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-medium text-muted-foreground">Contract Type</h3>
-                    <p className="text-sm">{vendor.contract.type}</p>
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-medium text-muted-foreground">Start Date</h3>
-                    <p className="text-sm">{vendor.contract.startDate}</p>
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-medium text-muted-foreground">End Date</h3>
-                    <p className="text-sm">{vendor.contract.endDate}</p>
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-medium text-muted-foreground">Contract Value</h3>
-                    <p className="text-sm">{vendor.contract.value}</p>
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-medium text-muted-foreground">Status</h3>
-                    <Badge variant={vendor.contract.status === "Active" ? "default" : "destructive"}>
-                      {vendor.contract.status}
-                    </Badge>
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-medium text-muted-foreground">Renewal Option</h3>
-                    <p className="text-sm">{vendor.contract.renewalOption}</p>
-                  </div>
-                </div>
-
-                <div>
-                  <h3 className="text-sm font-medium text-muted-foreground mb-2">Key Terms</h3>
-                  <ul className="list-disc pl-5 space-y-1">
-                    {vendor.contract.keyTerms.map((term, index) => (
-                      <li key={index} className="text-sm">
-                        {term}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
+                {vendor.contracts && vendor.contracts.length > 0 ? (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Contract Number</TableHead>
+                        <TableHead>Type</TableHead>
+                        <TableHead>Start Date</TableHead>
+                        <TableHead>End Date</TableHead>
+                        <TableHead>Value</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {vendor.contracts.map((contract: any) => (
+                        <TableRow key={contract.contractId}>
+                          <TableCell className="font-medium">{contract.contractNumber}</TableCell>
+                          <TableCell>{contract.contractType || "-"}</TableCell>
+                          <TableCell>{contract.startDate}</TableCell>
+                          <TableCell>{contract.endDate}</TableCell>
+                          <TableCell>{contract.contractValue ? `KES ${parseFloat(contract.contractValue).toLocaleString()}` : "-"}</TableCell>
+                          <TableCell>
+                            <Badge variant={contract.status === "active" ? "default" : contract.status === "expired" ? "destructive" : "secondary"}>
+                              {contract.status?.charAt(0).toUpperCase() + contract.status?.slice(1)}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex justify-end gap-2">
+                              <Button variant="ghost" size="sm" onClick={() => {/* TODO: View contract */}}>
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                              <Button variant="ghost" size="sm" onClick={() => {/* TODO: Edit contract */}}>
+                                <FileEdit className="h-4 w-4" />
+                              </Button>
+                              <Button variant="ghost" size="sm" onClick={() => {/* TODO: Delete contract */}}>
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                ) : (
+                  <p className="text-center py-4 text-muted-foreground">No contracts available</p>
+                )}
 
                 <div className="flex justify-end mt-4 gap-2">
                   <Button variant="outline" size="sm">
@@ -681,21 +897,29 @@ export default function VendorDetailPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {vendor.documents.map((doc) => (
-                      <TableRow key={doc.id}>
-                        <TableCell>{doc.id}</TableCell>
-                        <TableCell className="font-medium">{doc.name}</TableCell>
-                        <TableCell>{doc.type}</TableCell>
-                        <TableCell>{doc.date}</TableCell>
-                        <TableCell>{doc.size}</TableCell>
-                        <TableCell className="text-right">
-                          <Button variant="ghost" size="sm">
-                            <Download className="h-4 w-4 mr-1" />
-                            Download
-                          </Button>
+                    {vendor.documents && vendor.documents.length > 0 ? (
+                      vendor.documents.map((doc: any) => (
+                        <TableRow key={doc.id}>
+                          <TableCell>{doc.id}</TableCell>
+                          <TableCell className="font-medium">{doc.name}</TableCell>
+                          <TableCell>{doc.type}</TableCell>
+                          <TableCell>{doc.date}</TableCell>
+                          <TableCell>{doc.size}</TableCell>
+                          <TableCell className="text-right">
+                            <Button variant="ghost" size="sm">
+                              <Download className="h-4 w-4 mr-1" />
+                              Download
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    ) : (
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-center py-4 text-muted-foreground">
+                          No documents available
                         </TableCell>
                       </TableRow>
-                    ))}
+                    )}
                   </TableBody>
                 </Table>
 
@@ -800,79 +1024,96 @@ export default function VendorDetailPage() {
                   </div>
 
                   <div className="space-y-4">
-                    {vendor.ratings.map((rating) => (
-                      <Card key={rating.id}>
-                        <CardContent className="p-4">
-                          <div className="flex justify-between items-start mb-2">
-                            <div>
-                              <h3 className="font-medium">{rating.user}</h3>
-                              <p className="text-sm text-muted-foreground">{rating.department}</p>
-                            </div>
-                            <div className="flex items-center">
-                              <div className="flex">
-                                {[1, 2, 3, 4, 5].map((star) => (
-                                  <Star
-                                    key={star}
-                                    className={`h-4 w-4 ${
-                                      star <= rating.overall ? "text-yellow-500 fill-yellow-500" : "text-gray-300"
-                                    }`}
-                                  />
-                                ))}
+                    {vendor.ratings && vendor.ratings.length > 0 ? (
+                      vendor.ratings.map((rating: any) => (
+                        <Card key={rating.id}>
+                          <CardContent className="p-4">
+                            <div className="flex justify-between items-start mb-2">
+                              <div>
+                                <h3 className="font-medium">{rating.user}</h3>
+                                <p className="text-sm text-muted-foreground">{rating.department}</p>
                               </div>
-                              <span className="ml-2 text-sm">{rating.overall}</span>
+                              <div className="flex items-center">
+                                <div className="flex">
+                                  {[1, 2, 3, 4, 5].map((star) => (
+                                    <Star
+                                      key={star}
+                                      className={`h-4 w-4 ${
+                                        star <= rating.overall ? "text-yellow-500 fill-yellow-500" : "text-gray-300"
+                                      }`}
+                                    />
+                                  ))}
+                                </div>
+                                <span className="ml-2 text-sm">{rating.overall}</span>
+                              </div>
                             </div>
-                          </div>
-                          <p className="text-sm">{rating.comment}</p>
-                          <p className="text-xs text-muted-foreground mt-2">{rating.date}</p>
-                        </CardContent>
-                      </Card>
-                    ))}
+                            <p className="text-sm">{rating.comment}</p>
+                            <p className="text-xs text-muted-foreground mt-2">{rating.date}</p>
+                          </CardContent>
+                        </Card>
+                      ))
+                    ) : (
+                      <p className="text-center py-4 text-muted-foreground">No ratings available</p>
+                    )}
                   </div>
                 </CardContent>
               </Card>
 
               <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-lg">Issues</CardTitle>
-                  <CardDescription>Reported issues and resolutions</CardDescription>
+                <CardHeader className="flex flex-row items-center justify-between pb-2">
+                  <div>
+                    <CardTitle className="text-lg">Issues</CardTitle>
+                    <CardDescription>Reported issues and resolutions</CardDescription>
+                  </div>
+                  <Button size="sm" onClick={() => {/* TODO: Open report issue dialog */}}>
+                    <AlertTriangle className="h-4 w-4 mr-2" />
+                    Report Issue
+                  </Button>
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-4">
-                    {vendor.issues.map((issue) => (
-                      <Card key={issue.id}>
-                        <CardContent className="p-4">
-                          <div className="flex justify-between items-start mb-2">
-                            <h3 className="font-medium">{issue.title}</h3>
-                            <Badge
-                              variant={
-                                issue.status === "Resolved"
-                                  ? "default"
-                                  : issue.status === "Pending"
-                                    ? "secondary"
-                                    : "destructive"
-                              }
-                            >
-                              {issue.status}
-                            </Badge>
-                          </div>
-                          <p className="text-sm mb-2">{issue.description}</p>
-                          {issue.resolution && (
-                            <div className="bg-muted p-2 rounded-md">
-                              <p className="text-sm font-medium">Resolution:</p>
-                              <p className="text-sm">{issue.resolution}</p>
+                    {vendor.issues && vendor.issues.length > 0 ? (
+                      vendor.issues.map((issue: any) => (
+                        <Card key={issue.id}>
+                          <CardContent className="p-4">
+                            <div className="flex justify-between items-start mb-2">
+                              <h3 className="font-medium">{issue.title}</h3>
+                              <div className="flex items-center gap-2">
+                                <Badge
+                                  variant={
+                                    issue.status === "Resolved" || issue.status === "resolved"
+                                      ? "default"
+                                      : issue.status === "In_progress" || issue.status === "in_progress"
+                                        ? "secondary"
+                                        : "destructive"
+                                  }
+                                >
+                                  {issue.status}
+                                </Badge>
+                                <div className="flex gap-1">
+                                  <Button variant="ghost" size="sm" onClick={() => {/* TODO: Edit issue */}}>
+                                    <FileEdit className="h-3 w-3" />
+                                  </Button>
+                                  <Button variant="ghost" size="sm" onClick={() => {/* TODO: Delete issue */}}>
+                                    <Trash2 className="h-3 w-3" />
+                                  </Button>
+                                </div>
+                              </div>
                             </div>
-                          )}
-                          <p className="text-xs text-muted-foreground mt-2">{issue.date}</p>
-                        </CardContent>
-                      </Card>
-                    ))}
-                  </div>
-
-                  <div className="mt-4 flex justify-end">
-                    <Button variant="outline" size="sm">
-                      <AlertTriangle className="h-4 w-4 mr-2" />
-                      Report Issue
-                    </Button>
+                            <p className="text-sm mb-2">{issue.description}</p>
+                            {issue.resolution && (
+                              <div className="bg-muted p-2 rounded-md">
+                                <p className="text-sm font-medium">Resolution:</p>
+                                <p className="text-sm">{issue.resolution}</p>
+                              </div>
+                            )}
+                            <p className="text-xs text-muted-foreground mt-2">{issue.date}</p>
+                          </CardContent>
+                        </Card>
+                      ))
+                    ) : (
+                      <p className="text-center py-4 text-muted-foreground">No issues reported</p>
+                    )}
                   </div>
                 </CardContent>
               </Card>

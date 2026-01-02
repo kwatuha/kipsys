@@ -472,3 +472,107 @@ export const ledgerApi = {
     apiRequest<any>(`/api/ledger/transactions/${id}`, { method: 'DELETE' }),
 };
 
+// Procurement Vendors API
+export const vendorApi = {
+  getAll: (search?: string, status?: string, category?: string, page = 1, limit = 50) =>
+    apiRequest<any[]>(`/api/procurement/vendors?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(search && { search }), ...(status && { status }), ...(category && { category }) })}`),
+  
+  getById: (id: string) =>
+    apiRequest<any>(`/api/procurement/vendors/${id}`),
+  
+  create: (data: any) =>
+    apiRequest<any>('/api/procurement/vendors', { method: 'POST', body: data }),
+  
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/procurement/vendors/${id}`, { method: 'PUT', body: data }),
+  
+  delete: (id: string) =>
+    apiRequest<any>(`/api/procurement/vendors/${id}`, { method: 'DELETE' }),
+  
+  // Vendor Ratings
+  getRatings: (vendorId: string) =>
+    apiRequest<any[]>(`/api/procurement/vendors/${vendorId}/ratings`),
+  
+  createRating: (vendorId: string, data: any) =>
+    apiRequest<any>(`/api/procurement/vendors/${vendorId}/ratings`, { method: 'POST', body: data }),
+  
+  // Vendor Products
+  getProducts: (vendorId: string) =>
+    apiRequest<any[]>(`/api/procurement/vendors/${vendorId}/products`),
+  
+  createProduct: (vendorId: string, data: any) =>
+    apiRequest<any>(`/api/procurement/vendors/${vendorId}/products`, { method: 'POST', body: data }),
+  
+  updateProduct: (vendorId: string, productId: string, data: any) =>
+    apiRequest<any>(`/api/procurement/vendors/${vendorId}/products/${productId}`, { method: 'PUT', body: data }),
+  
+  deleteProduct: (vendorId: string, productId: string) =>
+    apiRequest<any>(`/api/procurement/vendors/${vendorId}/products/${productId}`, { method: 'DELETE' }),
+  
+  // Vendor Contracts
+  getContracts: (vendorId: string) =>
+    apiRequest<any[]>(`/api/procurement/vendors/${vendorId}/contracts`),
+  
+  createContract: (vendorId: string, data: any) =>
+    apiRequest<any>(`/api/procurement/vendors/${vendorId}/contracts`, { method: 'POST', body: data }),
+  
+  updateContract: (vendorId: string, contractId: string, data: any) =>
+    apiRequest<any>(`/api/procurement/vendors/${vendorId}/contracts/${contractId}`, { method: 'PUT', body: data }),
+  
+  deleteContract: (vendorId: string, contractId: string) =>
+    apiRequest<any>(`/api/procurement/vendors/${vendorId}/contracts/${contractId}`, { method: 'DELETE' }),
+  
+  // Vendor Documents
+  getDocuments: (vendorId: string) =>
+    apiRequest<any[]>(`/api/procurement/vendors/${vendorId}/documents`),
+  
+  createDocument: (vendorId: string, formData: FormData) =>
+    fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/api/procurement/vendors/${vendorId}/documents`, {
+      method: 'POST',
+      body: formData,
+    }).then(res => res.ok ? res.json() : Promise.reject(res)),
+  
+  updateDocument: (vendorId: string, documentId: string, data: any) =>
+    apiRequest<any>(`/api/procurement/vendors/${vendorId}/documents/${documentId}`, { method: 'PUT', body: data }),
+  
+  deleteDocument: (vendorId: string, documentId: string) =>
+    apiRequest<any>(`/api/procurement/vendors/${vendorId}/documents/${documentId}`, { method: 'DELETE' }),
+  
+  downloadDocument: (vendorId: string, documentId: string) =>
+    `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/api/procurement/vendors/${vendorId}/documents/${documentId}/download`,
+  
+  // Vendor Issues
+  getIssues: (vendorId: string, status?: string, priority?: string) =>
+    apiRequest<any[]>(`/api/procurement/vendors/${vendorId}/issues?${new URLSearchParams({ ...(status && { status }), ...(priority && { priority }) })}`),
+  
+  createIssue: (vendorId: string, data: any) =>
+    apiRequest<any>(`/api/procurement/vendors/${vendorId}/issues`, { method: 'POST', body: data }),
+  
+  updateIssue: (vendorId: string, issueId: string, data: any) =>
+    apiRequest<any>(`/api/procurement/vendors/${vendorId}/issues/${issueId}`, { method: 'PUT', body: data }),
+  
+  deleteIssue: (vendorId: string, issueId: string) =>
+    apiRequest<any>(`/api/procurement/vendors/${vendorId}/issues/${issueId}`, { method: 'DELETE' }),
+};
+
+// Purchase Orders API
+export const purchaseOrderApi = {
+  getAll: (vendorId?: string, status?: string, page = 1, limit = 50) =>
+    apiRequest<any[]>(`/api/procurement/purchase-orders?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(vendorId && { vendorId }), ...(status && { status }) })}`),
+  
+  getByVendor: (vendorId: string, status?: string, page = 1, limit = 50) =>
+    apiRequest<any[]>(`/api/procurement/purchase-orders/vendors/${vendorId}?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(status && { status }) })}`),
+  
+  getById: (id: string) =>
+    apiRequest<any>(`/api/procurement/purchase-orders/${id}`),
+  
+  create: (data: any) =>
+    apiRequest<any>('/api/procurement/purchase-orders', { method: 'POST', body: data }),
+  
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/procurement/purchase-orders/${id}`, { method: 'PUT', body: data }),
+  
+  delete: (id: string) =>
+    apiRequest<any>(`/api/procurement/purchase-orders/${id}`, { method: 'DELETE' }),
+};
+

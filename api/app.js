@@ -24,6 +24,12 @@ const icuRoutes = require('./routes/icuRoutes');
 const triageRoutes = require('./routes/triageRoutes');
 const medicalRecordsRoutes = require('./routes/medicalRecordsRoutes');
 const ledgerRoutes = require('./routes/ledgerRoutes');
+const vendorRoutes = require('./routes/vendorRoutes');
+const purchaseOrderRoutes = require('./routes/purchaseOrderRoutes');
+const vendorProductsRoutes = require('./routes/vendorProductsRoutes');
+const vendorContractsRoutes = require('./routes/vendorContractsRoutes');
+const vendorDocumentsRoutes = require('./routes/vendorDocumentsRoutes');
+const vendorIssuesRoutes = require('./routes/vendorIssuesRoutes');
 
 const authenticate = require('./middleware/authenticate');
 
@@ -92,6 +98,15 @@ app.use('/api/clinical-services', clinicalServicesRoutes);
 app.use('/api/doctors', doctorsRoutes);
 app.use('/api/medical-records', medicalRecordsRoutes);
 app.use('/api/ledger', ledgerRoutes);
+app.use('/api/procurement/purchase-orders', purchaseOrderRoutes);
+// Vendor sub-routes must be mounted with more specific paths BEFORE main vendor routes to avoid route conflicts
+// These routes use /:vendorId/products pattern, so they need to be checked before /:id pattern
+app.use('/api/procurement/vendors', vendorProductsRoutes);
+app.use('/api/procurement/vendors', vendorContractsRoutes);
+app.use('/api/procurement/vendors', vendorDocumentsRoutes);
+app.use('/api/procurement/vendors', vendorIssuesRoutes);
+// Main vendor routes (/:id, /:id/ratings) - must come after sub-routes
+app.use('/api/procurement/vendors', vendorRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
