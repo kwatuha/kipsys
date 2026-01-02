@@ -1,0 +1,79 @@
+services:
+  # MySQL Database
+  mysql_db:
+    image: mysql:8.0
+    container_name: kiplombe_mysql
+    restart: always
+    command: --default-authentication-plugin=mysql_native_password
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_DATABASE: kiplombe_hmis
+      MYSQL_USER: kiplombe_user
+      MYSQL_PASSWORD: kiplombe_password
+    volumes:
+      - ./api/database/schema.sql:/docker-entrypoint-initdb.d/init.sql
+      - db_data:/var/lib/mysql
+    ports:
+      - "3307:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Node.js API
+  api:
+    build:
+      context: ./api
+    container_name: kiplombe_api
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./api:/app
+      - api_node_modules:/app/node_modules
+    depends_on:
+      mysql_db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+      DB_HOST: mysql_db
+      DB_USER: kiplombe_user
+      DB_PASSWORD: kiplombe_password
+      DB_NAME: kiplombe_hmis
+      DB_PORT: 3306
+      PORT: 3001
+    command: sh -c "if [ ! -d node_modules ] || [ -z \"$(ls -A node_modules)\" ]; then npm install; fi && npx nodemon app.js"
+
+  # Next.js 15 Frontend (Optimized with existing Dockerfile)
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kiplombe_frontend
+    restart: unless-stopped
+    ports:
+      - "3002:3000"
+    volumes:
+      - .:/app
+      - frontend_node_modules:/app/node_modules
+      - /app/.next
+    environment:
+      NODE_ENV: development
+      NEXT_PUBLIC_API_URL: http://localhost:3001
+      HOSTNAME: "0.0.0.0"
+      PORT: 3000
+      NODE_OPTIONS: "--max-old-space-size=4096"
+      # Skip install in entrypoint if dependencies exist
+      SKIP_INSTALL: "false"
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+    # Let entrypoint script handle everything
+    # Don't override command - it's set in Dockerfile
+
+volumes:
+  db_data:
+  api_node_modules:
+  frontend_node_modules:

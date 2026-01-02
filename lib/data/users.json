@@ -1,0 +1,67 @@
+{
+  "users": [
+    {
+      "id": "1",
+      "username": "admin",
+      "password": "admin123",
+      "role": "admin",
+      "name": "System Administrator",
+      "email": "admin@transelgon.com",
+      "department": "IT"
+    },
+    {
+      "id": "2",
+      "username": "doctor",
+      "password": "doctor123",
+      "role": "doctor",
+      "name": "Dr. Sarah Johnson",
+      "email": "sarah.johnson@transelgon.com",
+      "department": "General Medicine"
+    },
+    {
+      "id": "3",
+      "username": "nurse",
+      "password": "nurse123",
+      "role": "nurse",
+      "name": "Nurse Mary Williams",
+      "email": "mary.williams@transelgon.com",
+      "department": "Nursing"
+    },
+    {
+      "id": "4",
+      "username": "lab",
+      "password": "lab123",
+      "role": "lab_technician",
+      "name": "Lab Tech David Chen",
+      "email": "david.chen@transelgon.com",
+      "department": "Laboratory"
+    },
+    {
+      "id": "5",
+      "username": "registration",
+      "password": "reg123",
+      "role": "registration",
+      "name": "Registration Officer Lisa Brown",
+      "email": "lisa.brown@transelgon.com",
+      "department": "Registration"
+    },
+    {
+      "id": "6",
+      "username": "billing",
+      "password": "billing123",
+      "role": "billing",
+      "name": "Billing Officer Mike Davis",
+      "email": "mike.davis@transelgon.com",
+      "department": "Finance"
+    },
+    {
+      "id": "7",
+      "username": "pharmacy",
+      "password": "pharmacy123",
+      "role": "pharmacy",
+      "name": "Pharmacist Anna Wilson",
+      "email": "anna.wilson@transelgon.com",
+      "department": "Pharmacy"
+    }
+  ]
+} 
