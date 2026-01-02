@@ -437,3 +437,38 @@ export const queueApi = {
     apiRequest<any>(`/api/queue/${id}`, { method: 'DELETE' }),
 };
 
+// Ledger API
+export const ledgerApi = {
+  // Accounts
+  getAccounts: (search?: string, accountType?: string, page = 1, limit = 50) =>
+    apiRequest<any[]>(`/api/ledger/accounts?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(search && { search }), ...(accountType && { accountType }) })}`),
+  
+  getAccountById: (id: string) =>
+    apiRequest<any>(`/api/ledger/accounts/${id}`),
+  
+  createAccount: (data: any) =>
+    apiRequest<any>('/api/ledger/accounts', { method: 'POST', body: data }),
+  
+  updateAccount: (id: string, data: any) =>
+    apiRequest<any>(`/api/ledger/accounts/${id}`, { method: 'PUT', body: data }),
+  
+  deleteAccount: (id: string) =>
+    apiRequest<any>(`/api/ledger/accounts/${id}`, { method: 'DELETE' }),
+  
+  // Transactions
+  getTransactions: (search?: string, startDate?: string, endDate?: string, page = 1, limit = 50) =>
+    apiRequest<any[]>(`/api/ledger/transactions?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(search && { search }), ...(startDate && { startDate }), ...(endDate && { endDate }) })}`),
+  
+  getTransactionById: (id: string) =>
+    apiRequest<any>(`/api/ledger/transactions/${id}`),
+  
+  createTransaction: (data: any) =>
+    apiRequest<any>('/api/ledger/transactions', { method: 'POST', body: data }),
+  
+  updateTransaction: (id: string, data: any) =>
+    apiRequest<any>(`/api/ledger/transactions/${id}`, { method: 'PUT', body: data }),
+  
+  deleteTransaction: (id: string) =>
+    apiRequest<any>(`/api/ledger/transactions/${id}`, { method: 'DELETE' }),
+};
+

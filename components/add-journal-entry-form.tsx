@@ -23,6 +23,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { toast } from "@/components/ui/use-toast"
+import { ledgerApi } from "@/lib/api"
+import { useEffect } from "react"
 
 const journalEntrySchema = z.object({
   entryDate: z.date({
@@ -63,8 +65,19 @@ const defaultValues: Partial<JournalEntryFormValues> = {
   notes: "",
 }
 
-export function AddJournalEntryForm({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+export function AddJournalEntryForm({ 
+  open, 
+  onOpenChange, 
+  onSuccess 
+}: { 
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onSuccess?: () => void
+}) {
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [accounts, setAccounts] = useState<any[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const form = useForm<JournalEntryFormValues>({
     resolver: zodResolver(journalEntrySchema),
@@ -76,19 +89,68 @@ export function AddJournalEntryForm({ open, onOpenChange }: { open: boolean; onO
     name: "entries",
   })
 
-  function onSubmit(data: JournalEntryFormValues) {
+  async function onSubmit(data: JournalEntryFormValues) {
     setIsSubmitting(true)
-    // Simulate API call
-    setTimeout(() => {
-      console.log(data)
+    setError(null)
+    
+    try {
+      // Validate that entries are balanced
+      if (!isBalanced) {
+        throw new Error("Debits and credits must be equal")
+      }
+
+      // Find debit and credit entries
+      const debitEntry = data.entries.find(e => e.debit && parseFloat(e.debit) > 0)
+      const creditEntry = data.entries.find(e => e.credit && parseFloat(e.credit) > 0)
+
+      if (!debitEntry || !creditEntry) {
+        throw new Error("At least one debit and one credit entry are required")
+      }
+
+      // Find account IDs
+      const debitAccount = accounts.find(a => a.accountId.toString() === debitEntry.account || a.accountCode === debitEntry.account)
+      const creditAccount = accounts.find(a => a.accountId.toString() === creditEntry.account || a.accountCode === creditEntry.account)
+
+      if (!debitAccount || !creditAccount) {
+        throw new Error("Invalid account selected")
+      }
+
+      const amount = parseFloat(debitEntry.debit || creditEntry.credit || "0")
+
+      // Create transaction
+      await ledgerApi.createTransaction({
+        transactionDate: format(data.entryDate, "yyyy-MM-dd"),
+        description: data.description,
+        referenceNumber: data.reference,
+        referenceType: "journal_entry",
+        debitAccountId: debitAccount.accountId,
+        creditAccountId: creditAccount.accountId,
+        amount: amount,
+        notes: data.notes || null,
+      })
+
       toast({
-        title: "Journal entry created",
+        title: "Success",
         description: `Journal entry ${data.reference} has been created.`,
       })
-      setIsSubmitting(false)
-      onOpenChange(false)
+      
       form.reset()
-    }, 1000)
+      onOpenChange(false)
+      
+      if (onSuccess) {
+        onSuccess()
+      }
+    } catch (err: any) {
+      console.error("Error creating journal entry:", err)
+      setError(err.message || "Failed to create journal entry")
+      toast({
+        title: "Error",
+        description: err.message || "Failed to create journal entry",
+        variant: "destructive",
+      })
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   // Calculate totals
@@ -105,9 +167,29 @@ export function AddJournalEntryForm({ open, onOpenChange }: { open: boolean; onO
 
   const isBalanced = totalDebit === totalCredit
 
-  // Mock data for accounts
-  const accounts = [
-    { id: "1000", name: "Cash" },
+  useEffect(() => {
+    if (open) {
+      loadAccounts()
+    }
+  }, [open])
+
+  const loadAccounts = async () => {
+    try {
+      setLoading(true)
+      setError(null)
+      const data = await ledgerApi.getAccounts()
+      setAccounts(data || [])
+    } catch (err: any) {
+      console.error("Error loading accounts:", err)
+      setError(err.message || "Failed to load accounts")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Legacy mock data fallback (will be replaced by API data)
+  const mockAccounts = [
+    { accountId: "1000", accountName: "Cash" },
     { id: "1100", name: "Accounts Receivable" },
     { id: "1200", name: "Inventory" },
     { id: "1300", name: "Prepaid Expenses" },
@@ -240,8 +322,8 @@ export function AddJournalEntryForm({ open, onOpenChange }: { open: boolean; onO
                                   </FormControl>
                                   <SelectContent>
                                     {accounts.map((account) => (
-                                      <SelectItem key={account.id} value={account.id}>
-                                        {account.id} - {account.name}
+                                      <SelectItem key={account.accountId || account.id} value={(account.accountId || account.id).toString()}>
+                                        {account.accountCode || account.id} - {account.accountName || account.name}
                                       </SelectItem>
                                     ))}
                                   </SelectContent>

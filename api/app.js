@@ -23,6 +23,7 @@ const maternityRoutes = require('./routes/maternityRoutes');
 const icuRoutes = require('./routes/icuRoutes');
 const triageRoutes = require('./routes/triageRoutes');
 const medicalRecordsRoutes = require('./routes/medicalRecordsRoutes');
+const ledgerRoutes = require('./routes/ledgerRoutes');
 
 const authenticate = require('./middleware/authenticate');
 
@@ -90,6 +91,7 @@ app.use('/api/patients', patientAllergiesRoutes);
 app.use('/api/clinical-services', clinicalServicesRoutes);
 app.use('/api/doctors', doctorsRoutes);
 app.use('/api/medical-records', medicalRecordsRoutes);
+app.use('/api/ledger', ledgerRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
