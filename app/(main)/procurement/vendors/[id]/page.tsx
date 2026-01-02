@@ -18,7 +18,23 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { VendorRatingForm } from "@/components/vendor-rating-form"
+import { VendorProductForm } from "@/components/vendor-product-form"
+import { VendorContractForm } from "@/components/vendor-contract-form"
+import { VendorDocumentForm } from "@/components/vendor-document-form"
+import { VendorPurchaseOrderForm } from "@/components/vendor-purchase-order-form"
+import { VendorIssueForm } from "@/components/vendor-issue-form"
+import { toast } from "@/components/ui/use-toast"
 import { Progress } from "@/components/ui/progress"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 
 // Legacy sample data for sections that don't have API support yet
 const sampleVendorData = {
@@ -316,6 +332,34 @@ export default function VendorDetailPage() {
   const [error, setError] = useState<string | null>(null)
   const [isRatingDialogOpen, setIsRatingDialogOpen] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
+  
+  // Product dialog state
+  const [isProductDialogOpen, setIsProductDialogOpen] = useState(false)
+  const [editingProduct, setEditingProduct] = useState<any>(null)
+  const [deletingProduct, setDeletingProduct] = useState<any>(null)
+  const [isDeletingProduct, setIsDeletingProduct] = useState(false)
+  
+  // Order dialog state
+  const [isOrderDialogOpen, setIsOrderDialogOpen] = useState(false)
+  const [editingOrder, setEditingOrder] = useState<any>(null)
+  
+  // Contract dialog state
+  const [isContractDialogOpen, setIsContractDialogOpen] = useState(false)
+  const [editingContract, setEditingContract] = useState<any>(null)
+  const [deletingContract, setDeletingContract] = useState<any>(null)
+  const [isDeletingContract, setIsDeletingContract] = useState(false)
+  
+  // Document dialog state
+  const [isDocumentDialogOpen, setIsDocumentDialogOpen] = useState(false)
+  const [editingDocument, setEditingDocument] = useState<any>(null)
+  const [deletingDocument, setDeletingDocument] = useState<any>(null)
+  const [isDeletingDocument, setIsDeletingDocument] = useState(false)
+  
+  // Issue dialog state
+  const [isIssueDialogOpen, setIsIssueDialogOpen] = useState(false)
+  const [editingIssue, setEditingIssue] = useState<any>(null)
+  const [deletingIssue, setDeletingIssue] = useState<any>(null)
+  const [isDeletingIssue, setIsDeletingIssue] = useState(false)
 
   useEffect(() => {
     const loadVendor = async () => {
@@ -472,6 +516,193 @@ export default function VendorDetailPage() {
   const handleRatingSuccess = () => {
     setIsRatingDialogOpen(false)
     setRefreshKey(prev => prev + 1) // Trigger reload
+  }
+
+  // Product handlers
+  const handleAddProduct = () => {
+    setEditingProduct(null)
+    setIsProductDialogOpen(true)
+  }
+
+  const handleEditProduct = (product: any) => {
+    setEditingProduct(product)
+    setIsProductDialogOpen(true)
+  }
+
+  const handleDeleteProduct = async () => {
+    if (!deletingProduct) return
+    try {
+      setIsDeletingProduct(true)
+      await vendorApi.deleteProduct(vendorId, deletingProduct.productId?.toString() || deletingProduct.id)
+      toast({
+        title: "Success",
+        description: "Product deleted successfully",
+      })
+      setDeletingProduct(null)
+      setRefreshKey(prev => prev + 1)
+    } catch (err: any) {
+      toast({
+        title: "Error",
+        description: err.message || "Failed to delete product",
+        variant: "destructive",
+      })
+    } finally {
+      setIsDeletingProduct(false)
+    }
+  }
+
+  const handleProductSuccess = () => {
+    setIsProductDialogOpen(false)
+    setEditingProduct(null)
+    setRefreshKey(prev => prev + 1)
+  }
+
+  // Order handlers
+  const handleAddOrder = () => {
+    setEditingOrder(null)
+    setIsOrderDialogOpen(true)
+  }
+
+  const handleEditOrder = (order: any) => {
+    // Fetch full order details
+    purchaseOrderApi.getById(order.id || order.purchaseOrderId?.toString()).then((orderData) => {
+      setEditingOrder(orderData)
+      setIsOrderDialogOpen(true)
+    }).catch((err) => {
+      toast({
+        title: "Error",
+        description: "Failed to load order details",
+        variant: "destructive",
+      })
+    })
+  }
+
+  const handleOrderSuccess = () => {
+    setIsOrderDialogOpen(false)
+    setEditingOrder(null)
+    setRefreshKey(prev => prev + 1)
+  }
+
+  // Contract handlers
+  const handleAddContract = () => {
+    setEditingContract(null)
+    setIsContractDialogOpen(true)
+  }
+
+  const handleEditContract = (contract: any) => {
+    setEditingContract(contract)
+    setIsContractDialogOpen(true)
+  }
+
+  const handleDeleteContract = async () => {
+    if (!deletingContract) return
+    try {
+      setIsDeletingContract(true)
+      await vendorApi.deleteContract(vendorId, deletingContract.contractId.toString())
+      toast({
+        title: "Success",
+        description: "Contract deleted successfully",
+      })
+      setDeletingContract(null)
+      setRefreshKey(prev => prev + 1)
+    } catch (err: any) {
+      toast({
+        title: "Error",
+        description: err.message || "Failed to delete contract",
+        variant: "destructive",
+      })
+    } finally {
+      setIsDeletingContract(false)
+    }
+  }
+
+  const handleContractSuccess = () => {
+    setIsContractDialogOpen(false)
+    setEditingContract(null)
+    setRefreshKey(prev => prev + 1)
+  }
+
+  // Document handlers
+  const handleAddDocument = () => {
+    setEditingDocument(null)
+    setIsDocumentDialogOpen(true)
+  }
+
+  const handleEditDocument = (document: any) => {
+    setEditingDocument(document)
+    setIsDocumentDialogOpen(true)
+  }
+
+  const handleDeleteDocument = async () => {
+    if (!deletingDocument) return
+    try {
+      setIsDeletingDocument(true)
+      await vendorApi.deleteDocument(vendorId, deletingDocument.documentId?.toString() || deletingDocument.id)
+      toast({
+        title: "Success",
+        description: "Document deleted successfully",
+      })
+      setDeletingDocument(null)
+      setRefreshKey(prev => prev + 1)
+    } catch (err: any) {
+      toast({
+        title: "Error",
+        description: err.message || "Failed to delete document",
+        variant: "destructive",
+      })
+    } finally {
+      setIsDeletingDocument(false)
+    }
+  }
+
+  const handleDocumentSuccess = () => {
+    setIsDocumentDialogOpen(false)
+    setEditingDocument(null)
+    setRefreshKey(prev => prev + 1)
+  }
+
+  const handleDownloadDocument = (document: any) => {
+    const url = vendorApi.downloadDocument(vendorId, document.documentId?.toString() || document.id)
+    window.open(url, '_blank')
+  }
+
+  // Issue handlers
+  const handleAddIssue = () => {
+    setEditingIssue(null)
+    setIsIssueDialogOpen(true)
+  }
+
+  const handleEditIssue = (issue: any) => {
+    setEditingIssue(issue)
+    setIsIssueDialogOpen(true)
+  }
+
+  const handleDeleteIssue = async () => {
+    if (!deletingIssue) return
+    try {
+      setIsDeletingIssue(true)
+      await vendorApi.deleteIssue(vendorId, deletingIssue.issueId?.toString() || deletingIssue.id)
+      toast({
+        title: "Success",
+        description: "Issue deleted successfully",
+      })
+      setDeletingIssue(null)
+      setRefreshKey(prev => prev + 1)
+    } catch (err: any) {
+      toast({
+        title: "Error",
+        description: err.message || "Failed to delete issue",
+        variant: "destructive",
+      })
+    } finally {
+      setIsDeletingIssue(false)
+    }
+  }
+
+  const handleIssueSuccess = () => {
+    setIsIssueDialogOpen(false)
+    setEditingIssue(null)
+    setRefreshKey(prev => prev + 1)
   }
 
   if (loading) {
@@ -667,7 +898,7 @@ export default function VendorDetailPage() {
                   <CardTitle className="text-lg">Products & Services</CardTitle>
                   <CardDescription>Products and services offered by this vendor</CardDescription>
                 </div>
-                <Button size="sm" onClick={() => {/* TODO: Open add product dialog */}}>
+                <Button size="sm" onClick={handleAddProduct}>
                   <PlusCircle className="h-4 w-4 mr-2" />
                   Add Product
                 </Button>
@@ -695,10 +926,10 @@ export default function VendorDetailPage() {
                           <TableCell>{product.unit}</TableCell>
                           <TableCell className="text-right">
                             <div className="flex justify-end gap-2">
-                              <Button variant="ghost" size="sm" onClick={() => {/* TODO: Edit product */}}>
+                              <Button variant="ghost" size="sm" onClick={() => handleEditProduct(product)}>
                                 <FileEdit className="h-4 w-4" />
                               </Button>
-                              <Button variant="ghost" size="sm" onClick={() => {/* TODO: Delete product */}}>
+                              <Button variant="ghost" size="sm" onClick={() => setDeletingProduct(product)}>
                                 <Trash2 className="h-4 w-4" />
                               </Button>
                             </div>
@@ -724,7 +955,7 @@ export default function VendorDetailPage() {
                   <CardTitle className="text-lg">Purchase Orders</CardTitle>
                   <CardDescription>Order history with this vendor</CardDescription>
                 </div>
-                <Button size="sm" onClick={() => {/* TODO: Open add order dialog */}}>
+                <Button size="sm" onClick={handleAddOrder}>
                   <PlusCircle className="h-4 w-4 mr-2" />
                   New Order
                 </Button>
@@ -762,10 +993,7 @@ export default function VendorDetailPage() {
                           </TableCell>
                           <TableCell className="text-right">
                             <div className="flex justify-end gap-2">
-                              <Button variant="ghost" size="sm" onClick={() => {/* TODO: View order */}}>
-                                <Eye className="h-4 w-4" />
-                              </Button>
-                              <Button variant="ghost" size="sm" onClick={() => {/* TODO: Edit order */}}>
+                              <Button variant="ghost" size="sm" onClick={() => handleEditOrder(order)}>
                                 <FileEdit className="h-4 w-4" />
                               </Button>
                             </div>
@@ -833,7 +1061,7 @@ export default function VendorDetailPage() {
                   <CardTitle className="text-lg">Contract Information</CardTitle>
                   <CardDescription>Contract details and terms</CardDescription>
                 </div>
-                <Button size="sm" onClick={() => {/* TODO: Open add contract dialog */}}>
+                <Button size="sm" onClick={handleAddContract}>
                   <PlusCircle className="h-4 w-4 mr-2" />
                   New Contract
                 </Button>
@@ -867,13 +1095,10 @@ export default function VendorDetailPage() {
                           </TableCell>
                           <TableCell className="text-right">
                             <div className="flex justify-end gap-2">
-                              <Button variant="ghost" size="sm" onClick={() => {/* TODO: View contract */}}>
-                                <Eye className="h-4 w-4" />
-                              </Button>
-                              <Button variant="ghost" size="sm" onClick={() => {/* TODO: Edit contract */}}>
+                              <Button variant="ghost" size="sm" onClick={() => handleEditContract(contract)}>
                                 <FileEdit className="h-4 w-4" />
                               </Button>
-                              <Button variant="ghost" size="sm" onClick={() => {/* TODO: Delete contract */}}>
+                              <Button variant="ghost" size="sm" onClick={() => setDeletingContract(contract)}>
                                 <Trash2 className="h-4 w-4" />
                               </Button>
                             </div>
@@ -901,9 +1126,15 @@ export default function VendorDetailPage() {
           </TabsContent>
           <TabsContent value="documents">
             <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-lg">Documents</CardTitle>
-                <CardDescription>Vendor documentation and certificates</CardDescription>
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <div>
+                  <CardTitle className="text-lg">Documents</CardTitle>
+                  <CardDescription>Vendor documentation and certificates</CardDescription>
+                </div>
+                <Button size="sm" onClick={handleAddDocument}>
+                  <PlusCircle className="h-4 w-4 mr-2" />
+                  Upload Document
+                </Button>
               </CardHeader>
               <CardContent>
                 <Table>
@@ -927,10 +1158,17 @@ export default function VendorDetailPage() {
                           <TableCell>{doc.date}</TableCell>
                           <TableCell>{doc.size}</TableCell>
                           <TableCell className="text-right">
-                            <Button variant="ghost" size="sm">
-                              <Download className="h-4 w-4 mr-1" />
-                              Download
-                            </Button>
+                            <div className="flex justify-end gap-2">
+                              <Button variant="ghost" size="sm" onClick={() => handleDownloadDocument(doc)}>
+                                <Download className="h-4 w-4" />
+                              </Button>
+                              <Button variant="ghost" size="sm" onClick={() => handleEditDocument(doc)}>
+                                <FileEdit className="h-4 w-4" />
+                              </Button>
+                              <Button variant="ghost" size="sm" onClick={() => setDeletingDocument(doc)}>
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
                           </TableCell>
                         </TableRow>
                       ))
@@ -943,13 +1181,6 @@ export default function VendorDetailPage() {
                     )}
                   </TableBody>
                 </Table>
-
-                <div className="mt-4 flex justify-end">
-                  <Button variant="outline" size="sm">
-                    <FileText className="h-4 w-4 mr-2" />
-                    Upload Document
-                  </Button>
-                </div>
               </CardContent>
             </Card>
           </TabsContent>
@@ -1086,7 +1317,7 @@ export default function VendorDetailPage() {
                     <CardTitle className="text-lg">Issues</CardTitle>
                     <CardDescription>Reported issues and resolutions</CardDescription>
                   </div>
-                  <Button size="sm" onClick={() => {/* TODO: Open report issue dialog */}}>
+                  <Button size="sm" onClick={handleAddIssue}>
                     <AlertTriangle className="h-4 w-4 mr-2" />
                     Report Issue
                   </Button>
@@ -1112,10 +1343,10 @@ export default function VendorDetailPage() {
                                   {issue.status}
                                 </Badge>
                                 <div className="flex gap-1">
-                                  <Button variant="ghost" size="sm" onClick={() => {/* TODO: Edit issue */}}>
+                                  <Button variant="ghost" size="sm" onClick={() => handleEditIssue(issue)}>
                                     <FileEdit className="h-3 w-3" />
                                   </Button>
-                                  <Button variant="ghost" size="sm" onClick={() => {/* TODO: Delete issue */}}>
+                                  <Button variant="ghost" size="sm" onClick={() => setDeletingIssue(issue)}>
                                     <Trash2 className="h-3 w-3" />
                                   </Button>
                                 </div>
@@ -1142,6 +1373,127 @@ export default function VendorDetailPage() {
           </TabsContent>
         </div>
       </Tabs>
+
+      {/* Product Dialog */}
+      <VendorProductForm
+        open={isProductDialogOpen}
+        onOpenChange={setIsProductDialogOpen}
+        vendorId={vendorId}
+        product={editingProduct}
+        onSuccess={handleProductSuccess}
+      />
+
+      {/* Purchase Order Dialog */}
+      <VendorPurchaseOrderForm
+        open={isOrderDialogOpen}
+        onOpenChange={setIsOrderDialogOpen}
+        vendorId={vendorId}
+        order={editingOrder}
+        onSuccess={handleOrderSuccess}
+      />
+
+      {/* Contract Dialog */}
+      <VendorContractForm
+        open={isContractDialogOpen}
+        onOpenChange={setIsContractDialogOpen}
+        vendorId={vendorId}
+        contract={editingContract}
+        onSuccess={handleContractSuccess}
+      />
+
+      {/* Document Dialog */}
+      <VendorDocumentForm
+        open={isDocumentDialogOpen}
+        onOpenChange={setIsDocumentDialogOpen}
+        vendorId={vendorId}
+        document={editingDocument}
+        onSuccess={handleDocumentSuccess}
+      />
+
+      {/* Issue Dialog */}
+      <VendorIssueForm
+        open={isIssueDialogOpen}
+        onOpenChange={setIsIssueDialogOpen}
+        vendorId={vendorId}
+        issue={editingIssue}
+        onSuccess={handleIssueSuccess}
+      />
+
+      {/* Delete Product Confirmation */}
+      <AlertDialog open={!!deletingProduct} onOpenChange={(open) => !open && setDeletingProduct(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Product</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete "{deletingProduct?.name || deletingProduct?.productName}"? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteProduct} disabled={isDeletingProduct}>
+              {isDeletingProduct && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Delete Contract Confirmation */}
+      <AlertDialog open={!!deletingContract} onOpenChange={(open) => !open && setDeletingContract(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Contract</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete contract "{deletingContract?.contractNumber}"? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteContract} disabled={isDeletingContract}>
+              {isDeletingContract && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Delete Document Confirmation */}
+      <AlertDialog open={!!deletingDocument} onOpenChange={(open) => !open && setDeletingDocument(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Document</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete "{deletingDocument?.name || deletingDocument?.documentName}"? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteDocument} disabled={isDeletingDocument}>
+              {isDeletingDocument && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Delete Issue Confirmation */}
+      <AlertDialog open={!!deletingIssue} onOpenChange={(open) => !open && setDeletingIssue(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Issue</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete "{deletingIssue?.issueTitle || deletingIssue?.title}"? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteIssue} disabled={isDeletingIssue}>
+              {isDeletingIssue && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
