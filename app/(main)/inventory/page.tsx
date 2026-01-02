@@ -1,7 +1,7 @@
 "use client"
 
-import { useState } from "react"
-import { Search, PlusCircle, ArrowDownUp, Layers } from "lucide-react"
+import { useState, useEffect, useCallback } from "react"
+import { Search, PlusCircle, ArrowDownUp, Layers, Edit, Trash2, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -9,10 +9,23 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import Link from "next/link"
 import { BreadcrumbsEnhanced } from "@/components/breadcrumbs-enhanced"
+import { inventoryApi } from "@/lib/api"
+import { InventoryItemForm } from "@/components/inventory-item-form"
+import { toast } from "@/components/ui/use-toast"
 
-// Mock data for inventory items
+// Legacy mock data (removed - now using API)
 const inventoryItems = [
   {
     id: "1",
@@ -176,34 +189,121 @@ const inventoryItems = [
   },
 ]
 
-// Mock data for inventory summary
-const inventorySummary = {
-  totalItems: 1250,
-  totalValue: 1250000,
-  lowStockItems: 32,
-  expiringItems: 18,
-  categories: 12,
-  locations: 8,
-}
-
 export default function InventoryPage() {
+  const [items, setItems] = useState<any[]>([])
+  const [summary, setSummary] = useState<any>({
+    totalItems: 0,
+    totalValue: 0,
+    lowStockItems: 0,
+    expiringItems: 0,
+    categories: 0,
+    locations: 0,
+  })
+  const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState("")
   const [selectedCategory, setSelectedCategory] = useState("all")
   const [selectedStatus, setSelectedStatus] = useState("all")
+  const [formOpen, setFormOpen] = useState(false)
+  const [selectedItem, setSelectedItem] = useState<any>(null)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [itemToDelete, setItemToDelete] = useState<any>(null)
 
-  // Filter inventory items based on search term, category, and status
-  const filteredItems = inventoryItems.filter((item) => {
+  const loadInventory = useCallback(async () => {
+    try {
+      setLoading(true)
+      const [itemsData, summaryData] = await Promise.all([
+        inventoryApi.getAll(selectedCategory !== "all" ? selectedCategory : undefined, selectedStatus !== "all" ? selectedStatus : undefined, searchTerm || undefined),
+        inventoryApi.getSummary(),
+      ])
+      setItems(itemsData)
+      setSummary(summaryData)
+    } catch (error: any) {
+      console.error("Error loading inventory:", error)
+      toast({
+        title: "Error",
+        description: "Failed to load inventory data.",
+        variant: "destructive",
+      })
+      setItems([])
+    } finally {
+      setLoading(false)
+    }
+  }, [searchTerm, selectedCategory, selectedStatus])
+
+  useEffect(() => {
+    loadInventory()
+  }, [loadInventory])
+
+  const handleAdd = () => {
+    setSelectedItem(null)
+    setFormOpen(true)
+  }
+
+  const handleEdit = (transformedItem: any) => {
+    // Find the original API item by itemId
+    const originalItem = items.find((i) => i.itemId === transformedItem.itemId)
+    setSelectedItem(originalItem || transformedItem)
+    setFormOpen(true)
+  }
+
+  const handleDelete = async () => {
+    if (!itemToDelete) return
+    try {
+      await inventoryApi.delete(itemToDelete.itemId.toString())
+      toast({
+        title: "Success",
+        description: "Inventory item deleted successfully.",
+      })
+      loadInventory()
+      setDeleteDialogOpen(false)
+      setItemToDelete(null)
+    } catch (error: any) {
+      console.error("Error deleting item:", error)
+      toast({
+        title: "Error",
+        description: error.message || "Failed to delete inventory item.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  // Transform API data to match frontend expectations
+  const transformedItems = items.map((item) => {
+    const quantity = parseInt(item.quantity || 0)
+    const reorderLevel = parseInt(item.reorderLevel || 0)
+    const unitPrice = parseFloat(item.unitPrice || 0)
+    const totalValue = quantity * unitPrice
+    const status = quantity <= reorderLevel ? "Low Stock" : quantity === 0 ? "Out of Stock" : "In Stock"
+
+    return {
+      id: item.itemId.toString(),
+      itemId: item.itemId,
+      name: item.name,
+      sku: item.itemCode || `INV-${item.itemId}`,
+      category: item.category || "Uncategorized",
+      location: item.location || "Not specified",
+      currentStock: quantity,
+      minStock: reorderLevel,
+      maxStock: reorderLevel * 2, // Estimate max stock
+      unitPrice: unitPrice,
+      totalValue: totalValue,
+      status: status,
+      expiryDate: item.expiryDate || "N/A",
+      lastUpdated: item.updatedAt || item.createdAt,
+      batchNumber: "N/A",
+    }
+  })
+
+  // Filter inventory items based on search term
+  const filteredItems = transformedItems.filter((item) => {
     const matchesSearch =
       item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       item.sku.toLowerCase().includes(searchTerm.toLowerCase())
-    const matchesCategory = selectedCategory === "all" || item.category === selectedCategory
-    const matchesStatus = selectedStatus === "all" || item.status === selectedStatus
-
-    return matchesSearch && matchesCategory && matchesStatus
+    return matchesSearch
   })
 
   // Get unique categories for filter dropdown
-  const categories = ["all", ...new Set(inventoryItems.map((item) => item.category))]
+  const categories = ["all", ...new Set(transformedItems.map((item) => item.category))]
 
   return (
     <div className="p-4 space-y-4">
@@ -215,11 +315,9 @@ export default function InventoryPage() {
           ]}
         />
         <div className="flex gap-2">
-          <Button asChild>
-            <Link href="/inventory/new">
-              <PlusCircle className="mr-2 h-4 w-4" />
-              Add Item
-            </Link>
+          <Button onClick={handleAdd}>
+            <PlusCircle className="mr-2 h-4 w-4" />
+            Add Item
           </Button>
           <Button variant="outline" asChild>
             <Link href="/inventory/adjust">
@@ -236,8 +334,14 @@ export default function InventoryPage() {
             <CardTitle className="text-sm font-medium">Total Inventory Value</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">KES {inventorySummary.totalValue.toLocaleString()}</div>
-            <p className="text-xs text-muted-foreground">{inventorySummary.totalItems} items in stock</p>
+            {loading ? (
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            ) : (
+              <>
+                <div className="text-2xl font-bold">KES {parseFloat(summary.totalValue || 0).toLocaleString()}</div>
+                <p className="text-xs text-muted-foreground">{summary.totalItems || 0} items in stock</p>
+              </>
+            )}
           </CardContent>
         </Card>
         <Card>
@@ -245,8 +349,14 @@ export default function InventoryPage() {
             <CardTitle className="text-sm font-medium">Low Stock Items</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-amber-500">{inventorySummary.lowStockItems}</div>
-            <p className="text-xs text-muted-foreground">Items below minimum stock level</p>
+            {loading ? (
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            ) : (
+              <>
+                <div className="text-2xl font-bold text-amber-500">{summary.lowStockItems || 0}</div>
+                <p className="text-xs text-muted-foreground">Items below minimum stock level</p>
+              </>
+            )}
           </CardContent>
         </Card>
         <Card>
@@ -254,8 +364,14 @@ export default function InventoryPage() {
             <CardTitle className="text-sm font-medium">Expiring Soon</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-red-500">{inventorySummary.expiringItems}</div>
-            <p className="text-xs text-muted-foreground">Items expiring within 90 days</p>
+            {loading ? (
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            ) : (
+              <>
+                <div className="text-2xl font-bold text-red-500">{summary.expiringItems || 0}</div>
+                <p className="text-xs text-muted-foreground">Items expiring within 90 days</p>
+              </>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -302,9 +418,8 @@ export default function InventoryPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Statuses</SelectItem>
-                  <SelectItem value="In Stock">In Stock</SelectItem>
-                  <SelectItem value="Low Stock">Low Stock</SelectItem>
-                  <SelectItem value="Out of Stock">Out of Stock</SelectItem>
+                  <SelectItem value="Active">Active</SelectItem>
+                  <SelectItem value="Inactive">Inactive</SelectItem>
                 </SelectContent>
               </Select>
 
@@ -328,51 +443,90 @@ export default function InventoryPage() {
                     <TableHead className="text-right">Total Value</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Expiry</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredItems.map((item) => (
-                    <TableRow key={item.id}>
-                      <TableCell className="font-medium">
-                        <Link href={`/inventory/${item.id}`} className="hover:underline">
-                          {item.name}
-                        </Link>
-                      </TableCell>
-                      <TableCell>{item.sku}</TableCell>
-                      <TableCell>{item.category}</TableCell>
-                      <TableCell>{item.location}</TableCell>
-                      <TableCell className="text-right">
-                        {item.currentStock}
-                        <span className="text-xs text-muted-foreground ml-1">
-                          ({item.minStock}-{item.maxStock})
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-right">KES {item.unitPrice.toFixed(2)}</TableCell>
-                      <TableCell className="text-right">KES {item.totalValue.toFixed(2)}</TableCell>
-                      <TableCell>
-                        <Badge
-                          variant={
-                            item.status === "In Stock"
-                              ? "default"
-                              : item.status === "Low Stock"
-                                ? "warning"
-                                : "destructive"
-                          }
-                        >
-                          {item.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        {item.expiryDate === "N/A" ? (
-                          <span className="text-muted-foreground">N/A</span>
-                        ) : new Date(item.expiryDate) < new Date(Date.now() + 90 * 24 * 60 * 60 * 1000) ? (
-                          <span className="text-red-500">{new Date(item.expiryDate).toLocaleDateString()}</span>
-                        ) : (
-                          new Date(item.expiryDate).toLocaleDateString()
-                        )}
+                  {loading ? (
+                    <TableRow>
+                      <TableCell colSpan={10} className="text-center py-8">
+                        <Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" />
+                        <p className="text-sm text-muted-foreground mt-2">Loading inventory...</p>
                       </TableCell>
                     </TableRow>
-                  ))}
+                  ) : filteredItems.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
+                        No inventory items found
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    filteredItems.map((item) => (
+                      <TableRow key={item.id}>
+                        <TableCell className="font-medium">
+                          <Link href={`/inventory/${item.id}`} className="hover:underline">
+                            {item.name}
+                          </Link>
+                        </TableCell>
+                        <TableCell>{item.sku}</TableCell>
+                        <TableCell>{item.category}</TableCell>
+                        <TableCell>{item.location}</TableCell>
+                        <TableCell className="text-right">
+                          {item.currentStock}
+                          <span className="text-xs text-muted-foreground ml-1">
+                            (min: {item.minStock})
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-right">KES {item.unitPrice.toFixed(2)}</TableCell>
+                        <TableCell className="text-right">KES {item.totalValue.toFixed(2)}</TableCell>
+                        <TableCell>
+                          <Badge
+                            variant={
+                              item.status === "In Stock"
+                                ? "default"
+                                : item.status === "Low Stock"
+                                  ? "secondary"
+                                  : "destructive"
+                            }
+                          >
+                            {item.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          {item.expiryDate === "N/A" ? (
+                            <span className="text-muted-foreground">N/A</span>
+                          ) : new Date(item.expiryDate) < new Date(Date.now() + 90 * 24 * 60 * 60 * 1000) ? (
+                            <span className="text-red-500">{new Date(item.expiryDate).toLocaleDateString()}</span>
+                          ) : (
+                            new Date(item.expiryDate).toLocaleDateString()
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleEdit(item)}
+                              className="h-8 w-8"
+                            >
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => {
+                                setItemToDelete(item)
+                                setDeleteDialogOpen(true)
+                              }}
+                              className="h-8 w-8 text-destructive hover:text-destructive"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
                 </TableBody>
               </Table>
             </CardContent>
@@ -412,6 +566,30 @@ export default function InventoryPage() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      <InventoryItemForm
+        open={formOpen}
+        onOpenChange={setFormOpen}
+        item={selectedItem}
+        onSuccess={loadInventory}
+      />
+
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will delete the inventory item "{itemToDelete?.name}". This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground">
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

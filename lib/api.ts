@@ -355,11 +355,54 @@ export const medicalRecordsApi = {
 
 // Inventory API
 export const inventoryApi = {
-  getAll: () =>
-    apiRequest<any[]>('/api/inventory'),
+  getAll: (category?: string, status?: string, search?: string, lowStock?: boolean) => {
+    const params = new URLSearchParams();
+    if (category) params.append('category', category);
+    if (status) params.append('status', status);
+    if (search) params.append('search', search);
+    if (lowStock) params.append('lowStock', 'true');
+    const query = params.toString();
+    return apiRequest<any[]>(`/api/inventory${query ? `?${query}` : ''}`);
+  },
+  
+  getSummary: () =>
+    apiRequest<any>('/api/inventory/summary'),
+  
+  getById: (id: string) =>
+    apiRequest<any>(`/api/inventory/${id}`),
   
   create: (data: any) =>
     apiRequest<any>('/api/inventory', { method: 'POST', body: data }),
+  
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/inventory/${id}`, { method: 'PUT', body: data }),
+  
+  delete: (id: string) =>
+    apiRequest<any>(`/api/inventory/${id}`, { method: 'DELETE' }),
+};
+
+// Inventory Transactions API
+export const inventoryTransactionApi = {
+  getAll: (itemId?: string, transactionType?: string, startDate?: string, endDate?: string, page = 1, limit = 50) => {
+    const params = new URLSearchParams({ page: page.toString(), limit: limit.toString() });
+    if (itemId) params.append('itemId', itemId);
+    if (transactionType) params.append('transactionType', transactionType);
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    return apiRequest<any[]>(`/api/inventory/transactions?${params.toString()}`);
+  },
+  
+  getById: (id: string) =>
+    apiRequest<any>(`/api/inventory/transactions/${id}`),
+  
+  create: (data: any) =>
+    apiRequest<any>('/api/inventory/transactions', { method: 'POST', body: data }),
+  
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/inventory/transactions/${id}`, { method: 'PUT', body: data }),
+  
+  delete: (id: string) =>
+    apiRequest<any>(`/api/inventory/transactions/${id}`, { method: 'DELETE' }),
 };
 
 // Clinical Services API

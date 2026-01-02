@@ -30,6 +30,7 @@ const vendorProductsRoutes = require('./routes/vendorProductsRoutes');
 const vendorContractsRoutes = require('./routes/vendorContractsRoutes');
 const vendorDocumentsRoutes = require('./routes/vendorDocumentsRoutes');
 const vendorIssuesRoutes = require('./routes/vendorIssuesRoutes');
+const inventoryTransactionRoutes = require('./routes/inventoryTransactionRoutes');
 
 const authenticate = require('./middleware/authenticate');
 
@@ -85,6 +86,7 @@ app.use('/api/appointments', appointmentRoutes);
 app.use('/api/queue', queueRoutes);
 app.use('/api/billing', billingRoutes);
 app.use('/api/inventory', inventoryRoutes);
+app.use('/api/inventory/transactions', inventoryTransactionRoutes);
 app.use('/api/pharmacy', pharmacyRoutes);
 app.use('/api/laboratory', laboratoryRoutes);
 app.use('/api/radiology', radiologyRoutes);
