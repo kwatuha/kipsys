@@ -102,8 +102,8 @@ export function InsurancePackagesTable() {
                 <div className="text-xs text-muted-foreground">{pkg.id}</div>
               </TableCell>
               <TableCell>{pkg.provider}</TableCell>
-              <TableCell>{pkg.coverageLimit.toLocaleString()}</TableCell>
-              <TableCell>{pkg.annualPremium.toLocaleString()}</TableCell>
+              <TableCell>KES {pkg.coverageLimit.toLocaleString()}</TableCell>
+              <TableCell>KES {pkg.annualPremium.toLocaleString()}</TableCell>
               <TableCell>
                 <div className="flex flex-wrap gap-1">
                   {pkg.benefits.slice(0, 3).map((benefit) => (

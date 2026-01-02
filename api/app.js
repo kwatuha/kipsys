@@ -22,6 +22,7 @@ const inpatientRoutes = require('./routes/inpatientRoutes');
 const maternityRoutes = require('./routes/maternityRoutes');
 const icuRoutes = require('./routes/icuRoutes');
 const triageRoutes = require('./routes/triageRoutes');
+const medicalRecordsRoutes = require('./routes/medicalRecordsRoutes');
 
 const authenticate = require('./middleware/authenticate');
 
@@ -88,6 +89,7 @@ app.use('/api/departments', departmentRoutes);
 app.use('/api/patients', patientAllergiesRoutes);
 app.use('/api/clinical-services', clinicalServicesRoutes);
 app.use('/api/doctors', doctorsRoutes);
+app.use('/api/medical-records', medicalRecordsRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

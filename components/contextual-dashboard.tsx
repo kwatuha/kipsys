@@ -39,7 +39,7 @@ export function ContextualDashboard() {
       case "overview":
         return [
           { title: "Total Patients", value: "1,234", icon: Users, change: "+12%" },
-          { title: "Revenue", value: "$45,678", icon: DollarSign, change: "+8%" },
+          { title: "Revenue", value: "KES 45,678", icon: DollarSign, change: "+8%" },
           { title: "Active Appointments", value: "89", icon: Calendar, change: "+5%" },
           { title: "Departments", value: "12", icon: Building2, change: "0%" },
         ]
@@ -59,8 +59,8 @@ export function ContextualDashboard() {
         ]
       case "financial":
         return [
-          { title: "Monthly Revenue", value: "$125,000", icon: DollarSign, change: "+18%" },
-          { title: "Outstanding Bills", value: "$23,456", icon: CreditCard, change: "-5%" },
+          { title: "Monthly Revenue", value: "KES 125,000", icon: DollarSign, change: "+18%" },
+          { title: "Outstanding Bills", value: "KES 23,456", icon: CreditCard, change: "-5%" },
           { title: "Insurance Claims", value: "234", icon: Receipt, change: "+12%" },
           { title: "Budget Utilization", value: "78%", icon: Clipboard, change: "+3%" },
         ]

@@ -335,6 +335,24 @@ export const triageApi = {
     apiRequest<any>(`/api/radiology/orders/${id}`, { method: 'PUT', body: data }),
 };
 
+// Medical Records API
+export const medicalRecordsApi = {
+  getAll: (search?: string, patientId?: string, doctorId?: string, visitType?: string, department?: string, page = 1, limit = 50) =>
+    apiRequest<any[]>(`/api/medical-records?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(search && { search }), ...(patientId && { patientId }), ...(doctorId && { doctorId }), ...(visitType && { visitType }), ...(department && { department }) })}`),
+  
+  getById: (id: string) =>
+    apiRequest<any>(`/api/medical-records/${id}`),
+  
+  create: (data: any) =>
+    apiRequest<any>('/api/medical-records', { method: 'POST', body: data }),
+  
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/medical-records/${id}`, { method: 'PUT', body: data }),
+  
+  delete: (id: string) =>
+    apiRequest<any>(`/api/medical-records/${id}`, { method: 'DELETE' }),
+};
+
 // Inventory API
 export const inventoryApi = {
   getAll: () =>
@@ -396,5 +414,26 @@ export const appointmentsApi = {
   
   delete: (id: string) =>
     apiRequest<any>(`/api/appointments/${id}`, { method: 'DELETE' }),
+};
+
+// Queue API
+export const queueApi = {
+  getAll: (servicePoint?: string, status?: string, page = 1, limit = 50) =>
+    apiRequest<any[]>(`/api/queue?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(servicePoint && { servicePoint }), ...(status && { status }) })}`),
+  
+  getById: (id: string) =>
+    apiRequest<any>(`/api/queue/${id}`),
+  
+  create: (data: any) =>
+    apiRequest<any>('/api/queue', { method: 'POST', body: data }),
+  
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/queue/${id}`, { method: 'PUT', body: data }),
+  
+  updateStatus: (id: string, status: string) =>
+    apiRequest<any>(`/api/queue/${id}/status`, { method: 'PUT', body: { status } }),
+  
+  delete: (id: string) =>
+    apiRequest<any>(`/api/queue/${id}`, { method: 'DELETE' }),
 };
 

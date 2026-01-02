@@ -159,7 +159,7 @@ export function InsuranceClaimsTable() {
                   <div className="text-xs text-muted-foreground">{claim.patientId}</div>
                 </TableCell>
                 <TableCell>{claim.provider}</TableCell>
-                <TableCell>{claim.amount.toLocaleString()}</TableCell>
+                <TableCell>KES {claim.amount.toLocaleString()}</TableCell>
                 <TableCell>{new Date(claim.submissionDate).toLocaleDateString()}</TableCell>
                 <TableCell>{getStatusBadge(claim.status)}</TableCell>
                 <TableCell>

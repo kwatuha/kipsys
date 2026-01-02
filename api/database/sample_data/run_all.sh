@@ -32,6 +32,10 @@ FILES=(
     "10_insurance.sql"
     "11_procurement.sql"
     "12_finance.sql"
+    "13_triaging.sql"
+    "14_appointments.sql"
+    "15_queue.sql"
+    "16_medical_records.sql"
 )
 
 # Run each file

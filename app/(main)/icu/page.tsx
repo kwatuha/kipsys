@@ -38,6 +38,7 @@ import { Label } from "@/components/ui/label"
 
 export default function ICUPage() {
   const router = useRouter()
+  const [isMounted, setIsMounted] = useState(false)
   const [addAdmissionOpen, setAddAdmissionOpen] = useState(false)
   const [editingAdmission, setEditingAdmission] = useState<any>(null)
   const [deletingAdmission, setDeletingAdmission] = useState<any>(null)
@@ -66,12 +67,19 @@ export default function ICUPage() {
   const [deleteEquipmentLoading, setDeleteEquipmentLoading] = useState(false)
   const [addEquipmentOpen, setAddEquipmentOpen] = useState(false)
 
-  // Load ICU admissions, beds, and equipment from API
+  // Set mounted state to avoid hydration mismatch
   useEffect(() => {
-    loadAdmissions()
-    loadBeds()
-    loadEquipment()
+    setIsMounted(true)
   }, [])
+
+  // Load ICU admissions, beds, and equipment from API (only after mount)
+  useEffect(() => {
+    if (isMounted) {
+      loadAdmissions()
+      loadBeds()
+      loadEquipment()
+    }
+  }, [isMounted])
 
   const loadAdmissions = async () => {
     try {
@@ -245,6 +253,84 @@ export default function ICUPage() {
 
     return matchesSearch && matchesStatus
   })
+
+  const loadEquipment = async () => {
+    try {
+      setEquipmentLoading(true)
+      const data = await icuApi.getEquipment(equipmentStatusFilter || undefined)
+      setEquipment(data || [])
+    } catch (error: any) {
+      console.error("Error loading ICU equipment:", error)
+      toast({
+        title: "Error loading equipment",
+        description: error.message || "Failed to load ICU equipment",
+        variant: "destructive",
+      })
+    } finally {
+      setEquipmentLoading(false)
+    }
+  }
+
+  const handleDeleteEquipment = async () => {
+    if (!deletingEquipment) return
+
+    try {
+      setDeleteEquipmentLoading(true)
+      await icuApi.deleteEquipment(deletingEquipment.icuEquipmentId.toString())
+      toast({
+        title: "Equipment retired",
+        description: "ICU equipment has been retired successfully.",
+      })
+      setDeletingEquipment(null)
+      loadEquipment()
+    } catch (error: any) {
+      console.error("Error deleting equipment:", error)
+      toast({
+        title: "Error retiring equipment",
+        description: error.message || "Failed to retire equipment",
+        variant: "destructive",
+      })
+    } finally {
+      setDeleteEquipmentLoading(false)
+    }
+  }
+
+  const handleCloseEquipmentForm = (open: boolean) => {
+    setAddEquipmentOpen(open)
+    if (!open) {
+      setEditingEquipment(null)
+    }
+  }
+
+  // Filter equipment
+  const filteredEquipment = equipment.filter((item) => {
+    const matchesSearch =
+      !equipmentSearchQuery ||
+      (item.equipmentName && item.equipmentName.toLowerCase().includes(equipmentSearchQuery.toLowerCase())) ||
+      (item.equipmentType && item.equipmentType.toLowerCase().includes(equipmentSearchQuery.toLowerCase())) ||
+      (item.serialNumber && item.serialNumber.toLowerCase().includes(equipmentSearchQuery.toLowerCase()))
+
+    const matchesStatus = !equipmentStatusFilter || item.status === equipmentStatusFilter.toLowerCase()
+
+    return matchesSearch && matchesStatus
+  })
+
+  // Prevent hydration mismatch by not rendering dynamic content until mounted
+  if (!isMounted) {
+    return (
+      <div className="flex flex-col gap-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">Intensive Care Unit</h1>
+            <p className="text-muted-foreground">Manage ICU patients and monitor critical care</p>
+          </div>
+        </div>
+        <div className="flex items-center justify-center py-8">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -624,6 +710,177 @@ export default function ICUPage() {
                       <TableRow>
                         <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                           No beds found
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="equipment" className="space-y-4 mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>ICU Equipment Management</CardTitle>
+              <CardDescription>View and manage ICU equipment</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex gap-2">
+                  <Button
+                    variant={equipmentStatusFilter === null ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => {
+                      setEquipmentStatusFilter(null)
+                      loadEquipment()
+                    }}
+                  >
+                    All Equipment
+                  </Button>
+                  <Button
+                    variant={equipmentStatusFilter === "available" ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => {
+                      setEquipmentStatusFilter("available")
+                      loadEquipment()
+                    }}
+                  >
+                    Available
+                  </Button>
+                  <Button
+                    variant={equipmentStatusFilter === "in_use" ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => {
+                      setEquipmentStatusFilter("in_use")
+                      loadEquipment()
+                    }}
+                  >
+                    In Use
+                  </Button>
+                  <Button
+                    variant={equipmentStatusFilter === "maintenance" ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => {
+                      setEquipmentStatusFilter("maintenance")
+                      loadEquipment()
+                    }}
+                  >
+                    Maintenance
+                  </Button>
+                  <Button
+                    variant={equipmentStatusFilter === "retired" ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => {
+                      setEquipmentStatusFilter("retired")
+                      loadEquipment()
+                    }}
+                  >
+                    Retired
+                  </Button>
+                </div>
+                <div className="flex gap-2">
+                  <Button onClick={() => setAddEquipmentOpen(true)} size="sm">
+                    <Plus className="mr-2 h-4 w-4" />
+                    Add Equipment
+                  </Button>
+                  <div className="relative w-64">
+                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      type="search"
+                      placeholder="Search equipment..."
+                      className="w-full pl-8"
+                      value={equipmentSearchQuery}
+                      onChange={(e) => setEquipmentSearchQuery(e.target.value)}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Equipment Name</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Serial Number</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Last Maintenance</TableHead>
+                      <TableHead>Next Maintenance</TableHead>
+                      <TableHead>Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {equipmentLoading ? (
+                      <TableRow>
+                        <TableCell colSpan={7} className="text-center py-8">
+                          <Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" />
+                          <p className="text-sm text-muted-foreground mt-2">Loading equipment...</p>
+                        </TableCell>
+                      </TableRow>
+                    ) : filteredEquipment.length > 0 ? (
+                      filteredEquipment.map((item) => (
+                        <TableRow key={item.icuEquipmentId}>
+                          <TableCell className="font-medium">{item.equipmentName}</TableCell>
+                          <TableCell>{item.equipmentType || "-"}</TableCell>
+                          <TableCell className="text-sm text-muted-foreground">{item.serialNumber || "-"}</TableCell>
+                          <TableCell>
+                            <Badge
+                              variant={
+                                item.status === "available"
+                                  ? "default"
+                                  : item.status === "in_use"
+                                    ? "secondary"
+                                    : item.status === "maintenance"
+                                      ? "destructive"
+                                      : "outline"
+                              }
+                            >
+                              {item.status || "available"}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-sm">
+                            {item.lastMaintenanceDate
+                              ? new Date(item.lastMaintenanceDate).toISOString().split("T")[0]
+                              : "-"}
+                          </TableCell>
+                          <TableCell className="text-sm">
+                            {item.nextMaintenanceDate
+                              ? new Date(item.nextMaintenanceDate).toISOString().split("T")[0]
+                              : "-"}
+                          </TableCell>
+                          <TableCell>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="sm">
+                                  <MoreHorizontal className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem onClick={() => {
+                                  setEditingEquipment(item)
+                                  setAddEquipmentOpen(true)
+                                }}>
+                                  <Edit className="mr-2 h-4 w-4" />
+                                  Edit
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onClick={() => setDeletingEquipment(item)}
+                                  className="text-red-600"
+                                >
+                                  <Trash2 className="mr-2 h-4 w-4" />
+                                  Retire
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    ) : (
+                      <TableRow>
+                        <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                          No equipment found
                         </TableCell>
                       </TableRow>
                     )}
