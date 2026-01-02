@@ -1,72 +1,42 @@
+"use client"
+
+import { useState, useEffect } from "react"
+import { useParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
-import { Printer, Download, Edit, ArrowLeft, CheckCircle, XCircle } from "lucide-react"
+import { Printer, Download, Edit, ArrowLeft, CheckCircle, XCircle, Loader2 } from "lucide-react"
 import Link from "next/link"
 import { BreadcrumbsEnhanced } from "@/components/breadcrumbs-enhanced"
+import { purchaseOrderApi } from "@/lib/api"
 
-export default function ProcurementOrderDetailPage({ params }: { params: { id: string } }) {
-  // Mock data for a specific order
-  const order = {
-    id: params.id,
-    vendorId: "V-001",
-    vendorName: "Medequip Supplies Ltd",
-    vendorAddress: "123 Medical Plaza, Nairobi, Kenya",
-    vendorContact: "+254 712 345 678",
-    dateCreated: "2023-10-15",
-    dateRequired: "2023-10-30",
-    status: "approved",
-    approvedBy: "Dr. James Mwangi",
-    approvedDate: "2023-10-18",
-    totalAmount: 245000,
-    tax: 39200,
-    grandTotal: 284200,
-    notes:
-      "Please ensure all items are delivered before the required date. Contact the procurement office for any clarifications.",
-    items: [
-      {
-        id: 1,
-        productId: "P-001",
-        description: "Surgical Gloves (Box of 100)",
-        quantity: 50,
-        unitPrice: 1200,
-        total: 60000,
-      },
-      {
-        id: 2,
-        productId: "P-003",
-        description: "Blood Pressure Monitor",
-        quantity: 5,
-        unitPrice: 12500,
-        total: 62500,
-      },
-      {
-        id: 3,
-        productId: "P-007",
-        description: "Stethoscope",
-        quantity: 8,
-        unitPrice: 7500,
-        total: 60000,
-      },
-      {
-        id: 4,
-        productId: "P-009",
-        description: "Syringes (Box of 100)",
-        quantity: 25,
-        unitPrice: 1500,
-        total: 37500,
-      },
-      {
-        id: 5,
-        productId: "P-004",
-        description: "Surgical Masks (Box of 50)",
-        quantity: 30,
-        unitPrice: 800,
-        total: 24000,
-      },
-    ],
-  }
+export default function ProcurementOrderDetailPage() {
+  const params = useParams()
+  const orderId = params.id as string
+  const [order, setOrder] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    const loadOrder = async () => {
+      try {
+        setLoading(true)
+        setError(null)
+        const data = await purchaseOrderApi.getById(orderId)
+        setOrder(data)
+      } catch (err: any) {
+        console.error('Error loading purchase order:', err)
+        setError(err.message || 'Failed to load purchase order')
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    if (orderId) {
+      loadOrder()
+    }
+  }, [orderId])
 
   // Function to render status badge with appropriate color
   const renderStatusBadge = (status: string) => {
@@ -75,8 +45,8 @@ export default function ProcurementOrderDetailPage({ params }: { params: { id: s
       { label: string; variant: "default" | "secondary" | "destructive" | "outline" | "success" }
     > = {
       draft: { label: "Draft", variant: "outline" },
-      pending: { label: "Pending Approval", variant: "secondary" },
-      approved: { label: "Approved", variant: "success" },
+      sent: { label: "Sent", variant: "secondary" },
+      partial_received: { label: "Partial Received", variant: "secondary" },
       received: { label: "Received", variant: "default" },
       cancelled: { label: "Cancelled", variant: "destructive" },
     }
@@ -96,6 +66,58 @@ export default function ProcurementOrderDetailPage({ params }: { params: { id: s
     }).format(amount)
   }
 
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center h-[50vh]">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        <p className="text-muted-foreground mt-4">Loading purchase order details...</p>
+      </div>
+    )
+  }
+
+  if (error || !order) {
+    return (
+      <div className="flex flex-col items-center justify-center h-[50vh]">
+        <h1 className="text-2xl font-bold">Purchase Order Not Found</h1>
+        <p className="text-muted-foreground">
+          {error || `The purchase order with ID ${orderId} could not be found.`}
+        </p>
+        <Link href="/procurement/orders" className="mt-4">
+          <Button variant="outline">
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back to Orders
+          </Button>
+        </Link>
+      </div>
+    )
+  }
+
+  // Transform API data to match component expectations
+  const transformedOrder = {
+    id: order.poNumber || order.purchaseOrderId?.toString(),
+    vendorId: order.vendorId,
+    vendorName: order.vendorName || "Unknown Vendor",
+    vendorAddress: order.address || "",
+    vendorContact: order.phone || "",
+    dateCreated: order.orderDate ? new Date(order.orderDate).toISOString().split('T')[0] : "",
+    dateRequired: order.expectedDeliveryDate ? new Date(order.expectedDeliveryDate).toISOString().split('T')[0] : "",
+    status: order.status || "draft",
+    approvedBy: order.approvedBy || null,
+    approvedDate: order.approvedDate || null,
+    totalAmount: parseFloat(order.subtotal || order.totalAmount || 0),
+    tax: parseFloat(order.tax || 0),
+    grandTotal: parseFloat(order.totalAmount || 0),
+    notes: order.notes || "",
+    items: (order.items || []).map((item: any, index: number) => ({
+      id: item.itemId || index + 1,
+      productId: item.inventoryItemCode || item.itemDescription?.substring(0, 10) || `ITEM-${index + 1}`,
+      description: item.itemDescription || "Item",
+      quantity: parseInt(item.quantity || 0),
+      unitPrice: parseFloat(item.unitPrice || 0),
+      total: parseFloat(item.totalPrice || 0),
+    })),
+  }
+
   return (
     <div className="space-y-4">
       <BreadcrumbsEnhanced />
@@ -107,8 +129,8 @@ export default function ProcurementOrderDetailPage({ params }: { params: { id: s
               <ArrowLeft className="h-4 w-4" />
             </Button>
           </Link>
-          <h1 className="text-2xl font-bold tracking-tight">Purchase Order: {order.id}</h1>
-          {renderStatusBadge(order.status)}
+          <h1 className="text-2xl font-bold tracking-tight">Purchase Order: {transformedOrder.id}</h1>
+          {renderStatusBadge(transformedOrder.status)}
         </div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm">
@@ -137,26 +159,26 @@ export default function ProcurementOrderDetailPage({ params }: { params: { id: s
             <div className="grid grid-cols-2 gap-6">
               <div>
                 <h3 className="text-sm font-medium text-muted-foreground mb-1">Vendor</h3>
-                <div className="font-medium">{order.vendorName}</div>
-                <div className="text-sm">{order.vendorAddress}</div>
-                <div className="text-sm">{order.vendorContact}</div>
+                <div className="font-medium">{transformedOrder.vendorName}</div>
+                <div className="text-sm">{transformedOrder.vendorAddress || "-"}</div>
+                <div className="text-sm">{transformedOrder.vendorContact || "-"}</div>
               </div>
               <div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <h3 className="text-sm font-medium text-muted-foreground mb-1">Order Date</h3>
-                    <div>{order.dateCreated}</div>
+                    <div>{transformedOrder.dateCreated}</div>
                   </div>
                   <div>
                     <h3 className="text-sm font-medium text-muted-foreground mb-1">Required By</h3>
-                    <div>{order.dateRequired}</div>
+                    <div>{transformedOrder.dateRequired}</div>
                   </div>
                 </div>
-                {order.status === "approved" && (
+                {transformedOrder.approvedBy && (
                   <div className="mt-4">
                     <h3 className="text-sm font-medium text-muted-foreground mb-1">Approved By</h3>
                     <div>
-                      {order.approvedBy} on {order.approvedDate}
+                      {transformedOrder.approvedBy} {transformedOrder.approvedDate && `on ${transformedOrder.approvedDate}`}
                     </div>
                   </div>
                 )}
@@ -178,15 +200,23 @@ export default function ProcurementOrderDetailPage({ params }: { params: { id: s
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {order.items.map((item) => (
-                      <TableRow key={item.id}>
-                        <TableCell className="font-medium">{item.productId}</TableCell>
-                        <TableCell>{item.description}</TableCell>
-                        <TableCell className="text-center">{item.quantity}</TableCell>
-                        <TableCell className="text-right">{formatCurrency(item.unitPrice)}</TableCell>
-                        <TableCell className="text-right font-medium">{formatCurrency(item.total)}</TableCell>
+                    {transformedOrder.items && transformedOrder.items.length > 0 ? (
+                      transformedOrder.items.map((item: any) => (
+                        <TableRow key={item.id}>
+                          <TableCell className="font-medium">{item.productId}</TableCell>
+                          <TableCell>{item.description}</TableCell>
+                          <TableCell className="text-center">{item.quantity}</TableCell>
+                          <TableCell className="text-right">{formatCurrency(item.unitPrice)}</TableCell>
+                          <TableCell className="text-right font-medium">{formatCurrency(item.total)}</TableCell>
+                        </TableRow>
+                      ))
+                    ) : (
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-center py-4 text-muted-foreground">
+                          No items found
+                        </TableCell>
                       </TableRow>
-                    ))}
+                    )}
                   </TableBody>
                 </Table>
               </div>
@@ -195,25 +225,27 @@ export default function ProcurementOrderDetailPage({ params }: { params: { id: s
                 <div className="w-[250px] space-y-2">
                   <div className="flex justify-between text-sm">
                     <span>Subtotal:</span>
-                    <span>{formatCurrency(order.totalAmount)}</span>
+                    <span>{formatCurrency(transformedOrder.totalAmount)}</span>
                   </div>
-                  <div className="flex justify-between text-sm">
-                    <span>Tax (16%):</span>
-                    <span>{formatCurrency(order.tax)}</span>
-                  </div>
+                  {transformedOrder.tax > 0 && (
+                    <div className="flex justify-between text-sm">
+                      <span>Tax:</span>
+                      <span>{formatCurrency(transformedOrder.tax)}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between font-medium text-base">
                     <span>Total:</span>
-                    <span>{formatCurrency(order.grandTotal)}</span>
+                    <span>{formatCurrency(transformedOrder.grandTotal)}</span>
                   </div>
                 </div>
               </div>
             </div>
 
             {/* Notes */}
-            {order.notes && (
+            {transformedOrder.notes && (
               <div>
                 <h3 className="text-sm font-medium text-muted-foreground mb-1">Notes</h3>
-                <div className="text-sm p-3 bg-muted rounded-md">{order.notes}</div>
+                <div className="text-sm p-3 bg-muted rounded-md">{transformedOrder.notes}</div>
               </div>
             )}
           </CardContent>
@@ -230,65 +262,69 @@ export default function ProcurementOrderDetailPage({ params }: { params: { id: s
                 <CheckCircle className="h-5 w-5 text-green-500 mt-0.5" />
                 <div>
                   <div className="font-medium">Created</div>
-                  <div className="text-sm text-muted-foreground">{order.dateCreated}</div>
-                  <div className="text-sm">Order created by John Doe</div>
+                  <div className="text-sm text-muted-foreground">{transformedOrder.dateCreated}</div>
+                  <div className="text-sm">Order created by {order.createdByFirstName || "System"} {order.createdByLastName || "Administrator"}</div>
                 </div>
               </div>
 
-              <div className="flex items-start gap-2">
-                <CheckCircle className="h-5 w-5 text-green-500 mt-0.5" />
-                <div>
-                  <div className="font-medium">Submitted for Approval</div>
-                  <div className="text-sm text-muted-foreground">2023-10-16</div>
-                  <div className="text-sm">Submitted by John Doe</div>
+              {transformedOrder.status === "sent" || transformedOrder.status === "partial_received" || transformedOrder.status === "received" ? (
+                <div className="flex items-start gap-2">
+                  <CheckCircle className="h-5 w-5 text-green-500 mt-0.5" />
+                  <div>
+                    <div className="font-medium">Sent to Vendor</div>
+                    <div className="text-sm text-muted-foreground">{transformedOrder.dateCreated}</div>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="flex items-start gap-2">
+                  <div className="h-5 w-5 rounded-full border-2 border-muted mt-0.5" />
+                  <div>
+                    <div className="font-medium">Sent to Vendor</div>
+                    <div className="text-sm text-muted-foreground">Pending</div>
+                  </div>
+                </div>
+              )}
 
-              <div className="flex items-start gap-2">
-                <CheckCircle className="h-5 w-5 text-green-500 mt-0.5" />
-                <div>
-                  <div className="font-medium">Approved</div>
-                  <div className="text-sm text-muted-foreground">{order.approvedDate}</div>
-                  <div className="text-sm">Approved by {order.approvedBy}</div>
+              {transformedOrder.status === "received" ? (
+                <div className="flex items-start gap-2">
+                  <CheckCircle className="h-5 w-5 text-green-500 mt-0.5" />
+                  <div>
+                    <div className="font-medium">Received</div>
+                    <div className="text-sm text-muted-foreground">{transformedOrder.dateRequired}</div>
+                  </div>
                 </div>
-              </div>
-
-              <div className="flex items-start gap-2">
-                <div className="h-5 w-5 rounded-full border-2 border-muted mt-0.5" />
-                <div>
-                  <div className="font-medium">Sent to Vendor</div>
-                  <div className="text-sm text-muted-foreground">Pending</div>
+              ) : transformedOrder.status === "partial_received" ? (
+                <div className="flex items-start gap-2">
+                  <CheckCircle className="h-5 w-5 text-yellow-500 mt-0.5" />
+                  <div>
+                    <div className="font-medium">Partially Received</div>
+                    <div className="text-sm text-muted-foreground">In Progress</div>
+                  </div>
                 </div>
-              </div>
-
-              <div className="flex items-start gap-2">
-                <div className="h-5 w-5 rounded-full border-2 border-muted mt-0.5" />
-                <div>
-                  <div className="font-medium">Received</div>
-                  <div className="text-sm text-muted-foreground">Pending</div>
+              ) : (
+                <div className="flex items-start gap-2">
+                  <div className="h-5 w-5 rounded-full border-2 border-muted mt-0.5" />
+                  <div>
+                    <div className="font-medium">Received</div>
+                    <div className="text-sm text-muted-foreground">Pending</div>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           </CardContent>
           <CardFooter>
             <div className="w-full space-y-2">
-              {order.status === "approved" && (
+              {transformedOrder.status === "draft" && (
                 <Button className="w-full">
                   <CheckCircle className="mr-2 h-4 w-4" />
-                  Mark as Sent to Vendor
+                  Send to Vendor
                 </Button>
               )}
-              {order.status === "pending" && (
-                <div className="flex gap-2 w-full">
-                  <Button className="flex-1" variant="success">
-                    <CheckCircle className="mr-2 h-4 w-4" />
-                    Approve
-                  </Button>
-                  <Button className="flex-1" variant="destructive">
-                    <XCircle className="mr-2 h-4 w-4" />
-                    Reject
-                  </Button>
-                </div>
+              {transformedOrder.status === "sent" && (
+                <Button className="w-full">
+                  <CheckCircle className="mr-2 h-4 w-4" />
+                  Mark as Received
+                </Button>
               )}
             </div>
           </CardFooter>

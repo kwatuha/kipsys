@@ -1,97 +1,53 @@
+"use client"
+
+import { useState, useEffect, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import { PlusCircle, Search, Edit, Trash2, Eye } from "lucide-react"
+import { PlusCircle, Search, Edit, Trash2, Eye, Loader2 } from "lucide-react"
 import Link from "next/link"
 import { BreadcrumbsEnhanced } from "@/components/breadcrumbs-enhanced"
+import { purchaseOrderApi } from "@/lib/api"
 
 export default function ProcurementOrdersPage() {
-  // Mock data for procurement orders
-  const orders = [
-    {
-      id: "PO-2023-001",
-      vendorId: "V-001",
-      vendorName: "Medequip Supplies Ltd",
-      dateCreated: "2023-10-15",
-      dateRequired: "2023-10-30",
-      status: "approved",
-      totalAmount: 245000,
-      items: 12,
-    },
-    {
-      id: "PO-2023-002",
-      vendorId: "V-003",
-      vendorName: "Pharma Distributors Kenya",
-      dateCreated: "2023-10-16",
-      dateRequired: "2023-11-05",
-      status: "pending",
-      totalAmount: 187500,
-      items: 8,
-    },
-    {
-      id: "PO-2023-003",
-      vendorId: "V-007",
-      vendorName: "Medical Imaging Solutions",
-      dateCreated: "2023-10-18",
-      dateRequired: "2023-12-01",
-      status: "draft",
-      totalAmount: 1250000,
-      items: 3,
-    },
-    {
-      id: "PO-2023-004",
-      vendorId: "V-002",
-      vendorName: "Laboratory Supplies Co.",
-      dateCreated: "2023-10-20",
-      dateRequired: "2023-11-10",
-      status: "received",
-      totalAmount: 78500,
-      items: 15,
-    },
-    {
-      id: "PO-2023-005",
-      vendorId: "V-005",
-      vendorName: "Surgical Instruments Kenya",
-      dateCreated: "2023-10-22",
-      dateRequired: "2023-11-15",
-      status: "approved",
-      totalAmount: 325000,
-      items: 7,
-    },
-    {
-      id: "PO-2023-006",
-      vendorId: "V-010",
-      vendorName: "Office Supplies Nairobi",
-      dateCreated: "2023-10-25",
-      dateRequired: "2023-11-05",
-      status: "pending",
-      totalAmount: 45000,
-      items: 22,
-    },
-    {
-      id: "PO-2023-007",
-      vendorId: "V-004",
-      vendorName: "Cleaning Solutions Ltd",
-      dateCreated: "2023-10-27",
-      dateRequired: "2023-11-10",
-      status: "approved",
-      totalAmount: 62500,
-      items: 10,
-    },
-    {
-      id: "PO-2023-008",
-      vendorId: "V-008",
-      vendorName: "IT Hardware Suppliers",
-      dateCreated: "2023-10-28",
-      dateRequired: "2023-12-15",
-      status: "draft",
-      totalAmount: 875000,
-      items: 6,
-    },
-  ]
+  const [orders, setOrders] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [statusFilter, setStatusFilter] = useState("all")
+  const [searchTerm, setSearchTerm] = useState("")
+
+  // Load purchase orders from API
+  const loadOrders = useCallback(async () => {
+    try {
+      setLoading(true)
+      const data = await purchaseOrderApi.getAll(undefined, statusFilter !== "all" ? statusFilter : undefined)
+      // Transform API response to match frontend expectations
+      const transformedData = (data || []).map((order: any) => ({
+        id: order.poNumber || order.purchaseOrderId?.toString(),
+        vendorId: order.vendorId,
+        vendorName: order.vendorName || "Unknown Vendor",
+        vendorCode: order.vendorCode,
+        dateCreated: order.orderDate ? new Date(order.orderDate).toISOString().split('T')[0] : "",
+        dateRequired: order.expectedDeliveryDate ? new Date(order.expectedDeliveryDate).toISOString().split('T')[0] : "",
+        status: order.status || "draft",
+        totalAmount: parseFloat(order.totalAmount || 0),
+        items: 0, // Will need to fetch items count separately if needed
+        purchaseOrderId: order.purchaseOrderId
+      }))
+      setOrders(transformedData)
+    } catch (err: any) {
+      console.error('Error loading purchase orders:', err)
+      setOrders([])
+    } finally {
+      setLoading(false)
+    }
+  }, [statusFilter])
+
+  useEffect(() => {
+    loadOrders()
+  }, [loadOrders])
 
   // Function to render status badge with appropriate color
   const renderStatusBadge = (status: string) => {
@@ -100,8 +56,8 @@ export default function ProcurementOrdersPage() {
       { label: string; variant: "default" | "secondary" | "destructive" | "outline" | "success" }
     > = {
       draft: { label: "Draft", variant: "outline" },
-      pending: { label: "Pending Approval", variant: "secondary" },
-      approved: { label: "Approved", variant: "success" },
+      sent: { label: "Sent", variant: "secondary" },
+      partial_received: { label: "Partial Received", variant: "secondary" },
       received: { label: "Received", variant: "default" },
       cancelled: { label: "Cancelled", variant: "destructive" },
     }
@@ -147,15 +103,15 @@ export default function ProcurementOrdersPage() {
               <Input type="search" placeholder="Search orders..." className="pl-8 w-full" />
             </div>
             <div className="flex items-center gap-2">
-              <Select defaultValue="all">
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
                 <SelectTrigger className="w-[180px]">
                   <SelectValue placeholder="Filter by status" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Statuses</SelectItem>
                   <SelectItem value="draft">Draft</SelectItem>
-                  <SelectItem value="pending">Pending Approval</SelectItem>
-                  <SelectItem value="approved">Approved</SelectItem>
+                  <SelectItem value="sent">Sent</SelectItem>
+                  <SelectItem value="partial_received">Partial Received</SelectItem>
                   <SelectItem value="received">Received</SelectItem>
                   <SelectItem value="cancelled">Cancelled</SelectItem>
                 </SelectContent>
@@ -174,70 +130,84 @@ export default function ProcurementOrdersPage() {
             </div>
           </div>
 
-          <div className="rounded-md border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Order ID</TableHead>
-                  <TableHead>Vendor</TableHead>
-                  <TableHead>Date Created</TableHead>
-                  <TableHead>Required By</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Items</TableHead>
-                  <TableHead className="text-right">Total Amount</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {orders.map((order) => (
-                  <TableRow key={order.id}>
-                    <TableCell className="font-medium">{order.id}</TableCell>
-                    <TableCell>
-                      <div className="font-medium">{order.vendorName}</div>
-                      <div className="text-xs text-muted-foreground">{order.vendorId}</div>
-                    </TableCell>
-                    <TableCell>{order.dateCreated}</TableCell>
-                    <TableCell>{order.dateRequired}</TableCell>
-                    <TableCell>{renderStatusBadge(order.status)}</TableCell>
-                    <TableCell>{order.items}</TableCell>
-                    <TableCell className="text-right font-medium">{formatCurrency(order.totalAmount)}</TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        <Link href={`/procurement/orders/${order.id}`}>
-                          <Button variant="ghost" size="icon">
-                            <Eye className="h-4 w-4" />
-                            <span className="sr-only">View</span>
-                          </Button>
-                        </Link>
-                        <Button variant="ghost" size="icon">
-                          <Edit className="h-4 w-4" />
-                          <span className="sr-only">Edit</span>
-                        </Button>
-                        <Button variant="ghost" size="icon">
-                          <Trash2 className="h-4 w-4" />
-                          <span className="sr-only">Delete</span>
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
+          {loading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              <span className="ml-2 text-muted-foreground">Loading purchase orders...</span>
+            </div>
+          ) : orders.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <p>No purchase orders found.</p>
+              <p className="text-sm mt-2">Create a new purchase order to get started.</p>
+            </div>
+          ) : (
+            <>
+              <div className="rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Order ID</TableHead>
+                      <TableHead>Vendor</TableHead>
+                      <TableHead>Date Created</TableHead>
+                      <TableHead>Required By</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Items</TableHead>
+                      <TableHead className="text-right">Total Amount</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {orders.map((order) => (
+                      <TableRow key={order.id || order.purchaseOrderId}>
+                        <TableCell className="font-medium">{order.id}</TableCell>
+                        <TableCell>
+                          <div className="font-medium">{order.vendorName}</div>
+                          <div className="text-xs text-muted-foreground">{order.vendorCode || order.vendorId}</div>
+                        </TableCell>
+                        <TableCell>{order.dateCreated}</TableCell>
+                        <TableCell>{order.dateRequired}</TableCell>
+                        <TableCell>{renderStatusBadge(order.status)}</TableCell>
+                        <TableCell>{order.items || "-"}</TableCell>
+                        <TableCell className="text-right font-medium">{formatCurrency(order.totalAmount)}</TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
+                            <Link href={`/procurement/orders/${order.purchaseOrderId || order.id}`}>
+                              <Button variant="ghost" size="icon">
+                                <Eye className="h-4 w-4" />
+                                <span className="sr-only">View</span>
+                              </Button>
+                            </Link>
+                            <Button variant="ghost" size="icon">
+                              <Edit className="h-4 w-4" />
+                              <span className="sr-only">Edit</span>
+                            </Button>
+                            <Button variant="ghost" size="icon">
+                              <Trash2 className="h-4 w-4" />
+                              <span className="sr-only">Delete</span>
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
 
-          <div className="flex items-center justify-between mt-4">
-            <div className="text-sm text-muted-foreground">
-              Showing <strong>8</strong> of <strong>8</strong> orders
-            </div>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" disabled>
-                Previous
-              </Button>
-              <Button variant="outline" size="sm" disabled>
-                Next
-              </Button>
-            </div>
-          </div>
+              <div className="flex items-center justify-between mt-4">
+                <div className="text-sm text-muted-foreground">
+                  Showing <strong>{orders.length}</strong> of <strong>{orders.length}</strong> orders
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" disabled>
+                    Previous
+                  </Button>
+                  <Button variant="outline" size="sm" disabled>
+                    Next
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
         </CardContent>
       </Card>
     </div>

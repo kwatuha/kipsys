@@ -65,4 +65,63 @@ INSERT INTO purchase_order_items (purchaseOrderId, itemDescription, quantity, un
 ((SELECT purchaseOrderId FROM purchase_orders WHERE poNumber = 'PO-000004'), 'Disposable Syringes - 5ml', 3, 'box', 1500.00, 4500.00, 'For vaccinations'),
 ((SELECT purchaseOrderId FROM purchase_orders WHERE poNumber = 'PO-000004'), 'Surgical Masks - N95', 2, 'box', 2500.00, 5000.00, 'For staff protection');
 
+-- Sample Vendor Contracts for multiple vendors
+-- Vendor 21 (MediSupply Co. - V001)
+INSERT INTO vendor_contracts (vendorId, contractNumber, contractType, startDate, endDate, contractValue, currency, status, renewalOption, keyTerms, notes, createdBy) VALUES
+(21, 'CNT-2024-002', 'Annual Supply', '2022-06-01', '2024-05-31', 5000000.00, 'KES', 'active', TRUE, 
+'Annual medical supplies contract\nMinimum order value: KES 200,000\nPayment terms: Net 30\nQuality assurance guarantee\nPrice lock for contract duration', 
+'Primary medical supplies supplier', 1);
+
+-- Vendor 22 (PharmaTech Ltd. - V002)
+INSERT INTO vendor_contracts (vendorId, contractNumber, contractType, startDate, endDate, contractValue, currency, status, renewalOption, keyTerms, notes, createdBy) VALUES
+(22, 'CNT-2024-003', 'Exclusive Supply', '2022-09-15', '2024-09-14', 3500000.00, 'KES', 'active', TRUE,
+'Exclusive supplier for listed medications\nPayment terms: Net 45\nMonthly inventory review\nEmergency delivery within 24 hours\nAnnual price negotiation',
+'Primary pharmaceutical supplier', 1);
+
+-- Vendor 24 (FoodWorks Catering - V004)
+INSERT INTO vendor_contracts (vendorId, contractNumber, contractType, startDate, endDate, contractValue, currency, status, renewalOption, keyTerms, notes, createdBy) VALUES
+(24, 'CNT-2024-004', 'Service Agreement', '2023-01-01', '2023-12-31', 2400000.00, 'KES', 'expired', TRUE,
+'Cafeteria catering services\nMonthly service fee: KES 200,000\nDaily meal service\nQuality standards compliance\nMonthly menu review',
+'Hospital cafeteria supplier contract', 1),
+(24, 'CNT-2024-005', 'Service Agreement', '2024-01-01', '2024-12-31', 2600000.00, 'KES', 'active', TRUE,
+'Cafeteria catering services renewal\nMonthly service fee: KES 220,000\nDaily meal service\nQuality standards compliance\nMonthly menu review',
+'Renewed cafeteria contract for 2024', 1);
+
+-- Vendor 25 (TechSolutions Inc. - V005)
+INSERT INTO vendor_contracts (vendorId, contractNumber, contractType, startDate, endDate, contractValue, currency, status, renewalOption, keyTerms, notes, createdBy) VALUES
+(25, 'CNT-2024-006', 'Equipment & Support', '2022-07-15', '2025-07-14', 7500000.00, 'KES', 'active', TRUE,
+'IT equipment and software support contract\nAnnual equipment budget: KES 2,500,000\n24/7 technical support\nQuarterly equipment maintenance\nSoftware updates included',
+'Comprehensive IT equipment and support', 1);
+
+-- Vendor 26 (LabEquip Kenya - V006)
+INSERT INTO vendor_contracts (vendorId, contractNumber, contractType, startDate, endDate, contractValue, currency, status, renewalOption, keyTerms, notes, createdBy) VALUES
+(26, 'CNT-2024-007', 'Annual Supply', '2023-03-01', '2024-02-28', 3200000.00, 'KES', 'active', TRUE,
+'Laboratory equipment and supplies\nMinimum order value: KES 150,000\nPayment terms: Net 30\nCalibration services included\nEmergency replacement guarantee',
+'Laboratory equipment supplier', 1);
+
+-- Vendor 27 (Building Maintenance Ltd - V007)
+INSERT INTO vendor_contracts (vendorId, contractNumber, contractType, startDate, endDate, contractValue, currency, status, renewalOption, keyTerms, notes, createdBy) VALUES
+(27, 'CNT-2024-008', 'Service Agreement', '2023-01-01', '2023-12-31', 1800000.00, 'KES', 'expired', FALSE,
+'Facilities maintenance and repairs\nMonthly retainer: KES 150,000\nResponse time: 4 hours\nCoverage: Business hours\nQuarterly facility inspection',
+'Previous year maintenance contract', 1);
+
+-- Vendor 28 (MediCare Uniforms - V008)
+INSERT INTO vendor_contracts (vendorId, contractNumber, contractType, startDate, endDate, contractValue, currency, status, renewalOption, keyTerms, notes, createdBy) VALUES
+(28, 'CNT-2024-009', 'Annual Supply', '2023-06-01', '2024-05-31', 1200000.00, 'KES', 'active', TRUE,
+'Medical uniforms and scrubs supply\nQuarterly delivery schedule\nPayment terms: Net 15\nCustom sizing available\nQuality fabric guarantee',
+'Medical uniforms supplier', 1);
+
+-- Vendor 29 (SafetyFirst Equipment - V009)
+INSERT INTO vendor_contracts (vendorId, contractNumber, contractType, startDate, endDate, contractValue, currency, status, renewalOption, keyTerms, notes, createdBy) VALUES
+(29, 'CNT-2024-010', 'Annual Supply', '2023-09-01', '2024-08-31', 2100000.00, 'KES', 'active', TRUE,
+'Safety and protective equipment\nMinimum order value: KES 100,000\nPayment terms: Net 30\nSafety certification required\nEmergency supply available',
+'Safety equipment supplier', 1);
+
+-- Vendor 30 (PharmaGlobal Kenya - V010)
+INSERT INTO vendor_contracts (vendorId, contractNumber, contractType, startDate, endDate, contractValue, currency, status, renewalOption, keyTerms, notes, createdBy) VALUES
+(30, 'CNT-2024-011', 'Exclusive Supply', '2023-01-15', '2024-01-14', 4200000.00, 'KES', 'active', TRUE,
+'International pharmaceutical distributor\nExclusive supplier for specialty medications\nPayment terms: Net 45\nCold chain management\nRegulatory compliance guarantee',
+'International pharmaceutical supplier', 1);
+
+
 

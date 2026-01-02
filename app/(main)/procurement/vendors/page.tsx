@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react"
 import { useRouter } from "next/navigation"
-import { vendorApi } from "@/lib/api"
+import { vendorApi, purchaseOrderApi } from "@/lib/api"
 import { toast } from "@/components/ui/use-toast"
 import { format } from "date-fns"
 import { Loader2, Trash2, MoreVertical } from "lucide-react"
@@ -199,100 +199,41 @@ const legacyVendors = [
   },
 ]
 
-// Sample data for purchase orders
-const purchaseOrders = [
-  {
-    id: "PO001",
-    vendor: "MediSupply Co.",
-    date: "2023-05-15",
-    amount: "KES 250,000",
-    status: "Delivered",
-  },
-  {
-    id: "PO002",
-    vendor: "PharmaTech Ltd",
-    date: "2023-05-20",
-    amount: "KES 180,000",
-    status: "Pending",
-  },
-  {
-    id: "PO003",
-    vendor: "CleanPro Services",
-    date: "2023-05-22",
-    amount: "KES 45,000",
-    status: "Processing",
-  },
-  {
-    id: "PO004",
-    vendor: "FoodWorks Catering",
-    date: "2023-05-25",
-    amount: "KES 120,000",
-    status: "Delivered",
-  },
-]
+// Legacy sample data for purchase orders (kept as fallback, but now using API)
+// const purchaseOrders = [
+//   {
+//     id: "PO001",
+//     vendor: "MediSupply Co.",
+//     date: "2023-05-15",
+//     amount: "KES 250,000",
+//     status: "Delivered",
+//   },
+//   ...
+// ]
 
-// Sample data for vendor performance
-const vendorPerformance = [
-  { name: "MediSupply Co.", onTimeDelivery: 95, qualityScore: 98, responseTime: 4.8, costSavings: 12 },
-  { name: "PharmaTech Ltd", onTimeDelivery: 92, qualityScore: 95, responseTime: 4.5, costSavings: 8 },
-  { name: "CleanPro Services", onTimeDelivery: 85, qualityScore: 88, responseTime: 3.9, costSavings: 5 },
-  { name: "FoodWorks Catering", onTimeDelivery: 90, qualityScore: 92, responseTime: 4.2, costSavings: 7 },
-  { name: "TechSolutions Inc.", onTimeDelivery: 94, qualityScore: 96, responseTime: 4.7, costSavings: 15 },
-]
+// Legacy sample data for vendor performance (kept as fallback, but now using API)
+// const vendorPerformance = [
+//   { name: "MediSupply Co.", onTimeDelivery: 95, qualityScore: 98, responseTime: 4.8, costSavings: 12 },
+//   { name: "PharmaTech Ltd", onTimeDelivery: 92, qualityScore: 95, responseTime: 4.5, costSavings: 8 },
+//   { name: "CleanPro Services", onTimeDelivery: 85, qualityScore: 88, responseTime: 3.9, costSavings: 5 },
+//   { name: "FoodWorks Catering", onTimeDelivery: 90, qualityScore: 92, responseTime: 4.2, costSavings: 7 },
+//   { name: "TechSolutions Inc.", onTimeDelivery: 94, qualityScore: 96, responseTime: 4.7, costSavings: 15 },
+// ]
 
-// Sample data for vendor contracts
-const vendorContracts = [
-  {
-    id: "C001",
-    vendor: "MediSupply Co.",
-    startDate: "2022-06-01",
-    endDate: "2024-05-31",
-    status: "Active",
-    value: "KES 5,000,000",
-    type: "Annual Supply",
-    renewalOption: "Yes",
-  },
-  {
-    id: "C002",
-    vendor: "PharmaTech Ltd",
-    startDate: "2022-09-15",
-    endDate: "2024-09-14",
-    status: "Active",
-    value: "KES 3,500,000",
-    type: "Exclusive Supply",
-    renewalOption: "Yes",
-  },
-  {
-    id: "C003",
-    vendor: "CleanPro Services",
-    startDate: "2021-03-01",
-    endDate: "2023-02-28",
-    status: "Expired",
-    value: "KES 1,200,000",
-    type: "Service",
-    renewalOption: "No",
-  },
-  {
-    id: "C004",
-    vendor: "FoodWorks Catering",
-    startDate: "2023-01-01",
-    endDate: "2023-12-31",
-    status: "Active",
-    value: "KES 2,400,000",
-    type: "Service",
-    renewalOption: "Yes",
-  },
-  {
-    id: "C005",
-    vendor: "TechSolutions Inc.",
-    startDate: "2022-07-15",
-    endDate: "2025-07-14",
-    status: "Active",
-    value: "KES 7,500,000",
-    type: "Equipment & Support",
-    renewalOption: "Yes",
-  },
-]
+// Legacy sample data for vendor contracts (kept as fallback, but now using API)
+// const vendorContracts = [
+//   {
+//     id: "C001",
+//     vendor: "MediSupply Co.",
+//     startDate: "2022-06-01",
+//     endDate: "2024-05-31",
+//     status: "Active",
+//     value: "KES 5,000,000",
+//     type: "Annual Supply",
+//     renewalOption: "Yes",
+//   },
+//   ...
+// ]
 
 export default function VendorsPage() {
   const [isDialogOpen, setIsDialogOpen] = useState(false)
@@ -311,6 +252,18 @@ export default function VendorsPage() {
   const [deleteVendorOpen, setDeleteVendorOpen] = useState(false)
   const [deletingVendor, setDeletingVendor] = useState<Vendor | null>(null)
   const [deletingVendorLoading, setDeletingVendorLoading] = useState(false)
+  
+  // Performance data state
+  const [vendorPerformance, setVendorPerformance] = useState<any[]>([])
+  const [performanceLoading, setPerformanceLoading] = useState(false)
+  
+  // Contracts data state
+  const [vendorContracts, setVendorContracts] = useState<any[]>([])
+  const [contractsLoading, setContractsLoading] = useState(false)
+  
+  // Purchase Orders data state
+  const [purchaseOrders, setPurchaseOrders] = useState<any[]>([])
+  const [ordersLoading, setOrdersLoading] = useState(false)
 
   const loadVendors = useCallback(async (search?: string, status?: string, category?: string) => {
     try {
@@ -339,14 +292,98 @@ export default function VendorsPage() {
 
   useEffect(() => {
     loadVendors(undefined, statusFilter, categoryFilter)
-  }, [statusFilter, categoryFilter, loadVendors])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter, categoryFilter])
 
   useEffect(() => {
     const timeoutId = setTimeout(() => {
       loadVendors(searchTerm, statusFilter, categoryFilter)
     }, 500)
     return () => clearTimeout(timeoutId)
-  }, [searchTerm, loadVendors, statusFilter, categoryFilter])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchTerm, statusFilter, categoryFilter])
+
+  // Load performance data
+  const loadPerformance = useCallback(async () => {
+    try {
+      setPerformanceLoading(true)
+      const data = await vendorApi.getPerformance()
+      setVendorPerformance(data || [])
+    } catch (err: any) {
+      console.error('Error loading vendor performance:', err)
+      // Set empty array on error to avoid breaking the UI
+      setVendorPerformance([])
+    } finally {
+      setPerformanceLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    loadPerformance()
+  }, [loadPerformance])
+
+  // Load contracts data
+  const loadContracts = useCallback(async () => {
+    try {
+      setContractsLoading(true)
+      const data = await vendorApi.getAllContracts()
+      // Transform API response to match frontend expectations
+      const transformedData = (data || []).map((contract: any) => ({
+        id: contract.contractNumber || contract.contractId?.toString(),
+        vendorId: contract.vendorId,
+        vendor: contract.vendorName || "Unknown Vendor",
+        vendorCode: contract.vendorCode,
+        type: contract.contractType || "Standard",
+        startDate: contract.startDate ? new Date(contract.startDate).toISOString().split('T')[0] : "",
+        endDate: contract.endDate ? new Date(contract.endDate).toISOString().split('T')[0] : "",
+        value: contract.contractValue ? `KES ${parseFloat(contract.contractValue).toLocaleString()}` : "KES 0",
+        status: contract.status?.charAt(0).toUpperCase() + contract.status?.slice(1) || "Draft",
+        renewalOption: contract.renewalOption ? "Yes" : "No",
+        contractId: contract.contractId
+      }))
+      setVendorContracts(transformedData)
+    } catch (err: any) {
+      console.error('Error loading vendor contracts:', err)
+      // Set empty array on error to avoid breaking the UI
+      setVendorContracts([])
+    } finally {
+      setContractsLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    loadContracts()
+  }, [loadContracts])
+
+  // Load purchase orders data
+  const loadPurchaseOrders = useCallback(async () => {
+    try {
+      setOrdersLoading(true)
+      const data = await purchaseOrderApi.getAll()
+      // Transform API response to match frontend expectations
+      const transformedData = (data || []).map((order: any) => ({
+        id: order.poNumber || order.purchaseOrderId?.toString(),
+        vendorId: order.vendorId,
+        vendor: order.vendorName || "Unknown Vendor",
+        vendorCode: order.vendorCode,
+        date: order.orderDate ? new Date(order.orderDate).toISOString().split('T')[0] : "",
+        amount: order.totalAmount ? `KES ${parseFloat(order.totalAmount).toLocaleString()}` : "KES 0",
+        status: order.status?.charAt(0).toUpperCase() + order.status?.slice(1).replace('_', ' ') || "Draft",
+        purchaseOrderId: order.purchaseOrderId
+      }))
+      setPurchaseOrders(transformedData)
+    } catch (err: any) {
+      console.error('Error loading purchase orders:', err)
+      // Set empty array on error to avoid breaking the UI
+      setPurchaseOrders([])
+    } finally {
+      setOrdersLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    loadPurchaseOrders()
+  }, [loadPurchaseOrders])
 
   const viewVendorDetails = (vendorId: string | number) => {
     router.push(`/procurement/vendors/${vendorId}`)
@@ -450,7 +487,7 @@ export default function VendorsPage() {
   const avgRating = vendors.length > 0 
     ? (vendors.reduce((sum, v) => sum + (v.rating || 0), 0) / vendors.length).toFixed(1)
     : "0.0"
-  const expiredContracts = vendorContracts.filter((c) => c.status === "Expired").length
+  const expiredContracts = vendorContracts.filter((c) => c.status === "Expired" || c.status === "expired").length
 
   return (
     <div className="flex flex-col gap-4 p-4 md:p-8">
@@ -531,7 +568,7 @@ export default function VendorsPage() {
               {activeVendors}/{totalVendors}
             </div>
             <p className="text-xs text-muted-foreground">
-              {Math.round((activeVendors / totalVendors) * 100)}% active vendor rate
+              {totalVendors > 0 ? Math.round((activeVendors / totalVendors) * 100) : 0}% active vendor rate
             </p>
           </CardContent>
         </Card>
@@ -732,21 +769,32 @@ export default function VendorsPage() {
               <CardDescription>Track and analyze vendor performance metrics</CardDescription>
             </CardHeader>
             <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Vendor</TableHead>
-                    <TableHead>On-Time Delivery (%)</TableHead>
-                    <TableHead>Quality Score (%)</TableHead>
-                    <TableHead>Response Time (hrs)</TableHead>
-                    <TableHead>Cost Savings (%)</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {vendorPerformance.map((vendor) => (
-                    <TableRow key={vendor.name}>
-                      <TableCell className="font-medium">{vendor.name}</TableCell>
+              {performanceLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                  <span className="ml-2 text-muted-foreground">Loading performance data...</span>
+                </div>
+              ) : vendorPerformance.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <p>No performance data available.</p>
+                  <p className="text-sm mt-2">Performance metrics are calculated from vendor ratings.</p>
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Vendor</TableHead>
+                      <TableHead>On-Time Delivery (%)</TableHead>
+                      <TableHead>Quality Score (%)</TableHead>
+                      <TableHead>Response Time (hrs)</TableHead>
+                      <TableHead>Cost Savings (%)</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {vendorPerformance.map((vendor) => (
+                      <TableRow key={vendor.vendorId || vendor.name}>
+                        <TableCell className="font-medium">{vendor.name}</TableCell>
                       <TableCell>
                         <div className="flex items-center">
                           <div className="w-full bg-gray-200 rounded-full h-2.5 mr-2">
@@ -782,17 +830,22 @@ export default function VendorsPage() {
                         </div>
                       </TableCell>
                       <TableCell>{vendor.responseTime}</TableCell>
-                      <TableCell>{vendor.costSavings}%</TableCell>
-                      <TableCell className="text-right">
-                        <Button variant="ghost" size="sm">
-                          <BarChart3 className="h-4 w-4 mr-1" />
-                          Details
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                        <TableCell>{vendor.costSavings || 0}%</TableCell>
+                        <TableCell className="text-right">
+                          <Button 
+                            variant="ghost" 
+                            size="sm"
+                            onClick={() => router.push(`/procurement/vendors/${vendor.vendorId}`)}
+                          >
+                            <BarChart3 className="h-4 w-4 mr-1" />
+                            Details
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -811,50 +864,66 @@ export default function VendorsPage() {
               </Button>
             </CardHeader>
             <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Contract ID</TableHead>
-                    <TableHead>Vendor</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead>Start Date</TableHead>
-                    <TableHead>End Date</TableHead>
-                    <TableHead>Value</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {vendorContracts.map((contract) => (
-                    <TableRow key={contract.id}>
-                      <TableCell>{contract.id}</TableCell>
-                      <TableCell className="font-medium">{contract.vendor}</TableCell>
-                      <TableCell>{contract.type}</TableCell>
-                      <TableCell>{contract.startDate}</TableCell>
-                      <TableCell>{contract.endDate}</TableCell>
-                      <TableCell>{contract.value}</TableCell>
-                      <TableCell>
-                        <Badge variant={contract.status === "Active" ? "default" : "destructive"}>
-                          {contract.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                          <Button variant="ghost" size="sm">
-                            <Eye className="h-4 w-4" />
-                          </Button>
-                          <Button variant="ghost" size="sm">
-                            <FileEdit className="h-4 w-4" />
-                          </Button>
-                          <Button variant="ghost" size="sm">
-                            <Calendar className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </TableCell>
+              {contractsLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                  <span className="ml-2 text-muted-foreground">Loading contracts...</span>
+                </div>
+              ) : vendorContracts.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <p>No contracts found.</p>
+                  <p className="text-sm mt-2">Create a new contract to get started.</p>
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Contract ID</TableHead>
+                      <TableHead>Vendor</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Start Date</TableHead>
+                      <TableHead>End Date</TableHead>
+                      <TableHead>Value</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {vendorContracts.map((contract) => (
+                      <TableRow key={contract.id || contract.contractId}>
+                        <TableCell>{contract.id}</TableCell>
+                        <TableCell className="font-medium">{contract.vendor}</TableCell>
+                        <TableCell>{contract.type}</TableCell>
+                        <TableCell>{contract.startDate}</TableCell>
+                        <TableCell>{contract.endDate}</TableCell>
+                        <TableCell>{contract.value}</TableCell>
+                        <TableCell>
+                          <Badge variant={contract.status === "Active" || contract.status === "active" ? "default" : contract.status === "Expired" || contract.status === "expired" ? "destructive" : "secondary"}>
+                            {contract.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
+                            <Button 
+                              variant="ghost" 
+                              size="sm"
+                              onClick={() => router.push(`/procurement/vendors/${contract.vendorId}`)}
+                            >
+                              <Eye className="h-4 w-4" />
+                            </Button>
+                            <Button variant="ghost" size="sm">
+                              <FileEdit className="h-4 w-4" />
+                            </Button>
+                            <Button variant="ghost" size="sm">
+                              <Calendar className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -867,43 +936,62 @@ export default function VendorsPage() {
               <CardDescription>Track and manage purchase orders with vendors</CardDescription>
             </CardHeader>
             <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>PO Number</TableHead>
-                    <TableHead>Vendor</TableHead>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Amount</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {purchaseOrders.map((po) => (
-                    <TableRow key={po.id}>
-                      <TableCell>{po.id}</TableCell>
-                      <TableCell className="font-medium">{po.vendor}</TableCell>
-                      <TableCell>{po.date}</TableCell>
-                      <TableCell>{po.amount}</TableCell>
-                      <TableCell>
-                        <Badge
-                          variant={
-                            po.status === "Delivered" ? "default" : po.status === "Processing" ? "secondary" : "outline"
-                          }
-                        >
-                          {po.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button variant="ghost" size="sm">
-                          <Eye className="h-4 w-4 mr-1" />
-                          View
-                        </Button>
-                      </TableCell>
+              {ordersLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                  <span className="ml-2 text-muted-foreground">Loading purchase orders...</span>
+                </div>
+              ) : purchaseOrders.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <p>No purchase orders found.</p>
+                  <p className="text-sm mt-2">Create a new purchase order to get started.</p>
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>PO Number</TableHead>
+                      <TableHead>Vendor</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Amount</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {purchaseOrders.map((po) => (
+                      <TableRow key={po.id || po.purchaseOrderId}>
+                        <TableCell>{po.id}</TableCell>
+                        <TableCell className="font-medium">{po.vendor}</TableCell>
+                        <TableCell>{po.date}</TableCell>
+                        <TableCell>{po.amount}</TableCell>
+                        <TableCell>
+                          <Badge
+                            variant={
+                              po.status === "Received" || po.status === "received" ? "default" 
+                              : po.status === "Partial received" || po.status === "Partial_received" || po.status === "partial_received" ? "secondary"
+                              : po.status === "Sent" || po.status === "sent" ? "outline"
+                              : "outline"
+                            }
+                          >
+                            {po.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button 
+                            variant="ghost" 
+                            size="sm"
+                            onClick={() => router.push(`/procurement/orders/${po.purchaseOrderId || po.id}`)}
+                          >
+                            <Eye className="h-4 w-4 mr-1" />
+                            View
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

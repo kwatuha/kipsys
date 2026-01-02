@@ -57,6 +57,53 @@ router.get('/', async (req, res) => {
 });
 
 /**
+ * @route GET /api/procurement/vendors/performance
+ * @description Get performance metrics for all vendors (calculated from ratings)
+ * NOTE: This route must be defined BEFORE /:id to avoid route conflicts
+ */
+router.get('/performance', async (req, res) => {
+    try {
+        const query = `
+            SELECT 
+                v.vendorId,
+                v.vendorName,
+                v.vendorCode,
+                v.rating as overallRating,
+                COALESCE(AVG(vr.onTimeDeliveryScore), 0) as avgOnTimeDelivery,
+                COALESCE(AVG(vr.qualityScore), 0) as avgQualityScore,
+                COALESCE(AVG(vr.responseTimeScore), 0) as avgResponseTime,
+                COALESCE(AVG(vr.costScore), 0) as avgCostScore,
+                COUNT(vr.ratingId) as totalRatings
+            FROM vendors v
+            LEFT JOIN vendor_ratings vr ON v.vendorId = vr.vendorId
+            WHERE v.status = 'active'
+            GROUP BY v.vendorId, v.vendorName, v.vendorCode, v.rating
+            ORDER BY v.vendorName
+        `;
+        
+        const [rows] = await pool.execute(query);
+        
+        // Transform the data to match frontend expectations
+        const performanceData = rows.map((row) => ({
+            vendorId: row.vendorId,
+            name: row.vendorName,
+            vendorCode: row.vendorCode,
+            onTimeDelivery: Math.round((parseFloat(row.avgOnTimeDelivery) / 5) * 100), // Convert 1-5 scale to percentage
+            qualityScore: Math.round((parseFloat(row.avgQualityScore) / 5) * 100),
+            responseTime: parseFloat(row.avgResponseTime) || 0,
+            costSavings: 0, // Cost savings calculation would require additional business logic
+            overallRating: parseFloat(row.overallRating) || 0,
+            totalRatings: parseInt(row.totalRatings) || 0
+        }));
+        
+        res.status(200).json(performanceData);
+    } catch (error) {
+        console.error('Error fetching vendor performance:', error);
+        res.status(500).json({ message: 'Error fetching vendor performance', error: error.message });
+    }
+});
+
+/**
  * @route GET /api/procurement/vendors/:id
  * @description Get a single vendor
  */

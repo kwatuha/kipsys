@@ -510,6 +510,9 @@ export const vendorApi = {
     apiRequest<any>(`/api/procurement/vendors/${vendorId}/products/${productId}`, { method: 'DELETE' }),
   
   // Vendor Contracts
+  getAllContracts: () =>
+    apiRequest<any[]>(`/api/procurement/vendors/contracts`),
+  
   getContracts: (vendorId: string) =>
     apiRequest<any[]>(`/api/procurement/vendors/${vendorId}/contracts`),
   
@@ -553,6 +556,10 @@ export const vendorApi = {
   
   deleteIssue: (vendorId: string, issueId: string) =>
     apiRequest<any>(`/api/procurement/vendors/${vendorId}/issues/${issueId}`, { method: 'DELETE' }),
+  
+  // Vendor Performance
+  getPerformance: () =>
+    apiRequest<any[]>(`/api/procurement/vendors/performance`),
 };
 
 // Purchase Orders API

@@ -4,6 +4,42 @@ const router = express.Router();
 const pool = require('../config/db');
 
 /**
+ * @route GET /api/procurement/vendors/contracts
+ * @description Get all contracts for all vendors (for listing page)
+ * NOTE: This route must be defined BEFORE /:vendorId/contracts to avoid route conflicts
+ */
+router.get('/contracts', async (req, res) => {
+    try {
+        // Check if table exists first
+        const [tables] = await pool.execute(
+            "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'vendor_contracts'",
+            [process.env.DB_NAME || 'kiplombe_hmis']
+        );
+        
+        if (tables.length === 0) {
+            return res.status(200).json([]);
+        }
+        
+        const [rows] = await pool.execute(
+            `SELECT 
+                c.*,
+                v.vendorName,
+                v.vendorCode,
+                u.firstName as createdByFirstName,
+                u.lastName as createdByLastName
+            FROM vendor_contracts c
+            LEFT JOIN vendors v ON c.vendorId = v.vendorId
+            LEFT JOIN users u ON c.createdBy = u.userId
+            ORDER BY c.startDate DESC`
+        );
+        res.status(200).json(rows);
+    } catch (error) {
+        console.error('Error fetching all vendor contracts:', error);
+        res.status(200).json([]);
+    }
+});
+
+/**
  * @route GET /api/procurement/vendors/:vendorId/contracts
  * @description Get all contracts for a vendor
  */
