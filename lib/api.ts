@@ -86,6 +86,9 @@ export const departmentApi = {
   
   update: (id: string, data: any) =>
     apiRequest<any>(`/api/departments/${id}`, { method: 'PUT', body: data }),
+  
+  delete: (id: string) =>
+    apiRequest<any>(`/api/departments/${id}`, { method: 'DELETE' }),
 };
 
 // Pharmacy API

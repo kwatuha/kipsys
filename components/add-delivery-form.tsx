@@ -5,7 +5,7 @@ import { zodResolver } from "@hookform/resolvers/zod"
 import { useForm, useFieldArray } from "react-hook-form"
 import * as z from "zod"
 import { CalendarIcon, Loader2, Plus, Trash2 } from "lucide-react"
-import { format } from "date-fns"
+import { formatDateLong, formatTime } from "@/lib/date-utils"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -272,7 +272,7 @@ export function AddDeliveryForm({
                                 !field.value ? "text-muted-foreground" : ""
                               }`}
                             >
-                              {field.value ? format(field.value, "PPP") : <span>Select date</span>}
+                              {field.value ? formatDateLong(field.value) : <span>Select date</span>}
                               <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
                             </Button>
                           </FormControl>

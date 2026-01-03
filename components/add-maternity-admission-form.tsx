@@ -5,7 +5,7 @@ import { zodResolver } from "@hookform/resolvers/zod"
 import { useForm } from "react-hook-form"
 import * as z from "zod"
 import { CalendarIcon, Loader2 } from "lucide-react"
-import { format } from "date-fns"
+import { formatDateLong } from "@/lib/date-utils"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -75,6 +75,7 @@ export function AddMaternityAdmissionForm({
   onSuccess,
 }: { open: boolean; onOpenChange: (open: boolean) => void; onSuccess?: () => void }) {
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [patients, setPatients] = useState<any[]>([])
   const [doctors, setDoctors] = useState<any[]>([])
   const [beds, setBeds] = useState<any[]>([])
   const [maternityWardId, setMaternityWardId] = useState<number | null>(null)
@@ -255,7 +256,7 @@ export function AddMaternityAdmissionForm({
     }
   }
 
-  const selectedPatient = patients.find((p: any) => p.patientId?.toString() === form.watch('patientId'))
+  const selectedPatient = patients?.find((p: any) => p.patientId?.toString() === form.watch('patientId')) || null
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -343,7 +344,7 @@ export function AddMaternityAdmissionForm({
                               }`}
                             >
                               <span suppressHydrationWarning>
-                                {field.value ? format(field.value, "PPP") : "Select date"}
+                                {field.value ? formatDateLong(field.value) : "Select date"}
                               </span>
                               <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
                             </Button>
@@ -420,7 +421,7 @@ export function AddMaternityAdmissionForm({
                               }`}
                             >
                               <span suppressHydrationWarning>
-                                {field.value ? format(field.value, "PPP") : "Select date"}
+                                {field.value ? formatDateLong(field.value) : "Select date"}
                               </span>
                               <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
                             </Button>

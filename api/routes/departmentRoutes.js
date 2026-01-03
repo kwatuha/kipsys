@@ -11,18 +11,34 @@ router.get('/', async (req, res) => {
     try {
         const { search } = req.query;
 
-        let query = 'SELECT * FROM departments WHERE 1=1';
+        // Use DISTINCT and filter by isActive to avoid duplicates
+        let query = `
+            SELECT DISTINCT 
+                d.departmentId,
+                d.departmentCode,
+                d.departmentName,
+                d.description,
+                d.location,
+                d.headOfDepartmentId,
+                d.isActive,
+                d.createdAt,
+                d.updatedAt,
+                CONCAT(u.firstName, ' ', u.lastName) as headOfDepartmentName
+            FROM departments d
+            LEFT JOIN users u ON d.headOfDepartmentId = u.userId
+            WHERE d.isActive = TRUE
+        `;
         const params = [];
 
         if (search) {
-            query += ` AND (departmentName LIKE ? OR description LIKE ?)`;
+            query += ` AND (d.departmentName LIKE ? OR d.description LIKE ? OR d.departmentCode LIKE ?)`;
             const searchTerm = `%${search}%`;
-            params.push(searchTerm, searchTerm);
+            params.push(searchTerm, searchTerm, searchTerm);
         }
 
-        query += ` ORDER BY departmentName`;
+        query += ` ORDER BY d.departmentName`;
 
-        const [rows] = await pool.execute(query, params);
+        const [rows] = await pool.query(query, params);
         res.status(200).json(rows);
     } catch (error) {
         console.error('Error fetching departments:', error);
@@ -118,6 +134,25 @@ router.put('/:id', async (req, res) => {
     } catch (error) {
         console.error('Error updating department:', error);
         res.status(500).json({ message: 'Error updating department', error: error.message });
+    }
+});
+
+/**
+ * @route DELETE /api/departments/:id
+ * @description Delete (deactivate) a department
+ */
+router.delete('/:id', async (req, res) => {
+    try {
+        // Soft delete by setting isActive to FALSE
+        await pool.execute(
+            'UPDATE departments SET isActive = FALSE WHERE departmentId = ?',
+            [req.params.id]
+        );
+
+        res.status(200).json({ message: 'Department deactivated successfully' });
+    } catch (error) {
+        console.error('Error deleting department:', error);
+        res.status(500).json({ message: 'Error deleting department', error: error.message });
     }
 });
 

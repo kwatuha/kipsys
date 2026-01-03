@@ -11,8 +11,8 @@ import { Search, Plus, FileText, Baby, Loader2, Edit, Trash2, Eye, MoreVertical,
 import { AddMaternityAdmissionForm } from "@/components/add-maternity-admission-form"
 import { AddDeliveryForm } from "@/components/add-delivery-form"
 import { maternityApi } from "@/lib/api"
-import { format } from "date-fns"
 import { toast } from "@/components/ui/use-toast"
+import { formatDate, formatDateTime } from "@/lib/date-utils"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -143,24 +143,30 @@ export default function MaternityPage() {
       )
       setAdmissions(data)
       
-      // Calculate stats
-      const today = new Date().toISOString().split('T')[0]
+      // Calculate stats - use consistent date calculations
       const active = data.filter((a: MaternityAdmission) => a.status === 'admitted' || a.status === 'in_labor').length
       const expected = data.filter((a: MaternityAdmission) => {
         if (!a.expectedDeliveryDate) return false
-        const expectedDate = new Date(a.expectedDeliveryDate)
-        const todayDate = new Date()
-        const nextWeek = new Date(todayDate)
-        nextWeek.setDate(todayDate.getDate() + 7)
-        return expectedDate >= todayDate && expectedDate <= nextWeek
+        try {
+          const expectedDate = new Date(a.expectedDeliveryDate)
+          const todayDate = new Date()
+          todayDate.setHours(0, 0, 0, 0) // Normalize to start of day
+          const nextWeek = new Date(todayDate)
+          nextWeek.setDate(todayDate.getDate() + 7)
+          nextWeek.setHours(23, 59, 59, 999) // End of day
+          expectedDate.setHours(0, 0, 0, 0) // Normalize expected date
+          return expectedDate >= todayDate && expectedDate <= nextWeek
+        } catch {
+          return false
+        }
       }).length
       
-      setStats({
+      setStats(prev => ({
+        ...prev,
         totalAdmissions: data.length,
         activeAdmissions: active,
-        deliveriesToday: 0, // Will be calculated from deliveries
         expectedDeliveries: expected,
-      })
+      }))
     } catch (err: any) {
       setError(err.message || 'Failed to load admissions')
       console.error('Error loading admissions:', err)
@@ -180,9 +186,22 @@ export default function MaternityPage() {
       )
       setDeliveries(data)
       
-      // Calculate deliveries today
-      const today = new Date().toISOString().split('T')[0]
-      const todayDeliveries = data.filter((d: Delivery) => d.deliveryDate?.startsWith(today)).length
+      // Calculate deliveries today - use consistent date comparison
+      const today = new Date()
+      today.setHours(0, 0, 0, 0)
+      const todayStr = formatDate(today.toISOString())
+      
+      const todayDeliveries = data.filter((d: Delivery) => {
+        if (!d.deliveryDate) return false
+        try {
+          const deliveryDate = new Date(d.deliveryDate)
+          deliveryDate.setHours(0, 0, 0, 0)
+          const deliveryDateStr = formatDate(deliveryDate.toISOString())
+          return deliveryDateStr === todayStr
+        } catch {
+          return false
+        }
+      }).length
       
       setStats(prev => ({
         ...prev,
@@ -218,21 +237,7 @@ export default function MaternityPage() {
     return true
   })
 
-  const formatDate = (dateString: string) => {
-    try {
-      return format(new Date(dateString), 'yyyy-MM-dd')
-    } catch {
-      return dateString
-    }
-  }
-
-  const formatDateTime = (dateString: string) => {
-    try {
-      return format(new Date(dateString), 'yyyy-MM-dd HH:mm')
-    } catch {
-      return dateString
-    }
-  }
+  // Use date utility functions for consistent formatting
 
   const formatStatus = (status: string) => {
     return status.charAt(0).toUpperCase() + status.slice(1).replace('_', ' ')
