@@ -11,10 +11,20 @@ interface ApiOptions {
 async function apiRequest<T>(endpoint: string, options: ApiOptions = {}): Promise<T> {
   const { method = 'GET', body, headers = {} } = options;
 
+  // Get token from localStorage (could be JWT from backend or simple token from frontend)
+  let token: string | null = null;
+  if (typeof window !== 'undefined') {
+    // Try to get JWT token from backend login (stored as 'token' or 'jwt_token')
+    token = localStorage.getItem('token') || 
+            localStorage.getItem('jwt_token') || 
+            localStorage.getItem('auth_token');
+  }
+
   const config: RequestInit = {
     method,
     headers: {
       'Content-Type': 'application/json',
+      ...(token && { 'Authorization': `Bearer ${token}` }),
       ...headers,
     },
   };
@@ -26,9 +36,16 @@ async function apiRequest<T>(endpoint: string, options: ApiOptions = {}): Promis
   const response = await fetch(`${API_BASE_URL}${endpoint}`, config);
 
   if (!response.ok) {
+    // If 401, try to clear invalid token
+    if (response.status === 401 && typeof window !== 'undefined') {
+      localStorage.removeItem('token');
+      localStorage.removeItem('jwt_token');
+      localStorage.removeItem('auth_token');
+    }
+    
     const error = await response.json().catch(() => ({ message: 'An error occurred' }));
     // Include both message and error fields from backend response
-    const errorMessage = error.error || error.message || `HTTP error! status: ${response.status}`;
+    const errorMessage = error.error || error.message || error.msg || `HTTP error! status: ${response.status}`;
     const fullError = new Error(errorMessage);
     // Attach additional error details for debugging
     (fullError as any).status = response.status;
@@ -732,6 +749,34 @@ export const analyticsApi = {
     apiRequest<any>('/api/analytics/summary'),
 };
 
+// Role API
+export const roleApi = {
+  getAll: () =>
+    apiRequest<any[]>('/api/roles'),
+  getById: (id: string) =>
+    apiRequest<any>(`/api/roles/${id}`),
+  create: (data: any) =>
+    apiRequest<any>('/api/roles', { method: 'POST', body: data }),
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/roles/${id}`, { method: 'PUT', body: data }),
+  delete: (id: string) =>
+    apiRequest<any>(`/api/roles/${id}`, { method: 'DELETE' }),
+};
+
+// Privilege API
+export const privilegeApi = {
+  getAll: (module?: string, groupByModule?: boolean) =>
+    apiRequest<any[]>(`/api/privileges?${new URLSearchParams({ ...(module && { module }), ...(groupByModule && { groupByModule: 'true' }) })}`),
+  getById: (id: string) =>
+    apiRequest<any>(`/api/privileges/${id}`),
+  create: (data: any) =>
+    apiRequest<any>('/api/privileges', { method: 'POST', body: data }),
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/privileges/${id}`, { method: 'PUT', body: data }),
+  delete: (id: string) =>
+    apiRequest<any>(`/api/privileges/${id}`, { method: 'DELETE' }),
+};
+
 // User API
 export const userApi = {
   getAll: () =>
@@ -744,5 +789,7 @@ export const userApi = {
     apiRequest<any>(`/api/users/${id}`, { method: 'PUT', body: data }),
   delete: (id: string) =>
     apiRequest<any>(`/api/users/${id}`, { method: 'DELETE' }),
+  changePassword: (id: string, data: { currentPassword: string; newPassword: string }) =>
+    apiRequest<any>(`/api/users/${id}/password`, { method: 'PUT', body: data }),
 };
 

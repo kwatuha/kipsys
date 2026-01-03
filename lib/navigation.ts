@@ -29,6 +29,7 @@ import {
   ListOrdered,
   UserPlus,
   MapPin,
+  Shield,
 } from "lucide-react"
 
 export interface NavigationItem {
@@ -257,6 +258,11 @@ export const navigationCategories: NavigationCategory[] = [
         title: "Employee Management",
         icon: UserCog,
         href: "/hr/employees",
+      },
+      {
+        title: "System Administration",
+        icon: Shield,
+        href: "/administration",
       },
       {
         title: "Settings",

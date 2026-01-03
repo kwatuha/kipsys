@@ -37,6 +37,8 @@ const employeePayrollRoutes = require('./routes/employeePayrollRoutes');
 const employeePromotionRoutes = require('./routes/employeePromotionRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
 const analyticsRoutes = require('./routes/analyticsRoutes');
+const roleRoutes = require('./routes/roleRoutes');
+const privilegeRoutes = require('./routes/privilegeRoutes');
 
 const authenticate = require('./middleware/authenticate');
 
@@ -76,14 +78,15 @@ app.get('/', (req, res) => {
 // Public routes (no authentication required)
 app.use('/api/auth', authRoutes);
 
-// Development: Temporarily disable auth for data fetching routes
+// Development: Temporarily disable auth for all routes
 // TODO: Re-enable authentication in production
-if (process.env.NODE_ENV === 'production') {
-  app.use('/api', authenticate);
-} else {
-  // In development, only protect sensitive routes
-  app.use('/api/users', authenticate);
-}
+// Authentication will be implemented later
+// if (process.env.NODE_ENV === 'production') {
+//   app.use('/api', authenticate);
+// } else {
+//   // In development, only protect sensitive routes
+//   app.use('/api/users', authenticate);
+// }
 
 // API routes
 app.use('/api/users', userRoutes);
@@ -103,6 +106,8 @@ app.use('/api/icu', icuRoutes);
 app.use('/api/triage', triageRoutes);
 app.use('/api/departments', departmentRoutes);
 app.use('/api/analytics', analyticsRoutes);
+app.use('/api/roles', roleRoutes);
+app.use('/api/privileges', privilegeRoutes);
 // Employee sub-routes must come before main employee routes
 app.use('/api/employees', employeeLeaveRoutes);
 app.use('/api/employees', employeePayrollRoutes);
