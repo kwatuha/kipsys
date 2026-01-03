@@ -47,15 +47,165 @@ router.get('/', async (req, res) => {
 });
 
 /**
+ * @route GET /api/departments/:id/employees
+ * @description Get all employees in a department
+ * NOTE: This route must come before /:id to avoid route conflicts
+ */
+router.get('/:id/employees', async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        // First, get the department ID
+        let deptQuery = 'SELECT departmentId FROM departments WHERE departmentId = ?';
+        let deptParams = [id];
+        
+        if (isNaN(id)) {
+            const departmentName = id
+                .split('-')
+                .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+                .join(' ');
+            
+            deptQuery = `
+                SELECT departmentId FROM departments 
+                WHERE LOWER(REPLACE(departmentName, ' ', '-')) = LOWER(?) 
+                   OR LOWER(departmentName) = LOWER(?)
+                   OR departmentCode = ?
+                LIMIT 1
+            `;
+            deptParams = [id, departmentName, id.toUpperCase()];
+        }
+        
+        const [deptRows] = await pool.query(deptQuery, deptParams);
+        
+        if (deptRows.length === 0) {
+            return res.status(404).json({ message: 'Department not found' });
+        }
+        
+        const departmentId = deptRows[0].departmentId;
+        
+        // Get employees in this department
+        const [employees] = await pool.query(`
+            SELECT 
+                e.*,
+                d.departmentName,
+                p.positionTitle,
+                p.positionCode
+            FROM employees e
+            LEFT JOIN departments d ON e.departmentId = d.departmentId
+            LEFT JOIN employee_positions p ON e.positionId = p.positionId
+            WHERE e.departmentId = ? AND e.status = 'active'
+            ORDER BY e.firstName, e.lastName
+        `, [departmentId]);
+        
+        res.status(200).json(employees);
+    } catch (error) {
+        console.error('Error fetching department employees:', error);
+        res.status(500).json({ message: 'Error fetching department employees', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/departments/:id/positions
+ * @description Get all positions in a department
+ * NOTE: This route must come before /:id to avoid route conflicts
+ */
+router.get('/:id/positions', async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        // First, get the department ID
+        let deptQuery = 'SELECT departmentId FROM departments WHERE departmentId = ?';
+        let deptParams = [id];
+        
+        if (isNaN(id)) {
+            const departmentName = id
+                .split('-')
+                .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+                .join(' ');
+            
+            deptQuery = `
+                SELECT departmentId FROM departments 
+                WHERE LOWER(REPLACE(departmentName, ' ', '-')) = LOWER(?) 
+                   OR LOWER(departmentName) = LOWER(?)
+                   OR departmentCode = ?
+                LIMIT 1
+            `;
+            deptParams = [id, departmentName, id.toUpperCase()];
+        }
+        
+        const [deptRows] = await pool.query(deptQuery, deptParams);
+        
+        if (deptRows.length === 0) {
+            return res.status(404).json({ message: 'Department not found' });
+        }
+        
+        const departmentId = deptRows[0].departmentId;
+        
+        // Get positions in this department
+        const [positions] = await pool.query(`
+            SELECT 
+                p.*,
+                COUNT(e.employeeId) as employeeCount
+            FROM employee_positions p
+            LEFT JOIN employees e ON p.positionId = e.positionId AND e.status = 'active'
+            WHERE p.departmentId = ? AND p.isActive = TRUE
+            GROUP BY p.positionId
+            ORDER BY p.positionTitle
+        `, [departmentId]);
+        
+        res.status(200).json(positions);
+    } catch (error) {
+        console.error('Error fetching department positions:', error);
+        res.status(500).json({ message: 'Error fetching department positions', error: error.message });
+    }
+});
+
+/**
  * @route GET /api/departments/:id
- * @description Get a single department
+ * @description Get a single department by ID or slug
+ * NOTE: This route must come after /:id/employees and /:id/positions
  */
 router.get('/:id', async (req, res) => {
     try {
-        const [rows] = await pool.execute(
-            'SELECT * FROM departments WHERE departmentId = ?',
-            [req.params.id]
-        );
+        const { id } = req.params;
+        
+        // Try to find by ID first (if it's a number)
+        let query = 'SELECT * FROM departments WHERE departmentId = ?';
+        let params = [id];
+        
+        // If not a number, try to find by slug (department name converted to slug)
+        if (isNaN(id)) {
+            // Convert slug back to department name (e.g., "administration" -> "Administration")
+            const departmentName = id
+                .split('-')
+                .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+                .join(' ');
+            
+            query = `
+                SELECT 
+                    d.*,
+                    CONCAT(u.firstName, ' ', u.lastName) as headOfDepartmentName
+                FROM departments d
+                LEFT JOIN users u ON d.headOfDepartmentId = u.userId
+                WHERE LOWER(REPLACE(d.departmentName, ' ', '-')) = LOWER(?) 
+                   OR LOWER(d.departmentName) = LOWER(?)
+                   OR d.departmentCode = ?
+                LIMIT 1
+            `;
+            params = [id, departmentName, id.toUpperCase()];
+        } else {
+            // For numeric ID, include head of department name
+            query = `
+                SELECT 
+                    d.*,
+                    CONCAT(u.firstName, ' ', u.lastName) as headOfDepartmentName
+                FROM departments d
+                LEFT JOIN users u ON d.headOfDepartmentId = u.userId
+                WHERE d.departmentId = ?
+            `;
+        }
+        
+        const [rows] = await pool.query(query, params);
         
         if (rows.length > 0) {
             res.status(200).json(rows[0]);

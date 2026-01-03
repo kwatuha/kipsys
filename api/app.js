@@ -36,6 +36,7 @@ const employeeLeaveRoutes = require('./routes/employeeLeaveRoutes');
 const employeePayrollRoutes = require('./routes/employeePayrollRoutes');
 const employeePromotionRoutes = require('./routes/employeePromotionRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
+const analyticsRoutes = require('./routes/analyticsRoutes');
 
 const authenticate = require('./middleware/authenticate');
 
@@ -101,6 +102,7 @@ app.use('/api/maternity', maternityRoutes);
 app.use('/api/icu', icuRoutes);
 app.use('/api/triage', triageRoutes);
 app.use('/api/departments', departmentRoutes);
+app.use('/api/analytics', analyticsRoutes);
 // Employee sub-routes must come before main employee routes
 app.use('/api/employees', employeeLeaveRoutes);
 app.use('/api/employees', employeePayrollRoutes);

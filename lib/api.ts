@@ -81,6 +81,12 @@ export const departmentApi = {
   getById: (id: string) =>
     apiRequest<any>(`/api/departments/${id}`),
   
+  getEmployees: (id: string) =>
+    apiRequest<any[]>(`/api/departments/${id}/employees`),
+  
+  getPositions: (id: string) =>
+    apiRequest<any[]>(`/api/departments/${id}/positions`),
+  
   create: (data: any) =>
     apiRequest<any>('/api/departments', { method: 'POST', body: data }),
   
@@ -709,5 +715,34 @@ export const dashboardApi = {
   
   getRecentActivities: (limit?: number) =>
     apiRequest<any>(`/api/dashboard/recent-activities?${new URLSearchParams({ ...(limit && { limit: limit.toString() }) })}`),
+};
+
+// Analytics API
+export const analyticsApi = {
+  getPatients: (months?: number) =>
+    apiRequest<any[]>(`/api/analytics/patients?${new URLSearchParams({ ...(months && { months: months.toString() }) })}`),
+  
+  getRevenue: (months?: number) =>
+    apiRequest<any[]>(`/api/analytics/revenue?${new URLSearchParams({ ...(months && { months: months.toString() }) })}`),
+  
+  getDepartments: () =>
+    apiRequest<any[]>('/api/analytics/departments'),
+  
+  getSummary: () =>
+    apiRequest<any>('/api/analytics/summary'),
+};
+
+// User API
+export const userApi = {
+  getAll: () =>
+    apiRequest<any[]>('/api/users'),
+  getById: (id: string) =>
+    apiRequest<any>(`/api/users/${id}`),
+  create: (data: any) =>
+    apiRequest<any>('/api/users', { method: 'POST', body: data }),
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/users/${id}`, { method: 'PUT', body: data }),
+  delete: (id: string) =>
+    apiRequest<any>(`/api/users/${id}`, { method: 'DELETE' }),
 };
 
