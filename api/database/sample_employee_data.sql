@@ -69,3 +69,4 @@ INSERT INTO employees (
 ('EMP-1014', 'Esther', 'Wambui', NULL, '1988-07-08', 'Female', '+254 745 678 902', 'esther.wambui@transelgon.co.ke', 'Nairobi, Kenya', '45678902', '2021-03-15', 'full_time', @med_dept, @spec_pos, 'on_leave', 'Joseph Wambui', '+254 756 789 013', 'Gynecologist - Currently on leave'),
 ('EMP-1015', 'Joseph', 'Kipchoge', NULL, '1990-12-03', 'Male', '+254 756 789 013', 'joseph.kipchoge@transelgon.co.ke', 'Nairobi, Kenya', '56789013', '2022-02-10', 'contract', @lab_dept, @lab_tech_pos, 'active', 'Faith Kipchoge', '+254 767 890 124', 'Contract Laboratory Technician');
 
+

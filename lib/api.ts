@@ -645,5 +645,54 @@ export const employeeApi = {
   
   delete: (id: string) =>
     apiRequest<any>(`/api/employees/${id}`, { method: 'DELETE' }),
+  
+  // Leave Management
+  getLeave: (employeeId: string, status?: string, leaveType?: string) =>
+    apiRequest<any[]>(`/api/employees/${employeeId}/leave?${new URLSearchParams({ ...(status && { status }), ...(leaveType && { leaveType }) })}`),
+  
+  getAllLeave: (status?: string, leaveType?: string, employeeId?: string, page = 1, limit = 50) =>
+    apiRequest<{ leaves: any[], pagination: any }>(`/api/employees/leave?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(status && { status }), ...(leaveType && { leaveType }), ...(employeeId && { employeeId }) })}`),
+  
+  createLeave: (employeeId: string, data: any) =>
+    apiRequest<any>(`/api/employees/${employeeId}/leave`, { method: 'POST', body: data }),
+  
+  updateLeave: (leaveId: string, data: any) =>
+    apiRequest<any>(`/api/employees/leave/${leaveId}`, { method: 'PUT', body: data }),
+  
+  getLeaveBalance: (employeeId: string, year?: number) =>
+    apiRequest<any[]>(`/api/employees/${employeeId}/leave/balance?${new URLSearchParams({ ...(year && { year: year.toString() }) })}`),
+  
+  // Payroll
+  getSalary: (employeeId: string) =>
+    apiRequest<any>(`/api/employees/${employeeId}/salary`),
+  
+  getSalaryHistory: (employeeId: string) =>
+    apiRequest<any[]>(`/api/employees/${employeeId}/salary/history`),
+  
+  createSalary: (employeeId: string, data: any) =>
+    apiRequest<any>(`/api/employees/${employeeId}/salary`, { method: 'POST', body: data }),
+  
+  getPayroll: (employeeId: string, startDate?: string, endDate?: string, status?: string) =>
+    apiRequest<any[]>(`/api/employees/${employeeId}/payroll?${new URLSearchParams({ ...(startDate && { startDate }), ...(endDate && { endDate }), ...(status && { status }) })}`),
+  
+  createPayroll: (employeeId: string, data: any) =>
+    apiRequest<any>(`/api/employees/${employeeId}/payroll`, { method: 'POST', body: data }),
+  
+  updatePayroll: (payrollId: string, data: any) =>
+    apiRequest<any>(`/api/employees/payroll/${payrollId}`, { method: 'PUT', body: data }),
+  
+  // Promotions/Position History
+  getPromotions: (employeeId: string) =>
+    apiRequest<any[]>(`/api/employees/${employeeId}/promotions`),
+  
+  createPromotion: (employeeId: string, data: any) =>
+    apiRequest<any>(`/api/employees/${employeeId}/promotions`, { method: 'POST', body: data }),
+  
+  // Attendance
+  getAttendance: (employeeId: string, startDate?: string, endDate?: string) =>
+    apiRequest<any[]>(`/api/employees/attendance/${employeeId}?${new URLSearchParams({ ...(startDate && { startDate }), ...(endDate && { endDate }) })}`),
+  
+  createAttendance: (data: any) =>
+    apiRequest<any>(`/api/employees/attendance`, { method: 'POST', body: data }),
 };
 
