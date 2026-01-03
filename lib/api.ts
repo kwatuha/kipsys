@@ -148,6 +148,22 @@ export const pharmacyApi = {
   // Inventory
   getInventory: () =>
     apiRequest<any[]>('/api/pharmacy/inventory'),
+  
+  // Drug Inventory
+  getDrugInventory: (medicationId?: string, search?: string, page = 1, limit = 50) =>
+    apiRequest<any[]>(`/api/pharmacy/drug-inventory?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(medicationId && { medicationId }), ...(search && { search }) })}`),
+  
+  getDrugInventoryItem: (id: string) =>
+    apiRequest<any>(`/api/pharmacy/drug-inventory/${id}`),
+  
+  createDrugInventoryItem: (data: any) =>
+    apiRequest<any>('/api/pharmacy/drug-inventory', { method: 'POST', body: data }),
+  
+  updateDrugInventoryItem: (id: string, data: any) =>
+    apiRequest<any>(`/api/pharmacy/drug-inventory/${id}`, { method: 'PUT', body: data }),
+  
+  deleteDrugInventoryItem: (id: string) =>
+    apiRequest<any>(`/api/pharmacy/drug-inventory/${id}`, { method: 'DELETE' }),
 };
 
 // Laboratory API

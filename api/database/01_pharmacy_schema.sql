@@ -105,6 +105,29 @@ CREATE TABLE IF NOT EXISTS pharmacy_inventory (
     INDEX idx_medication (medicationId)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Drug inventory (tracks individual batches/stocks with pricing and expiry)
+CREATE TABLE IF NOT EXISTS drug_inventory (
+    drugInventoryId INT NOT NULL AUTO_INCREMENT,
+    medicationId INT NOT NULL, -- Foreign key to medications catalog
+    batchNumber VARCHAR(100) NOT NULL, -- Batch/lot number
+    quantity INT NOT NULL DEFAULT 0, -- Available quantity
+    unitPrice DECIMAL(15, 2) NOT NULL, -- Cost price per unit
+    manufactureDate DATE, -- Manufacture date
+    expiryDate DATE NOT NULL, -- Expiry date
+    minPrice DECIMAL(15, 2), -- Minimum selling price
+    sellPrice DECIMAL(15, 2) NOT NULL, -- Selling price per unit
+    location VARCHAR(100), -- Storage location in pharmacy
+    notes TEXT, -- Additional notes
+    createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (drugInventoryId),
+    FOREIGN KEY (medicationId) REFERENCES medications(medicationId) ON DELETE RESTRICT,
+    INDEX idx_medication (medicationId),
+    INDEX idx_batch (batchNumber),
+    INDEX idx_expiry (expiryDate),
+    INDEX idx_medication_batch (medicationId, batchNumber)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- Drug interactions (medication interactions)
 CREATE TABLE IF NOT EXISTS drug_interactions (
     interactionId INT NOT NULL AUTO_INCREMENT,

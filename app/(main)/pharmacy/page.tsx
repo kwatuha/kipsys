@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge"
 import { Search, FileText, Package, Plus, Edit, Loader2, MoreVertical, Eye, CheckCircle, XCircle, Trash2 } from "lucide-react"
 import { AddPrescriptionForm } from "@/components/add-prescription-form"
 import { MedicationForm } from "@/components/medication-form"
+import { DrugInventoryForm } from "@/components/drug-inventory-form"
 import { pharmacyApi } from "@/lib/api"
 import {
   DropdownMenu,
@@ -63,6 +64,25 @@ interface Prescription {
   status: string
 }
 
+interface DrugInventoryItem {
+  drugInventoryId: number
+  medicationId: number
+  batchNumber: string
+  quantity: number
+  unitPrice: number
+  manufactureDate?: string
+  expiryDate: string
+  minPrice?: number
+  sellPrice: number
+  location?: string
+  notes?: string
+  medicationName?: string
+  medicationCode?: string
+  genericName?: string
+  dosageForm?: string
+  strength?: string
+}
+
 export default function PharmacyPage() {
   const [addPrescriptionOpen, setAddPrescriptionOpen] = useState(false)
   const [prescriptions, setPrescriptions] = useState<Prescription[]>([])
@@ -88,6 +108,18 @@ export default function PharmacyPage() {
   const [selectedPrescription, setSelectedPrescription] = useState<any | null>(null)
   const [loadingPrescriptionDetails, setLoadingPrescriptionDetails] = useState(false)
   const [updatingStatus, setUpdatingStatus] = useState<string | null>(null)
+  
+  // Drug Inventory state
+  const [drugInventory, setDrugInventory] = useState<DrugInventoryItem[]>([])
+  const [loadingDrugInventory, setLoadingDrugInventory] = useState(true)
+  const [drugInventorySearch, setDrugInventorySearch] = useState("")
+  const [isAddDrugInventoryOpen, setIsAddDrugInventoryOpen] = useState(false)
+  const [isEditDrugInventoryOpen, setIsEditDrugInventoryOpen] = useState(false)
+  const [selectedDrugInventoryItem, setSelectedDrugInventoryItem] = useState<DrugInventoryItem | null>(null)
+  const [isDeleteDrugInventoryDialogOpen, setIsDeleteDrugInventoryDialogOpen] = useState(false)
+  const [drugInventoryToDelete, setDrugInventoryToDelete] = useState<DrugInventoryItem | null>(null)
+  const [isDeletingDrugInventory, setIsDeletingDrugInventory] = useState(false)
+  const [deleteDrugInventoryError, setDeleteDrugInventoryError] = useState<string | null>(null)
 
   const loadPrescriptions = async () => {
     try {
@@ -124,6 +156,24 @@ export default function PharmacyPage() {
   useEffect(() => {
     loadMedications()
   }, [medicationSearch])
+
+  const loadDrugInventory = async () => {
+    try {
+      setLoadingDrugInventory(true)
+      setError(null)
+      const data = await pharmacyApi.getDrugInventory(undefined, drugInventorySearch || undefined)
+      setDrugInventory(data)
+    } catch (err: any) {
+      setError(err.message || 'Failed to load drug inventory')
+      console.error('Error loading drug inventory:', err)
+    } finally {
+      setLoadingDrugInventory(false)
+    }
+  }
+
+  useEffect(() => {
+    loadDrugInventory()
+  }, [drugInventorySearch])
 
   const handleAddMedicationSuccess = () => {
     loadMedications()
@@ -215,6 +265,49 @@ export default function PharmacyPage() {
     return medication.medicationName || medication.name || "Unknown"
   }
 
+  const handleAddDrugInventorySuccess = () => {
+    loadDrugInventory()
+  }
+
+  const handleEditDrugInventoryClick = (item: DrugInventoryItem) => {
+    setSelectedDrugInventoryItem(item)
+    setIsEditDrugInventoryOpen(true)
+  }
+
+  const handleEditDrugInventorySuccess = () => {
+    loadDrugInventory()
+    setIsEditDrugInventoryOpen(false)
+    setSelectedDrugInventoryItem(null)
+  }
+
+  const handleDeleteDrugInventoryClick = (item: DrugInventoryItem) => {
+    setDrugInventoryToDelete(item)
+    setDeleteDrugInventoryError(null)
+    setIsDeleteDrugInventoryDialogOpen(true)
+  }
+
+  const handleDeleteDrugInventoryConfirm = async () => {
+    if (!drugInventoryToDelete || !drugInventoryToDelete.drugInventoryId) return
+
+    try {
+      setIsDeletingDrugInventory(true)
+      setDeleteDrugInventoryError(null)
+      await pharmacyApi.deleteDrugInventoryItem(drugInventoryToDelete.drugInventoryId.toString())
+      setIsDeleteDrugInventoryDialogOpen(false)
+      setDrugInventoryToDelete(null)
+      loadDrugInventory()
+    } catch (err: any) {
+      setDeleteDrugInventoryError(err.message || 'Failed to delete drug inventory item')
+      console.error('Error deleting drug inventory item:', err)
+    } finally {
+      setIsDeletingDrugInventory(false)
+    }
+  }
+
+  const getDrugInventoryItemName = (item: DrugInventoryItem) => {
+    return item.medicationName || `Medication ${item.medicationId}`
+  }
+
   const filteredPrescriptions = prescriptions.filter((prescription) => {
     if (prescriptionSearch) {
       const searchLower = prescriptionSearch.toLowerCase()
@@ -242,9 +335,10 @@ export default function PharmacyPage() {
       </div>
 
       <Tabs defaultValue="prescriptions" className="w-full">
-        <TabsList className="grid w-full grid-cols-2">
+        <TabsList className="grid w-full grid-cols-3">
           <TabsTrigger value="prescriptions">Prescriptions</TabsTrigger>
           <TabsTrigger value="medications">Medications</TabsTrigger>
+          <TabsTrigger value="drug-inventory">Drug Inventory</TabsTrigger>
         </TabsList>
 
         <TabsContent value="prescriptions" className="space-y-4 mt-4">
@@ -471,6 +565,108 @@ export default function PharmacyPage() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        <TabsContent value="drug-inventory" className="space-y-4 mt-4">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Drug Inventory</CardTitle>
+                  <CardDescription>Manage drug inventory with batch numbers, pricing, and expiry dates</CardDescription>
+                </div>
+                <Button onClick={() => setIsAddDrugInventoryOpen(true)}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add Drug Inventory
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between mb-4">
+                <div className="relative w-64">
+                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                  <Input 
+                    type="search" 
+                    placeholder="Search drug inventory..." 
+                    className="w-full pl-8"
+                    value={drugInventorySearch}
+                    onChange={(e) => setDrugInventorySearch(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              {loadingDrugInventory ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                </div>
+              ) : (
+                <div className="rounded-md border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Medication</TableHead>
+                        <TableHead>Batch Number</TableHead>
+                        <TableHead>Quantity</TableHead>
+                        <TableHead>Unit Price</TableHead>
+                        <TableHead>Sell Price</TableHead>
+                        <TableHead>Min Price</TableHead>
+                        <TableHead>Expiry Date</TableHead>
+                        <TableHead>Location</TableHead>
+                        <TableHead>Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {drugInventory.length > 0 ? (
+                        drugInventory.map((item) => (
+                          <TableRow key={item.drugInventoryId}>
+                            <TableCell className="font-medium">{getDrugInventoryItemName(item)}</TableCell>
+                            <TableCell>{item.batchNumber}</TableCell>
+                            <TableCell>{item.quantity}</TableCell>
+                            <TableCell>KES {item.unitPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
+                            <TableCell>KES {item.sellPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
+                            <TableCell>{item.minPrice ? `KES ${item.minPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '-'}</TableCell>
+                            <TableCell>
+                              {item.expiryDate ? new Date(item.expiryDate).toLocaleDateString() : '-'}
+                            </TableCell>
+                            <TableCell>{item.location || '-'}</TableCell>
+                            <TableCell>
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button variant="ghost" size="icon" className="h-8 w-8">
+                                    <MoreVertical className="h-4 w-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  <DropdownMenuItem onClick={() => handleEditDrugInventoryClick(item)}>
+                                    <Edit className="h-4 w-4 mr-2" />
+                                    Edit
+                                  </DropdownMenuItem>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem 
+                                    onClick={() => handleDeleteDrugInventoryClick(item)}
+                                    className="text-destructive focus:text-destructive"
+                                  >
+                                    <Trash2 className="h-4 w-4 mr-2" />
+                                    Delete
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      ) : (
+                        <TableRow>
+                          <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
+                            No drug inventory items found
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
       </Tabs>
 
       <AddPrescriptionForm 
@@ -648,6 +844,70 @@ export default function PharmacyPage() {
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               {isDeletingMedication ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                "Delete"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Add Drug Inventory Dialog */}
+      <DrugInventoryForm
+        open={isAddDrugInventoryOpen}
+        onOpenChange={setIsAddDrugInventoryOpen}
+        onSuccess={handleAddDrugInventorySuccess}
+        medications={medications}
+      />
+
+      {/* Edit Drug Inventory Dialog */}
+      {selectedDrugInventoryItem && (
+        <DrugInventoryForm
+          item={selectedDrugInventoryItem}
+          open={isEditDrugInventoryOpen}
+          onOpenChange={(open) => {
+            setIsEditDrugInventoryOpen(open)
+            if (!open) setSelectedDrugInventoryItem(null)
+          }}
+          onSuccess={handleEditDrugInventorySuccess}
+          medications={medications}
+        />
+      )}
+
+      {/* Delete Drug Inventory Confirmation Dialog */}
+      <AlertDialog open={isDeleteDrugInventoryDialogOpen} onOpenChange={(open) => {
+        setIsDeleteDrugInventoryDialogOpen(open)
+        if (!open) {
+          setDrugInventoryToDelete(null)
+          setDeleteDrugInventoryError(null)
+        }
+      }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will delete the drug inventory item for {drugInventoryToDelete && getDrugInventoryItemName(drugInventoryToDelete)} 
+              (Batch: {drugInventoryToDelete?.batchNumber}). 
+              This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {deleteDrugInventoryError && (
+            <div className="p-3 text-sm text-red-500 bg-red-50 rounded-md">
+              {deleteDrugInventoryError}
+            </div>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeletingDrugInventory}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteDrugInventoryConfirm}
+              disabled={isDeletingDrugInventory}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeletingDrugInventory ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                   Deleting...

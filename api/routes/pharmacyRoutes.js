@@ -446,4 +446,274 @@ router.get('/inventory', async (req, res) => {
     }
 });
 
+/**
+ * @route GET /api/pharmacy/drug-inventory
+ * @description Get all drug inventory items
+ */
+router.get('/drug-inventory', async (req, res) => {
+    try {
+        const { medicationId, search, page = 1, limit = 50 } = req.query;
+        const offset = (page - 1) * limit;
+
+        let query = `
+            SELECT di.*, 
+                   m.name as medicationName, 
+                   m.medicationCode, 
+                   m.genericName,
+                   m.dosageForm,
+                   m.strength
+            FROM drug_inventory di
+            LEFT JOIN medications m ON di.medicationId = m.medicationId
+            WHERE 1=1
+        `;
+        const params = [];
+
+        if (medicationId) {
+            query += ` AND di.medicationId = ?`;
+            params.push(medicationId);
+        }
+
+        if (search) {
+            query += ` AND (m.name LIKE ? OR m.genericName LIKE ? OR di.batchNumber LIKE ?)`;
+            const searchTerm = `%${search}%`;
+            params.push(searchTerm, searchTerm, searchTerm);
+        }
+
+        query += ` ORDER BY di.expiryDate ASC, m.name LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset)}`;
+
+        const [rows] = await pool.execute(query, params);
+        res.status(200).json(rows);
+    } catch (error) {
+        console.error('Error fetching drug inventory:', error);
+        res.status(500).json({ message: 'Error fetching drug inventory', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/pharmacy/drug-inventory/:id
+ * @description Get a single drug inventory item by ID
+ */
+router.get('/drug-inventory/:id', async (req, res) => {
+    try {
+        const [rows] = await pool.execute(
+            `SELECT di.*, 
+                    m.name as medicationName, 
+                    m.medicationCode, 
+                    m.genericName,
+                    m.dosageForm,
+                    m.strength
+             FROM drug_inventory di
+             LEFT JOIN medications m ON di.medicationId = m.medicationId
+             WHERE di.drugInventoryId = ?`,
+            [req.params.id]
+        );
+        
+        if (rows.length > 0) {
+            res.status(200).json(rows[0]);
+        } else {
+            res.status(404).json({ message: 'Drug inventory item not found' });
+        }
+    } catch (error) {
+        console.error('Error fetching drug inventory item:', error);
+        res.status(500).json({ message: 'Error fetching drug inventory item', error: error.message });
+    }
+});
+
+/**
+ * @route POST /api/pharmacy/drug-inventory
+ * @description Create a new drug inventory item
+ */
+router.post('/drug-inventory', async (req, res) => {
+    try {
+        const {
+            medicationId,
+            batchNumber,
+            quantity,
+            unitPrice,
+            manufactureDate,
+            expiryDate,
+            minPrice,
+            sellPrice,
+            location,
+            notes
+        } = req.body;
+
+        if (!medicationId || !batchNumber || !expiryDate || !sellPrice) {
+            return res.status(400).json({ message: 'Missing required fields: medicationId, batchNumber, expiryDate, sellPrice' });
+        }
+
+        const [result] = await pool.execute(
+            `INSERT INTO drug_inventory 
+             (medicationId, batchNumber, quantity, unitPrice, manufactureDate, expiryDate, minPrice, sellPrice, location, notes)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                medicationId,
+                batchNumber,
+                quantity || 0,
+                unitPrice || 0,
+                manufactureDate || null,
+                expiryDate,
+                minPrice || null,
+                sellPrice,
+                location || null,
+                notes || null
+            ]
+        );
+
+        const [newItem] = await pool.execute(
+            `SELECT di.*, 
+                    m.name as medicationName, 
+                    m.medicationCode, 
+                    m.genericName,
+                    m.dosageForm,
+                    m.strength
+             FROM drug_inventory di
+             LEFT JOIN medications m ON di.medicationId = m.medicationId
+             WHERE di.drugInventoryId = ?`,
+            [result.insertId]
+        );
+
+        res.status(201).json(newItem[0]);
+    } catch (error) {
+        console.error('Error creating drug inventory item:', error);
+        res.status(500).json({ message: 'Error creating drug inventory item', error: error.message });
+    }
+});
+
+/**
+ * @route PUT /api/pharmacy/drug-inventory/:id
+ * @description Update a drug inventory item
+ */
+router.put('/drug-inventory/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const {
+            medicationId,
+            batchNumber,
+            quantity,
+            unitPrice,
+            manufactureDate,
+            expiryDate,
+            minPrice,
+            sellPrice,
+            location,
+            notes
+        } = req.body;
+
+        // Check if item exists
+        const [existing] = await pool.execute(
+            'SELECT drugInventoryId FROM drug_inventory WHERE drugInventoryId = ?',
+            [id]
+        );
+
+        if (existing.length === 0) {
+            return res.status(404).json({ message: 'Drug inventory item not found' });
+        }
+
+        // Build update query
+        const updates = [];
+        const values = [];
+
+        if (medicationId !== undefined) {
+            updates.push('medicationId = ?');
+            values.push(medicationId);
+        }
+        if (batchNumber !== undefined) {
+            updates.push('batchNumber = ?');
+            values.push(batchNumber);
+        }
+        if (quantity !== undefined) {
+            updates.push('quantity = ?');
+            values.push(quantity);
+        }
+        if (unitPrice !== undefined) {
+            updates.push('unitPrice = ?');
+            values.push(unitPrice);
+        }
+        if (manufactureDate !== undefined) {
+            updates.push('manufactureDate = ?');
+            values.push(manufactureDate || null);
+        }
+        if (expiryDate !== undefined) {
+            updates.push('expiryDate = ?');
+            values.push(expiryDate);
+        }
+        if (minPrice !== undefined) {
+            updates.push('minPrice = ?');
+            values.push(minPrice || null);
+        }
+        if (sellPrice !== undefined) {
+            updates.push('sellPrice = ?');
+            values.push(sellPrice);
+        }
+        if (location !== undefined) {
+            updates.push('location = ?');
+            values.push(location || null);
+        }
+        if (notes !== undefined) {
+            updates.push('notes = ?');
+            values.push(notes || null);
+        }
+
+        if (updates.length === 0) {
+            return res.status(400).json({ message: 'No fields to update' });
+        }
+
+        values.push(id);
+
+        await pool.execute(
+            `UPDATE drug_inventory SET ${updates.join(', ')}, updatedAt = NOW() WHERE drugInventoryId = ?`,
+            values
+        );
+
+        const [updated] = await pool.execute(
+            `SELECT di.*, 
+                    m.name as medicationName, 
+                    m.medicationCode, 
+                    m.genericName,
+                    m.dosageForm,
+                    m.strength
+             FROM drug_inventory di
+             LEFT JOIN medications m ON di.medicationId = m.medicationId
+             WHERE di.drugInventoryId = ?`,
+            [id]
+        );
+
+        res.status(200).json(updated[0]);
+    } catch (error) {
+        console.error('Error updating drug inventory item:', error);
+        res.status(500).json({ message: 'Error updating drug inventory item', error: error.message });
+    }
+});
+
+/**
+ * @route DELETE /api/pharmacy/drug-inventory/:id
+ * @description Delete a drug inventory item
+ */
+router.delete('/drug-inventory/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // Check if item exists
+        const [existing] = await pool.execute(
+            'SELECT drugInventoryId FROM drug_inventory WHERE drugInventoryId = ?',
+            [id]
+        );
+
+        if (existing.length === 0) {
+            return res.status(404).json({ message: 'Drug inventory item not found' });
+        }
+
+        await pool.execute('DELETE FROM drug_inventory WHERE drugInventoryId = ?', [id]);
+
+        res.status(200).json({ 
+            message: 'Drug inventory item deleted successfully',
+            drugInventoryId: id
+        });
+    } catch (error) {
+        console.error('Error deleting drug inventory item:', error);
+        res.status(500).json({ message: 'Error deleting drug inventory item', error: error.message });
+    }
+});
+
 module.exports = router;
