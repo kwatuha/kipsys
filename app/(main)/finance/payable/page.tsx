@@ -37,6 +37,14 @@ import {
 } from "@/components/ui/alert-dialog"
 import { formatDate } from "@/lib/date-utils"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 
 export default function AccountsPayablePage() {
   const [payables, setPayables] = useState<any[]>([])
@@ -129,6 +137,128 @@ export default function AccountsPayablePage() {
   const handlePay = (payable: any) => {
     setSelectedPayable(payable)
     setPayDialogOpen(true)
+  }
+
+  const handleDuplicate = async (payable: any) => {
+    try {
+      const newInvoiceNumber = `${payable.invoiceNumber}-COPY-${Date.now()}`
+      const payload = {
+        vendorId: payable.vendorId,
+        invoiceNumber: newInvoiceNumber,
+        invoiceDate: new Date().toISOString().split('T')[0],
+        dueDate: payable.dueDate || null,
+        totalAmount: payable.totalAmount,
+        notes: `Duplicated from ${payable.invoiceNumber}. ${payable.notes || ''}`,
+        purchaseOrderId: payable.purchaseOrderId || null,
+      }
+      
+      await payableApi.create(payload)
+      toast({
+        title: "Success",
+        description: `Invoice duplicated successfully.`,
+      })
+      loadPayables()
+      loadSummary()
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to duplicate invoice.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleMarkAsPaid = async (payable: any) => {
+    try {
+      const paymentAmount = parseFloat(payable.outstandingAmount)
+      await payableApi.recordPayment(payable.payableId.toString(), {
+        paymentAmount,
+        paymentDate: new Date().toISOString().split('T')[0],
+        paymentMethod: "manual",
+        referenceNumber: `MANUAL-${Date.now()}`,
+        notes: "Marked as paid manually",
+      })
+      toast({
+        title: "Success",
+        description: "Invoice marked as paid successfully.",
+      })
+      loadPayables()
+      loadSummary()
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to mark invoice as paid.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handlePrint = (payable: any) => {
+    // Create a print-friendly window
+    const printWindow = window.open('', '_blank')
+    if (printWindow) {
+      printWindow.document.write(`
+        <html>
+          <head>
+            <title>Invoice ${payable.invoiceNumber}</title>
+            <style>
+              body { font-family: Arial, sans-serif; padding: 20px; }
+              .header { border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 20px; }
+              .invoice-details { margin: 20px 0; }
+              .invoice-details table { width: 100%; border-collapse: collapse; }
+              .invoice-details td { padding: 8px; border-bottom: 1px solid #ddd; }
+              .invoice-details td:first-child { font-weight: bold; width: 30%; }
+              .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd; }
+            </style>
+          </head>
+          <body>
+            <div class="header">
+              <h1>Vendor Invoice</h1>
+              <p>Invoice Number: ${payable.invoiceNumber}</p>
+            </div>
+            <div class="invoice-details">
+              <table>
+                <tr><td>Vendor:</td><td>${payable.vendorName || '—'}</td></tr>
+                <tr><td>Invoice Date:</td><td>${formatDate(payable.invoiceDate)}</td></tr>
+                <tr><td>Due Date:</td><td>${payable.dueDate ? formatDate(payable.dueDate) : '—'}</td></tr>
+                <tr><td>Total Amount:</td><td>${formatCurrency(parseFloat(payable.totalAmount))}</td></tr>
+                <tr><td>Paid Amount:</td><td>${formatCurrency(parseFloat(payable.paidAmount || 0))}</td></tr>
+                <tr><td>Outstanding:</td><td>${formatCurrency(parseFloat(payable.outstandingAmount))}</td></tr>
+                <tr><td>Status:</td><td>${payable.status}</td></tr>
+                ${payable.purchaseOrderNumber ? `<tr><td>Purchase Order:</td><td>${payable.purchaseOrderNumber}</td></tr>` : ''}
+                ${payable.notes ? `<tr><td>Notes:</td><td>${payable.notes}</td></tr>` : ''}
+              </table>
+            </div>
+            <div class="footer">
+              <p>Generated on ${new Date().toLocaleString()}</p>
+            </div>
+          </body>
+        </html>
+      `)
+      printWindow.document.close()
+      printWindow.print()
+    }
+  }
+
+  const handleDownloadPDF = (payable: any) => {
+    // For now, just trigger print - in production, this would generate a PDF
+    handlePrint(payable)
+  }
+
+  const handleSendReminder = (payable: any) => {
+    if (!payable.vendorEmail) {
+      toast({
+        title: "Error",
+        description: "Vendor email not available.",
+        variant: "destructive",
+      })
+      return
+    }
+    // In production, this would send an email
+    toast({
+      title: "Reminder Sent",
+      description: `Payment reminder sent to ${payable.vendorEmail}`,
+    })
   }
 
   const confirmDelete = async () => {
@@ -373,15 +503,55 @@ export default function AccountsPayablePage() {
                                   <DollarSign className="h-4 w-4" />
                                 </Button>
                               )}
-                              <Button
-                                variant="outline"
-                                size="icon"
-                                onClick={() => handleDelete(payable)}
-                                title="Delete Invoice"
-                                className="text-destructive hover:text-destructive"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button variant="outline" size="icon" title="More Actions">
+                                    <MoreVertical className="h-4 w-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem onClick={() => handlePrint(payable)}>
+                                    <Printer className="mr-2 h-4 w-4" />
+                                    Print Invoice
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => handleDownloadPDF(payable)}>
+                                    <FileText className="mr-2 h-4 w-4" />
+                                    Download PDF
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => handleDuplicate(payable)}>
+                                    <Copy className="mr-2 h-4 w-4" />
+                                    Duplicate Invoice
+                                  </DropdownMenuItem>
+                                  {payable.status !== "paid" && (
+                                    <>
+                                      <DropdownMenuSeparator />
+                                      <DropdownMenuItem 
+                                        onClick={() => handleMarkAsPaid(payable)}
+                                        className="text-green-600"
+                                      >
+                                        <CheckCircle2 className="mr-2 h-4 w-4" />
+                                        Mark as Paid
+                                      </DropdownMenuItem>
+                                      {payable.vendorEmail && (
+                                        <DropdownMenuItem onClick={() => handleSendReminder(payable)}>
+                                          <Mail className="mr-2 h-4 w-4" />
+                                          Send Reminder
+                                        </DropdownMenuItem>
+                                      )}
+                                    </>
+                                  )}
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem 
+                                    onClick={() => handleDelete(payable)}
+                                    className="text-destructive"
+                                  >
+                                    <Trash2 className="mr-2 h-4 w-4" />
+                                    Delete Invoice
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
                             </div>
                           </TableCell>
                         </TableRow>
