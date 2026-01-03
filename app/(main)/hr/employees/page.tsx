@@ -1,84 +1,136 @@
+"use client"
+
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
-import { Search, Download, UserPlus } from "lucide-react"
+import { Search, Download, UserPlus, Edit, Trash2, Eye, Loader2 } from "lucide-react"
+import { employeeApi } from "@/lib/api"
+import { toast } from "@/components/ui/use-toast"
+import { EmployeeForm } from "@/components/employee-form"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 
 export default function EmployeesPage() {
-  const employees = [
-    {
-      id: "EMP-1001",
-      name: "James Ndiwa",
-      department: "Medical",
-      position: "Chief Medical Officer",
-      joinDate: "2020-01-15",
-      status: "Active",
-      contact: "+254 712 345 678",
-      email: "james.ndiwa@transelgon.co.ke",
-    },
-    {
-      id: "EMP-1002",
-      name: "Sarah Isuvi",
-      department: "Medical",
-      position: "Senior Doctor",
-      joinDate: "2020-03-10",
-      status: "Active",
-      contact: "+254 723 456 789",
-      email: "sarah.isuvi@transelgon.co.ke",
-    },
-    {
-      id: "EMP-1003",
-      name: "Michael Siva",
-      department: "Medical",
-      position: "Specialist",
-      joinDate: "2021-02-05",
-      status: "Active",
-      contact: "+254 734 567 890",
-      email: "michael.siva@transelgon.co.ke",
-    },
-    {
-      id: "EMP-1004",
-      name: "Emily Logovane",
-      department: "Medical",
-      position: "Specialist",
-      joinDate: "2021-05-20",
-      status: "Active",
-      contact: "+254 745 678 901",
-      email: "emily.logovane@transelgon.co.ke",
-    },
-    {
-      id: "EMP-1005",
-      name: "Daniel Mirenja",
-      department: "Finance",
-      position: "Finance Manager",
-      joinDate: "2020-06-15",
-      status: "Active",
-      contact: "+254 756 789 012",
-      email: "daniel.mirenja@transelgon.co.ke",
-    },
-    {
-      id: "EMP-1006",
-      name: "Grace Savai",
-      department: "HR",
-      position: "HR Manager",
-      joinDate: "2020-08-01",
-      status: "Active",
-      contact: "+254 767 890 123",
-      email: "grace.savai@transelgon.co.ke",
-    },
-    {
-      id: "EMP-1007",
-      name: "Peter Livambula",
-      department: "IT",
-      position: "IT Manager",
-      joinDate: "2021-01-10",
-      status: "Active",
-      contact: "+254 778 901 234",
-      email: "peter.livambula@transelgon.co.ke",
-    },
-  ]
+  const [employees, setEmployees] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [searchTerm, setSearchTerm] = useState("")
+  const [selectedTab, setSelectedTab] = useState("all")
+  const [formOpen, setFormOpen] = useState(false)
+  const [selectedEmployee, setSelectedEmployee] = useState<any>(null)
+  const [viewDialogOpen, setViewDialogOpen] = useState(false)
+  const [viewEmployee, setViewEmployee] = useState<any>(null)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [employeeToDelete, setEmployeeToDelete] = useState<any>(null)
+
+  useEffect(() => {
+    loadEmployees()
+  }, [searchTerm, selectedTab])
+
+  const loadEmployees = async () => {
+    try {
+      setLoading(true)
+      const departmentId = selectedTab !== "all" ? selectedTab : undefined
+      const response = await employeeApi.getAll(searchTerm || undefined, departmentId)
+      setEmployees(response.employees || [])
+    } catch (error: any) {
+      console.error("Error loading employees:", error)
+      toast({
+        title: "Error",
+        description: "Failed to load employees.",
+        variant: "destructive",
+      })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleAdd = () => {
+    setSelectedEmployee(null)
+    setFormOpen(true)
+  }
+
+  const handleEdit = (employee: any) => {
+    setSelectedEmployee(employee)
+    setFormOpen(true)
+  }
+
+  const handleView = async (employee: any) => {
+    try {
+      const fullEmployee = await employeeApi.getById(employee.employeeId.toString())
+      setViewEmployee(fullEmployee)
+      setViewDialogOpen(true)
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: "Failed to load employee details.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleDelete = async () => {
+    if (!employeeToDelete) return
+
+    try {
+      await employeeApi.delete(employeeToDelete.employeeId.toString())
+      toast({
+        title: "Success",
+        description: "Employee terminated successfully.",
+      })
+      setDeleteDialogOpen(false)
+      setEmployeeToDelete(null)
+      loadEmployees()
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to terminate employee.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const getStatusBadge = (status: string) => {
+    const statusMap: Record<string, { variant: "default" | "secondary" | "outline" | "destructive"; label: string }> = {
+      active: { variant: "default", label: "Active" },
+      on_leave: { variant: "secondary", label: "On Leave" },
+      terminated: { variant: "destructive", label: "Terminated" },
+      resigned: { variant: "outline", label: "Resigned" },
+    }
+
+    const statusInfo = statusMap[status] || { variant: "outline" as const, label: status }
+    return (
+      <Badge variant={statusInfo.variant}>{statusInfo.label}</Badge>
+    )
+  }
+
+  const filteredEmployees = employees.filter((emp) => {
+    if (selectedTab === "all") return true
+    // For now, we'll filter by department name (you can enhance this with departmentId)
+    const deptName = emp.departmentName?.toLowerCase() || ""
+    if (selectedTab === "medical") return deptName.includes("medical")
+    if (selectedTab === "admin") return deptName.includes("admin") || deptName.includes("finance") || deptName.includes("hr")
+    if (selectedTab === "support") return deptName.includes("support") || deptName.includes("it") || deptName.includes("maintenance")
+    return true
+  })
 
   return (
     <div className="flex flex-col gap-4">
@@ -92,7 +144,7 @@ export default function EmployeesPage() {
             <Download className="mr-2 h-4 w-4" />
             Export
           </Button>
-          <Button>
+          <Button onClick={handleAdd}>
             <UserPlus className="mr-2 h-4 w-4" />
             Add Employee
           </Button>
@@ -105,7 +157,7 @@ export default function EmployeesPage() {
           <CardDescription>View and manage hospital staff</CardDescription>
         </CardHeader>
         <CardContent>
-          <Tabs defaultValue="all">
+          <Tabs value={selectedTab} onValueChange={setSelectedTab}>
             <div className="flex items-center justify-between mb-4">
               <TabsList>
                 <TabsTrigger value="all">All Staff</TabsTrigger>
@@ -115,63 +167,186 @@ export default function EmployeesPage() {
               </TabsList>
               <div className="relative w-64">
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input type="search" placeholder="Search employees..." className="w-full pl-8" />
+                <Input
+                  type="search"
+                  placeholder="Search employees..."
+                  className="w-full pl-8"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
               </div>
             </div>
 
-            <TabsContent value="all" className="space-y-4">
-              <div className="rounded-md border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Employee ID</TableHead>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Department</TableHead>
-                      <TableHead>Position</TableHead>
-                      <TableHead>Join Date</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Contact</TableHead>
-                      <TableHead>Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {employees.map((employee) => (
-                      <TableRow key={employee.id}>
-                        <TableCell className="font-medium">{employee.id}</TableCell>
-                        <TableCell>{employee.name}</TableCell>
-                        <TableCell>{employee.department}</TableCell>
-                        <TableCell>{employee.position}</TableCell>
-                        <TableCell>{employee.joinDate}</TableCell>
-                        <TableCell>
-                          <Badge
-                            variant={
-                              employee.status === "Active"
-                                ? "default"
-                                : employee.status === "On Leave"
-                                  ? "secondary"
-                                  : "outline"
-                            }
-                          >
-                            {employee.status}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>{employee.contact}</TableCell>
-                        <TableCell>
-                          <Button variant="outline" size="sm">
-                            View
-                          </Button>
-                        </TableCell>
+            <TabsContent value={selectedTab} className="space-y-4">
+              {loading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : filteredEmployees.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-8 text-center">
+                  <p className="text-sm text-muted-foreground">No employees found</p>
+                </div>
+              ) : (
+                <div className="rounded-md border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Employee ID</TableHead>
+                        <TableHead>Name</TableHead>
+                        <TableHead>Department</TableHead>
+                        <TableHead>Position</TableHead>
+                        <TableHead>Join Date</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Contact</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredEmployees.map((employee) => (
+                        <TableRow key={employee.employeeId}>
+                          <TableCell className="font-medium">{employee.employeeNumber}</TableCell>
+                          <TableCell>{employee.fullName || `${employee.firstName} ${employee.lastName}`}</TableCell>
+                          <TableCell>{employee.departmentName || "—"}</TableCell>
+                          <TableCell>{employee.positionTitle || "—"}</TableCell>
+                          <TableCell>
+                            {employee.hireDate ? new Date(employee.hireDate).toLocaleDateString() : "—"}
+                          </TableCell>
+                          <TableCell>{getStatusBadge(employee.status)}</TableCell>
+                          <TableCell>{employee.phone || employee.email || "—"}</TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex justify-end gap-2">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => handleView(employee)}
+                                className="h-8 w-8"
+                              >
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => handleEdit(employee)}
+                                className="h-8 w-8"
+                              >
+                                <Edit className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => {
+                                  setEmployeeToDelete(employee)
+                                  setDeleteDialogOpen(true)
+                                }}
+                                className="h-8 w-8 text-destructive hover:text-destructive"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
             </TabsContent>
-
-            {/* Similar content for other tabs */}
           </Tabs>
         </CardContent>
       </Card>
+
+      <EmployeeForm
+        open={formOpen}
+        onOpenChange={setFormOpen}
+        onSuccess={loadEmployees}
+        employee={selectedEmployee}
+      />
+
+      {viewEmployee && (
+        <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
+          <DialogContent className="sm:max-w-[600px]">
+            <DialogHeader>
+              <DialogTitle>Employee Details</DialogTitle>
+              <DialogDescription>View complete employee information</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Employee Number</p>
+                  <p className="text-sm">{viewEmployee.employeeNumber}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Full Name</p>
+                  <p className="text-sm">{viewEmployee.fullName || `${viewEmployee.firstName} ${viewEmployee.lastName}`}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Department</p>
+                  <p className="text-sm">{viewEmployee.departmentName || "—"}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Position</p>
+                  <p className="text-sm">{viewEmployee.positionTitle || "—"}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Hire Date</p>
+                  <p className="text-sm">
+                    {viewEmployee.hireDate ? new Date(viewEmployee.hireDate).toLocaleDateString() : "—"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Status</p>
+                  <p className="text-sm">{getStatusBadge(viewEmployee.status)}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Phone</p>
+                  <p className="text-sm">{viewEmployee.phone || "—"}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Email</p>
+                  <p className="text-sm">{viewEmployee.email || "—"}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Employment Type</p>
+                  <p className="text-sm">{viewEmployee.employmentType || "—"}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Gender</p>
+                  <p className="text-sm">{viewEmployee.gender || "—"}</p>
+                </div>
+              </div>
+              {viewEmployee.address && (
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Address</p>
+                  <p className="text-sm">{viewEmployee.address}</p>
+                </div>
+              )}
+              {viewEmployee.notes && (
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Notes</p>
+                  <p className="text-sm">{viewEmployee.notes}</p>
+                </div>
+              )}
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Terminate Employee</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to terminate {employeeToDelete?.fullName || employeeToDelete?.firstName}? This action will mark the employee as terminated.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground">
+              Terminate
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

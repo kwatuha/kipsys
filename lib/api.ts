@@ -629,3 +629,21 @@ export const purchaseOrderApi = {
     apiRequest<any>(`/api/procurement/purchase-orders/${id}`, { method: 'DELETE' }),
 };
 
+// Employee API
+export const employeeApi = {
+  getAll: (search?: string, departmentId?: string, status?: string, positionId?: string, page = 1, limit = 50) =>
+    apiRequest<{ employees: any[], pagination: any }>(`/api/employees?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(search && { search }), ...(departmentId && { departmentId }), ...(status && { status }), ...(positionId && { positionId }) })}`),
+  
+  getById: (id: string) =>
+    apiRequest<any>(`/api/employees/${id}`),
+  
+  create: (data: any) =>
+    apiRequest<any>('/api/employees', { method: 'POST', body: data }),
+  
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/employees/${id}`, { method: 'PUT', body: data }),
+  
+  delete: (id: string) =>
+    apiRequest<any>(`/api/employees/${id}`, { method: 'DELETE' }),
+};
+

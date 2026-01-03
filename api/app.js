@@ -31,6 +31,7 @@ const vendorContractsRoutes = require('./routes/vendorContractsRoutes');
 const vendorDocumentsRoutes = require('./routes/vendorDocumentsRoutes');
 const vendorIssuesRoutes = require('./routes/vendorIssuesRoutes');
 const inventoryTransactionRoutes = require('./routes/inventoryTransactionRoutes');
+const employeeRoutes = require('./routes/employeeRoutes');
 
 const authenticate = require('./middleware/authenticate');
 
@@ -96,6 +97,7 @@ app.use('/api/maternity', maternityRoutes);
 app.use('/api/icu', icuRoutes);
 app.use('/api/triage', triageRoutes);
 app.use('/api/departments', departmentRoutes);
+app.use('/api/employees', employeeRoutes);
 app.use('/api/patients', patientAllergiesRoutes);
 app.use('/api/clinical-services', clinicalServicesRoutes);
 app.use('/api/doctors', doctorsRoutes);
