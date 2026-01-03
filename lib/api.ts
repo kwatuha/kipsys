@@ -749,6 +749,30 @@ export const analyticsApi = {
     apiRequest<any>('/api/analytics/summary'),
 };
 
+// Service Charges API
+export const serviceChargeApi = {
+  getAll: (status?: string, category?: string, department?: string, search?: string) => {
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    if (category) params.append('category', category);
+    if (department) params.append('department', department);
+    if (search) params.append('search', search);
+    return apiRequest<any[]>(`/api/billing/charges?${params.toString()}`);
+  },
+  
+  getById: (id: string) =>
+    apiRequest<any>(`/api/billing/charges/${id}`),
+  
+  create: (data: any) =>
+    apiRequest<any>('/api/billing/charges', { method: 'POST', body: data }),
+  
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/billing/charges/${id}`, { method: 'PUT', body: data }),
+  
+  delete: (id: string) =>
+    apiRequest<any>(`/api/billing/charges/${id}`, { method: 'DELETE' }),
+};
+
 // Role API
 export const roleApi = {
   getAll: () =>

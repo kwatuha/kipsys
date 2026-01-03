@@ -1,4 +1,5 @@
 "use client"
+import { useState, useEffect } from "react"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useForm } from "react-hook-form"
 import * as z from "zod"
@@ -16,12 +17,16 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
+import { serviceChargeApi } from "@/lib/api"
+import { toast } from "@/components/ui/use-toast"
+import { Loader2 } from "lucide-react"
 
 // Define the form schema
 const formSchema = z.object({
+  chargeCode: z.string().optional(),
   name: z.string().min(2, { message: "Service name must be at least 2 characters." }),
-  category: z.string().min(1, { message: "Please select a category." }),
-  department: z.string().min(1, { message: "Please select a department." }),
+  category: z.string().optional(),
+  department: z.string().optional(),
   cost: z.coerce.number().min(0, { message: "Cost must be a positive number." }),
   description: z.string().optional(),
   status: z.boolean().default(true),
@@ -60,47 +65,125 @@ const departments = [
 ]
 
 interface ServiceCharge {
-  id: string
+  chargeId?: number
+  chargeCode?: string
   name: string
-  category: string
-  department: string
+  category?: string | null
+  department?: string | null
   cost: number
-  description: string
-  status: string
-  lastUpdated: string
+  description?: string | null
+  status?: string
+  createdAt?: string
+  updatedAt?: string
 }
 
 interface AddServiceChargeFormProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  onSuccess?: () => void
   editData: ServiceCharge | null
 }
 
-export function AddServiceChargeForm({ open, onOpenChange, editData }: AddServiceChargeFormProps) {
+export function AddServiceChargeForm({ open, onOpenChange, onSuccess, editData }: AddServiceChargeFormProps) {
+  const [loading, setLoading] = useState(false)
+  const [isMounted, setIsMounted] = useState(false)
   const isEditing = !!editData
 
   // Initialize the form
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
-      name: editData?.name || "",
-      category: editData?.category || "",
-      department: editData?.department || "",
-      cost: editData?.cost || 0,
-      description: editData?.description || "",
-      status: editData?.status === "Active" || true,
+      chargeCode: "",
+      name: "",
+      category: "",
+      department: "",
+      cost: 0,
+      description: "",
+      status: true,
     },
   })
 
-  const onSubmit = (data: FormValues) => {
-    // In a real application, this would call an API to save the data
-    console.log("Form submitted:", data)
+  useEffect(() => {
+    setIsMounted(true)
+  }, [])
 
-    // Close the dialog
-    onOpenChange(false)
+  useEffect(() => {
+    if (open && isMounted) {
+      if (editData) {
+        form.reset()
+        // Use setValue to ensure all fields are properly set
+        form.setValue("chargeCode", editData.chargeCode || "")
+        form.setValue("name", editData.name || "")
+        form.setValue("category", editData.category || "")
+        form.setValue("department", editData.department || "")
+        form.setValue("cost", editData.cost || 0)
+        form.setValue("description", editData.description || "")
+        form.setValue("status", editData.status === "Active" || true)
+      } else {
+        form.reset({
+          chargeCode: "",
+          name: "",
+          category: "",
+          department: "",
+          cost: 0,
+          description: "",
+          status: true,
+        })
+      }
+    }
+  }, [open, editData, form, isMounted])
 
-    // Reset the form
-    form.reset()
+  const onSubmit = async (data: FormValues) => {
+    try {
+      setLoading(true)
+      const payload: any = {
+        name: data.name,
+        cost: data.cost,
+        description: data.description || null,
+        status: data.status ? "Active" : "Inactive",
+      }
+
+      if (data.chargeCode) {
+        payload.chargeCode = data.chargeCode
+      }
+      if (data.category) {
+        payload.category = data.category
+      }
+      if (data.department) {
+        payload.department = data.department
+      }
+
+      if (isEditing && editData?.chargeId) {
+        await serviceChargeApi.update(editData.chargeId.toString(), payload)
+        toast({
+          title: "Success",
+          description: "Service charge updated successfully.",
+        })
+      } else {
+        await serviceChargeApi.create(payload)
+        toast({
+          title: "Success",
+          description: "Service charge created successfully.",
+        })
+      }
+
+      form.reset()
+      onOpenChange(false)
+      if (onSuccess) onSuccess()
+    } catch (error: any) {
+      console.error("Error saving service charge:", error)
+      toast({
+        title: "Error",
+        description: error.message || "Failed to save service charge.",
+        variant: "destructive",
+      })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  if (!isMounted) {
+    return null
   }
 
   return (
@@ -114,15 +197,30 @@ export function AddServiceChargeForm({ open, onOpenChange, editData }: AddServic
               : "Add a new service charge to the hospital's pricing structure."}
           </DialogDescription>
         </DialogHeader>
-        <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+        {isMounted && (
+          <Form {...form}>
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <FormField
+                control={form.control}
+                name="chargeCode"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Charge Code (Optional)</FormLabel>
+                    <FormControl>
+                      <Input placeholder="Auto-generated if empty" {...field} />
+                    </FormControl>
+                    <FormDescription>Leave empty to auto-generate</FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
               <FormField
                 control={form.control}
                 name="name"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Service Name</FormLabel>
+                    <FormLabel>Service Name *</FormLabel>
                     <FormControl>
                       <Input placeholder="Enter service name" {...field} />
                     </FormControl>
@@ -135,7 +233,7 @@ export function AddServiceChargeForm({ open, onOpenChange, editData }: AddServic
                 name="cost"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Cost (KES)</FormLabel>
+                    <FormLabel>Cost (KES) *</FormLabel>
                     <FormControl>
                       <Input type="number" min="0" step="100" placeholder="0" {...field} />
                     </FormControl>
@@ -149,13 +247,17 @@ export function AddServiceChargeForm({ open, onOpenChange, editData }: AddServic
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Category</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value}>
+                    <Select 
+                      onValueChange={(value) => field.onChange(value === "none" ? "" : value)} 
+                      value={field.value || "none"}
+                    >
                       <FormControl>
                         <SelectTrigger>
                           <SelectValue placeholder="Select a category" />
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
+                        <SelectItem value="none">None</SelectItem>
                         {categories.map((category) => (
                           <SelectItem key={category} value={category}>
                             {category}
@@ -173,13 +275,17 @@ export function AddServiceChargeForm({ open, onOpenChange, editData }: AddServic
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Department</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value}>
+                    <Select 
+                      onValueChange={(value) => field.onChange(value === "none" ? "" : value)} 
+                      value={field.value || "none"}
+                    >
                       <FormControl>
                         <SelectTrigger>
                           <SelectValue placeholder="Select a department" />
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
+                        <SelectItem value="none">None</SelectItem>
                         {departments.map((department) => (
                           <SelectItem key={department} value={department}>
                             {department}
@@ -224,13 +330,17 @@ export function AddServiceChargeForm({ open, onOpenChange, editData }: AddServic
               )}
             />
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
                 Cancel
               </Button>
-              <Button type="submit">{isEditing ? "Update" : "Add"} Service Charge</Button>
+              <Button type="submit" disabled={loading}>
+                {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                {isEditing ? "Update" : "Add"} Service Charge
+              </Button>
             </DialogFooter>
           </form>
         </Form>
+        )}
       </DialogContent>
     </Dialog>
   )
