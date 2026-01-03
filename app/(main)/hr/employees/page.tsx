@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
-import { Search, Download, UserPlus, Edit, Trash2, Eye, Loader2, Calendar, DollarSign, TrendingUp, Clock, CheckCircle2, XCircle, ArrowUp, ArrowDown, ArrowRight, User, Filter } from "lucide-react"
+import { Search, Download, UserPlus, Edit, Trash2, Eye, Loader2, Calendar, DollarSign, TrendingUp, Clock, CheckCircle2, XCircle, ArrowUp, ArrowDown, ArrowRight, User, Filter, Ban } from "lucide-react"
 import { employeeApi } from "@/lib/api"
 import { toast } from "@/components/ui/use-toast"
 import { EmployeeForm } from "@/components/employee-form"
@@ -64,6 +64,11 @@ export default function EmployeesPage() {
   const [leaveFormOpen, setLeaveFormOpen] = useState(false)
   const [selectedLeave, setSelectedLeave] = useState<any>(null)
   const [leaveEmployeeId, setLeaveEmployeeId] = useState<string>("")
+  const [leaveDeleteDialogOpen, setLeaveDeleteDialogOpen] = useState(false)
+  const [leaveToDelete, setLeaveToDelete] = useState<any>(null)
+  const [rejectDialogOpen, setRejectDialogOpen] = useState(false)
+  const [leaveToReject, setLeaveToReject] = useState<any>(null)
+  const [rejectionReason, setRejectionReason] = useState("")
   
   // Payroll state
   const [payrolls, setPayrolls] = useState<any[]>([])
@@ -387,14 +392,65 @@ export default function EmployeesPage() {
     }
   }
 
-  const handleRejectLeave = async (leaveId: string) => {
+  const handleRejectLeave = async (leaveId: string, reason?: string) => {
     try {
-      await employeeApi.updateLeave(leaveId, { status: "rejected", approvedBy: 1 })
+      await employeeApi.updateLeave(leaveId, { 
+        status: "rejected", 
+        approvedBy: 1,
+        rejectionReason: reason || "No reason provided"
+      })
       toast({ title: "Success", description: "Leave rejected." })
+      setRejectDialogOpen(false)
+      setLeaveToReject(null)
+      setRejectionReason("")
       loadLeaves()
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" })
     }
+  }
+
+  const handleCancelLeave = async (leaveId: string) => {
+    try {
+      await employeeApi.updateLeave(leaveId, { status: "cancelled" })
+      toast({ title: "Success", description: "Leave cancelled." })
+      loadLeaves()
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message, variant: "destructive" })
+    }
+  }
+
+  const handleDeleteLeave = async () => {
+    if (!leaveToDelete) return
+    try {
+      await employeeApi.deleteLeave(leaveToDelete.leaveId.toString())
+      toast({ title: "Success", description: "Leave record deleted." })
+      setLeaveDeleteDialogOpen(false)
+      setLeaveToDelete(null)
+      loadLeaves()
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message || "Failed to delete leave.", variant: "destructive" })
+    }
+  }
+
+  const handleEditLeave = (leave: any) => {
+    setSelectedLeave(leave)
+    setLeaveEmployeeId(leave.employeeId.toString())
+    setLeaveFormOpen(true)
+  }
+
+  const handleViewLeave = (leave: any) => {
+    setSelectedLeave(leave)
+    // Could open a view dialog or scroll to details
+    toast({ 
+      title: "Leave Details", 
+      description: `${leave.leaveType} leave from ${formatDate(leave.startDate)} to ${formatDate(leave.endDate)} - ${leave.daysRequested} days` 
+    })
+  }
+
+  const openRejectDialog = (leave: any) => {
+    setLeaveToReject(leave)
+    setRejectionReason("")
+    setRejectDialogOpen(true)
   }
 
   const handleProcessPayroll = async (payrollId: string, status: string) => {
@@ -635,23 +691,79 @@ export default function EmployeesPage() {
                           <TableCell>{getLeaveStatusBadge(leave.status)}</TableCell>
                           <TableCell className="text-right">
                             <div className="flex justify-end gap-2">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleViewLeave(leave)}
+                                title="View Details"
+                              >
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                              
+                              {(leave.status === "pending" || leave.status === "cancelled") && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleEditLeave(leave)}
+                                  title="Edit Leave"
+                                >
+                                  <Edit className="h-4 w-4" />
+                                </Button>
+                              )}
+                              
                               {leave.status === "pending" && (
                                 <>
                                   <Button
                                     variant="ghost"
                                     size="sm"
                                     onClick={() => handleApproveLeave(leave.leaveId.toString())}
+                                    title="Approve Leave"
                                   >
                                     <CheckCircle2 className="h-4 w-4 text-green-600" />
                                   </Button>
                                   <Button
                                     variant="ghost"
                                     size="sm"
-                                    onClick={() => handleRejectLeave(leave.leaveId.toString())}
+                                    onClick={() => openRejectDialog(leave)}
+                                    title="Reject Leave"
                                   >
                                     <XCircle className="h-4 w-4 text-red-600" />
                                   </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => handleCancelLeave(leave.leaveId.toString())}
+                                    title="Cancel Leave"
+                                  >
+                                    <Ban className="h-4 w-4 text-orange-600" />
+                                  </Button>
                                 </>
+                              )}
+                              
+                              {leave.status === "approved" && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleCancelLeave(leave.leaveId.toString())}
+                                  title="Cancel Leave"
+                                >
+                                  <Ban className="h-4 w-4 text-orange-600" />
+                                </Button>
+                              )}
+                              
+                              {(leave.status === "cancelled" || leave.status === "rejected") && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    setLeaveToDelete(leave)
+                                    setLeaveDeleteDialogOpen(true)
+                                  }}
+                                  title="Delete Leave"
+                                  className="text-destructive hover:text-destructive"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
                               )}
                             </div>
                           </TableCell>
@@ -1647,11 +1759,112 @@ export default function EmployeesPage() {
 
       <LeaveForm
         open={leaveFormOpen}
-        onOpenChange={setLeaveFormOpen}
-        onSuccess={loadLeaves}
+        onOpenChange={(open) => {
+          setLeaveFormOpen(open)
+          if (!open) {
+            setSelectedLeave(null)
+          }
+        }}
+        onSuccess={() => {
+          loadLeaves()
+          setSelectedLeave(null)
+        }}
         employeeId={leaveEmployeeId}
         leave={selectedLeave}
       />
+
+      {/* Rejection Reason Dialog */}
+      <Dialog open={rejectDialogOpen} onOpenChange={setRejectDialogOpen}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Reject Leave Request</DialogTitle>
+            <DialogDescription>
+              Please provide a reason for rejecting this leave request.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {leaveToReject && (
+              <div className="p-3 bg-muted rounded-md">
+                <p className="text-sm font-medium">Leave Details</p>
+                <p className="text-sm text-muted-foreground">
+                  {leaveToReject.employeeName} - {leaveToReject.leaveType} leave
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  {formatDate(leaveToReject.startDate)} to {formatDate(leaveToReject.endDate)} ({leaveToReject.daysRequested} days)
+                </p>
+              </div>
+            )}
+            <div>
+              <label className="text-sm font-medium">Rejection Reason *</label>
+              <textarea
+                className="mt-2 w-full min-h-[100px] rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                placeholder="Enter reason for rejection..."
+                value={rejectionReason}
+                onChange={(e) => setRejectionReason(e.target.value)}
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setRejectDialogOpen(false)
+                  setLeaveToReject(null)
+                  setRejectionReason("")
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={() => {
+                  if (rejectionReason.trim()) {
+                    handleRejectLeave(leaveToReject.leaveId.toString(), rejectionReason)
+                  } else {
+                    toast({
+                      title: "Error",
+                      description: "Please provide a rejection reason.",
+                      variant: "destructive",
+                    })
+                  }
+                }}
+                disabled={!rejectionReason.trim()}
+              >
+                Reject Leave
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Leave Confirmation Dialog */}
+      <AlertDialog open={leaveDeleteDialogOpen} onOpenChange={setLeaveDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Leave Record</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this leave record? This action cannot be undone.
+              {leaveToDelete && (
+                <div className="mt-2 p-2 bg-muted rounded-md">
+                  <p className="text-sm">
+                    <strong>{leaveToDelete.employeeName}</strong> - {leaveToDelete.leaveType} leave
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    {formatDate(leaveToDelete.startDate)} to {formatDate(leaveToDelete.endDate)}
+                  </p>
+                </div>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteLeave}
+              className="bg-destructive text-destructive-foreground"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <SalaryForm
         open={salaryFormOpen}

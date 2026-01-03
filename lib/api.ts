@@ -659,6 +659,9 @@ export const employeeApi = {
   updateLeave: (leaveId: string, data: any) =>
     apiRequest<any>(`/api/employees/leave/${leaveId}`, { method: 'PUT', body: data }),
   
+  deleteLeave: (leaveId: string) =>
+    apiRequest<any>(`/api/employees/leave/${leaveId}`, { method: 'DELETE' }),
+  
   getLeaveBalance: (employeeId: string, year?: number) =>
     apiRequest<any[]>(`/api/employees/${employeeId}/leave/balance?${new URLSearchParams({ ...(year && { year: year.toString() }) })}`),
   

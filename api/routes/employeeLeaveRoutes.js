@@ -265,6 +265,48 @@ router.put('/leave/:leaveId', async (req, res) => {
 });
 
 /**
+ * @route DELETE /api/employees/leave/:leaveId
+ * @description Delete a leave record
+ */
+router.delete('/leave/:leaveId', async (req, res) => {
+    try {
+        const { leaveId } = req.params;
+
+        // Check if leave exists
+        const [existing] = await pool.execute(
+            'SELECT leaveId FROM employee_leave WHERE leaveId = ?',
+            [parseInt(leaveId)]
+        );
+
+        if (existing.length === 0) {
+            return res.status(404).json({ message: 'Leave record not found' });
+        }
+
+        // Only allow deletion of cancelled or rejected leaves
+        const [leave] = await pool.execute(
+            'SELECT status FROM employee_leave WHERE leaveId = ?',
+            [parseInt(leaveId)]
+        );
+
+        if (leave.length > 0 && !['cancelled', 'rejected'].includes(leave[0].status)) {
+            return res.status(400).json({ 
+                message: 'Cannot delete leave that is not cancelled or rejected' 
+            });
+        }
+
+        await pool.execute(
+            'DELETE FROM employee_leave WHERE leaveId = ?',
+            [parseInt(leaveId)]
+        );
+
+        res.status(200).json({ message: 'Leave record deleted successfully' });
+    } catch (error) {
+        console.error('Error deleting leave record:', error);
+        res.status(500).json({ message: 'Error deleting leave record', error: error.message });
+    }
+});
+
+/**
  * @route GET /api/employees/:employeeId/leave/balance
  * @description Get leave balance for an employee
  */
