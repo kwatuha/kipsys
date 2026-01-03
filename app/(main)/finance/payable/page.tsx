@@ -1,126 +1,188 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import dynamic from "next/dynamic"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
-import { Search, Plus, Download } from "lucide-react"
+import { Search, Plus, Download, Edit, Trash2, Eye, DollarSign, Loader2, Printer, Copy, FileText, MoreVertical, CheckCircle2, Mail, History } from "lucide-react"
 import { AddPayableInvoiceForm } from "@/components/add-payable-invoice-form"
+import { payableApi, vendorApi } from "@/lib/api"
+import { toast } from "@/components/ui/use-toast"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+
+// Dynamically import ViewDialog to prevent SSR hydration issues
+const ViewPayableDialog = dynamic(
+  () => import("@/components/payable-view-dialog").then((mod) => mod.ViewPayableDialog),
+  { ssr: false }
+)
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import { formatDate } from "@/lib/date-utils"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 export default function AccountsPayablePage() {
+  const [payables, setPayables] = useState<any[]>([])
+  const [vendors, setVendors] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
   const [openAddInvoiceForm, setOpenAddInvoiceForm] = useState(false)
+  const [editingPayable, setEditingPayable] = useState<any>(null)
+  const [viewDialogOpen, setViewDialogOpen] = useState(false)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [payDialogOpen, setPayDialogOpen] = useState(false)
+  const [selectedPayable, setSelectedPayable] = useState<any>(null)
+  const [payableToDelete, setPayableToDelete] = useState<any>(null)
+  const [searchTerm, setSearchTerm] = useState("")
+  const [statusFilter, setStatusFilter] = useState<string>("all")
+  const [vendorFilter, setVendorFilter] = useState<string>("all")
+  const [summary, setSummary] = useState<any>(null)
+  const [isMounted, setIsMounted] = useState(false)
 
-  const invoices = [
-    {
-      id: "INV-5001",
-      vendor: "Medical Supplies Ltd",
-      amount: 250000,
-      issueDate: "2023-04-05",
-      dueDate: "2023-05-05",
-      status: "Pending",
-      category: "Medical Supplies",
-      reference: "PO-2023-0045",
-    },
-    {
-      id: "INV-5002",
-      vendor: "Pharma Distributors",
-      amount: 180000,
-      issueDate: "2023-04-08",
-      dueDate: "2023-05-08",
-      status: "Paid",
-      category: "Pharmaceuticals",
-      reference: "PO-2023-0046",
-    },
-    {
-      id: "INV-5003",
-      vendor: "Lab Equipment Co.",
-      amount: 350000,
-      issueDate: "2023-04-10",
-      dueDate: "2023-05-10",
-      status: "Pending",
-      category: "Laboratory Equipment",
-      reference: "PO-2023-0047",
-    },
-    {
-      id: "INV-5004",
-      vendor: "Office Solutions",
-      amount: 75000,
-      issueDate: "2023-04-12",
-      dueDate: "2023-05-12",
-      status: "Overdue",
-      category: "Office Supplies",
-      reference: "PO-2023-0048",
-    },
-    {
-      id: "INV-5005",
-      vendor: "Cleaning Services Inc.",
-      amount: 120000,
-      issueDate: "2023-04-15",
-      dueDate: "2023-05-15",
-      status: "Pending",
-      category: "Cleaning Services",
-      reference: "PO-2023-0049",
-    },
-  ]
+  useEffect(() => {
+    setIsMounted(true)
+  }, [])
 
-  const vendors = [
-    {
-      id: "V-1001",
-      name: "Medical Supplies Ltd",
-      contact: "John Smith",
-      phone: "+254 712 345 678",
-      email: "john@medicalsupplies.co.ke",
-      category: "Medical Supplies",
-      status: "Active",
-      balance: 250000,
-    },
-    {
-      id: "V-1002",
-      name: "Pharma Distributors",
-      contact: "Sarah Johnson",
-      phone: "+254 723 456 789",
-      email: "sarah@pharmadist.co.ke",
-      category: "Pharmaceuticals",
-      status: "Active",
-      balance: 0,
-    },
-    {
-      id: "V-1003",
-      name: "Lab Equipment Co.",
-      contact: "Michael Brown",
-      phone: "+254 734 567 890",
-      email: "michael@labequipment.co.ke",
-      category: "Laboratory Equipment",
-      status: "Active",
-      balance: 350000,
-    },
-    {
-      id: "V-1004",
-      name: "Office Solutions",
-      contact: "Emily Davis",
-      phone: "+254 745 678 901",
-      email: "emily@officesolutions.co.ke",
-      category: "Office Supplies",
-      status: "Active",
-      balance: 75000,
-    },
-    {
-      id: "V-1005",
-      name: "Cleaning Services Inc.",
-      contact: "David Wilson",
-      phone: "+254 756 789 012",
-      email: "david@cleaningservices.co.ke",
-      category: "Cleaning Services",
-      status: "Active",
-      balance: 120000,
-    },
-  ]
+  useEffect(() => {
+    if (isMounted) {
+      loadPayables()
+      loadVendors()
+      loadSummary()
+    }
+  }, [statusFilter, vendorFilter, searchTerm, isMounted])
+
+  const loadPayables = async () => {
+    try {
+      setLoading(true)
+      const data = await payableApi.getAll(
+        statusFilter !== "all" ? statusFilter : undefined,
+        vendorFilter !== "all" ? vendorFilter : undefined,
+        searchTerm || undefined
+      )
+      setPayables(Array.isArray(data) ? data : [])
+    } catch (error: any) {
+      console.error("Error loading payables:", error)
+      toast({
+        title: "Error",
+        description: "Failed to load payable invoices.",
+        variant: "destructive",
+      })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const loadVendors = async () => {
+    try {
+      const data = await vendorApi.getAll()
+      setVendors(Array.isArray(data) ? data : [])
+    } catch (error) {
+      console.error("Error loading vendors:", error)
+    }
+  }
+
+  const loadSummary = async () => {
+    try {
+      const data = await payableApi.getSummary()
+      setSummary(data)
+    } catch (error) {
+      console.error("Error loading summary:", error)
+    }
+  }
+
+  const handleAdd = () => {
+    setEditingPayable(null)
+    setOpenAddInvoiceForm(true)
+  }
+
+  const handleEdit = (payable: any) => {
+    setEditingPayable(payable)
+    setOpenAddInvoiceForm(true)
+  }
+
+  const handleView = (payable: any) => {
+    setSelectedPayable(payable)
+    setViewDialogOpen(true)
+  }
+
+  const handleDelete = (payable: any) => {
+    setPayableToDelete(payable)
+    setDeleteDialogOpen(true)
+  }
+
+  const handlePay = (payable: any) => {
+    setSelectedPayable(payable)
+    setPayDialogOpen(true)
+  }
+
+  const confirmDelete = async () => {
+    if (!payableToDelete) return
+
+    try {
+      await payableApi.delete(payableToDelete.payableId.toString())
+      toast({
+        title: "Success",
+        description: "Payable invoice deleted successfully.",
+      })
+      setDeleteDialogOpen(false)
+      setPayableToDelete(null)
+      loadPayables()
+      loadSummary()
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to delete payable invoice.",
+        variant: "destructive",
+      })
+    }
+  }
 
   const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat("en-KE", { style: "currency", currency: "KES" }).format(amount)
+    return new Intl.NumberFormat("en-KE", { 
+      style: "currency", 
+      currency: "KES",
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(amount)
+  }
+
+  const getStatusBadgeVariant = (status: string) => {
+    switch (status?.toLowerCase()) {
+      case "paid":
+        return "default"
+      case "overdue":
+        return "destructive"
+      case "partial":
+        return "secondary"
+      case "pending":
+        return "outline"
+      default:
+        return "secondary"
+    }
+  }
+
+  if (loading && !summary) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    )
   }
 
   return (
@@ -135,7 +197,7 @@ export default function AccountsPayablePage() {
             <Download className="mr-2 h-4 w-4" />
             Export
           </Button>
-          <Button onClick={() => setOpenAddInvoiceForm(true)}>
+          <Button onClick={handleAdd}>
             <Plus className="mr-2 h-4 w-4" />
             New Invoice
           </Button>
@@ -148,8 +210,12 @@ export default function AccountsPayablePage() {
             <CardTitle className="text-sm font-medium">Total Payables</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{formatCurrency(795000)}</div>
-            <p className="text-xs text-muted-foreground">5 outstanding invoices</p>
+            <div className="text-2xl font-bold">
+              {formatCurrency(parseFloat(summary?.pendingAmount || 0) + parseFloat(summary?.overdueAmount || 0))}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {summary?.pendingCount || 0} outstanding invoices
+            </p>
           </CardContent>
         </Card>
         <Card>
@@ -157,8 +223,8 @@ export default function AccountsPayablePage() {
             <CardTitle className="text-sm font-medium">Pending</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{formatCurrency(720000)}</div>
-            <p className="text-xs text-muted-foreground">3 pending invoices</p>
+            <div className="text-2xl font-bold">{formatCurrency(parseFloat(summary?.pendingAmount || 0))}</div>
+            <p className="text-xs text-muted-foreground">{summary?.pendingCount || 0} pending invoices</p>
           </CardContent>
         </Card>
         <Card>
@@ -166,8 +232,8 @@ export default function AccountsPayablePage() {
             <CardTitle className="text-sm font-medium">Overdue</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{formatCurrency(75000)}</div>
-            <p className="text-xs text-muted-foreground">1 overdue invoice</p>
+            <div className="text-2xl font-bold">{formatCurrency(parseFloat(summary?.overdueAmount || 0))}</div>
+            <p className="text-xs text-muted-foreground">{summary?.overdueCount || 0} overdue invoices</p>
           </CardContent>
         </Card>
         <Card>
@@ -175,8 +241,8 @@ export default function AccountsPayablePage() {
             <CardTitle className="text-sm font-medium">Paid (This Month)</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{formatCurrency(180000)}</div>
-            <p className="text-xs text-muted-foreground">1 paid invoice</p>
+            <div className="text-2xl font-bold">{formatCurrency(parseFloat(summary?.paidThisMonthAmount || 0))}</div>
+            <p className="text-xs text-muted-foreground">{summary?.paidThisMonthCount || 0} paid invoices</p>
           </CardContent>
         </Card>
       </div>
@@ -194,78 +260,136 @@ export default function AccountsPayablePage() {
               <CardDescription>View and manage vendor invoices</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex gap-2">
-                  <Button variant="outline" size="sm">
-                    All
-                  </Button>
-                  <Button variant="outline" size="sm">
-                    Pending
-                  </Button>
-                  <Button variant="outline" size="sm">
-                    Overdue
-                  </Button>
-                  <Button variant="outline" size="sm">
-                    Paid
-                  </Button>
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-4">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <Select value={statusFilter} onValueChange={setStatusFilter}>
+                    <SelectTrigger className="w-[150px]">
+                      <SelectValue placeholder="All Status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Status</SelectItem>
+                      <SelectItem value="pending">Pending</SelectItem>
+                      <SelectItem value="partial">Partial</SelectItem>
+                      <SelectItem value="paid">Paid</SelectItem>
+                      <SelectItem value="overdue">Overdue</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Select value={vendorFilter} onValueChange={setVendorFilter}>
+                    <SelectTrigger className="w-[180px]">
+                      <SelectValue placeholder="All Vendors" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Vendors</SelectItem>
+                      {vendors.map((vendor) => (
+                        <SelectItem key={vendor.vendorId} value={vendor.vendorId.toString()}>
+                          {vendor.vendorName}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
-                <div className="relative w-64">
+                <div className="relative w-full sm:w-64">
                   <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input type="search" placeholder="Search invoices..." className="w-full pl-8" />
+                  <Input
+                    type="search"
+                    placeholder="Search invoices..."
+                    className="w-full pl-8"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                  />
                 </div>
               </div>
 
-              <div className="rounded-md border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Invoice ID</TableHead>
-                      <TableHead>Vendor</TableHead>
-                      <TableHead>Amount</TableHead>
-                      <TableHead>Issue Date</TableHead>
-                      <TableHead>Due Date</TableHead>
-                      <TableHead>Category</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {invoices.map((invoice) => (
-                      <TableRow key={invoice.id}>
-                        <TableCell className="font-medium">{invoice.id}</TableCell>
-                        <TableCell>{invoice.vendor}</TableCell>
-                        <TableCell>{formatCurrency(invoice.amount)}</TableCell>
-                        <TableCell>{invoice.issueDate}</TableCell>
-                        <TableCell>{invoice.dueDate}</TableCell>
-                        <TableCell>{invoice.category}</TableCell>
-                        <TableCell>
-                          <Badge
-                            variant={
-                              invoice.status === "Paid"
-                                ? "default"
-                                : invoice.status === "Overdue"
-                                  ? "destructive"
-                                  : "secondary"
-                            }
-                          >
-                            {invoice.status}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex gap-2">
-                            <Button variant="outline" size="sm">
-                              View
-                            </Button>
-                            <Button variant="outline" size="sm">
-                              {invoice.status === "Paid" ? "Receipt" : "Pay"}
-                            </Button>
-                          </div>
-                        </TableCell>
+              {payables.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <p>No payable invoices found.</p>
+                </div>
+              ) : (
+                <div className="rounded-md border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Invoice Number</TableHead>
+                        <TableHead>Vendor</TableHead>
+                        <TableHead>Amount</TableHead>
+                        <TableHead>Paid</TableHead>
+                        <TableHead>Outstanding</TableHead>
+                        <TableHead>Issue Date</TableHead>
+                        <TableHead>Due Date</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Actions</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+                    </TableHeader>
+                    <TableBody>
+                      {payables.map((payable) => (
+                        <TableRow key={payable.payableId}>
+                          <TableCell className="font-medium">{payable.invoiceNumber}</TableCell>
+                          <TableCell>
+                            <div>{payable.vendorName || "—"}</div>
+                            {payable.purchaseOrderNumber && (
+                              <div className="text-xs text-muted-foreground">
+                                PO: {payable.purchaseOrderNumber}
+                              </div>
+                            )}
+                          </TableCell>
+                          <TableCell>{formatCurrency(parseFloat(payable.totalAmount))}</TableCell>
+                          <TableCell>{formatCurrency(parseFloat(payable.paidAmount || 0))}</TableCell>
+                          <TableCell>{formatCurrency(parseFloat(payable.outstandingAmount))}</TableCell>
+                          <TableCell>{formatDate(payable.invoiceDate)}</TableCell>
+                          <TableCell>
+                            {payable.dueDate ? formatDate(payable.dueDate) : "—"}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={getStatusBadgeVariant(payable.status)}>
+                              {payable.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex gap-2">
+                              <Button
+                                variant="outline"
+                                size="icon"
+                                onClick={() => handleView(payable)}
+                                title="View Details"
+                              >
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="icon"
+                                onClick={() => handleEdit(payable)}
+                                title="Edit Invoice"
+                              >
+                                <Edit className="h-4 w-4" />
+                              </Button>
+                              {payable.status !== "paid" && (
+                                <Button
+                                  variant="outline"
+                                  size="icon"
+                                  onClick={() => handlePay(payable)}
+                                  title="Record Payment"
+                                  className="text-green-600 hover:text-green-700"
+                                >
+                                  <DollarSign className="h-4 w-4" />
+                                </Button>
+                              )}
+                              <Button
+                                variant="outline"
+                                size="icon"
+                                onClick={() => handleDelete(payable)}
+                                title="Delete Invoice"
+                                className="text-destructive hover:text-destructive"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -274,70 +398,303 @@ export default function AccountsPayablePage() {
           <Card>
             <CardHeader>
               <CardTitle>Vendor Directory</CardTitle>
-              <CardDescription>View and manage vendors</CardDescription>
+              <CardDescription>View vendors with outstanding balances</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex gap-2">
-                  <Button variant="outline" size="sm">
-                    All
-                  </Button>
-                  <Button variant="outline" size="sm">
-                    With Balance
-                  </Button>
-                  <Button variant="outline" size="sm">
-                    No Balance
-                  </Button>
+              {vendors.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <p>No vendors found.</p>
                 </div>
-                <div className="relative w-64">
-                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input type="search" placeholder="Search vendors..." className="w-full pl-8" />
-                </div>
-              </div>
-
-              <div className="rounded-md border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Vendor ID</TableHead>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Contact</TableHead>
-                      <TableHead>Category</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Outstanding Balance</TableHead>
-                      <TableHead>Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {vendors.map((vendor) => (
-                      <TableRow key={vendor.id}>
-                        <TableCell className="font-medium">{vendor.id}</TableCell>
-                        <TableCell>{vendor.name}</TableCell>
-                        <TableCell>
-                          {vendor.contact}
-                          <div className="text-xs text-muted-foreground">{vendor.email}</div>
-                        </TableCell>
-                        <TableCell>{vendor.category}</TableCell>
-                        <TableCell>
-                          <Badge variant="outline">{vendor.status}</Badge>
-                        </TableCell>
-                        <TableCell>{formatCurrency(vendor.balance)}</TableCell>
-                        <TableCell>
-                          <Button variant="outline" size="sm">
-                            View
-                          </Button>
-                        </TableCell>
+              ) : (
+                <div className="rounded-md border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Vendor Name</TableHead>
+                        <TableHead>Contact</TableHead>
+                        <TableHead>Category</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Actions</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+                    </TableHeader>
+                    <TableBody>
+                      {vendors.map((vendor) => (
+                        <TableRow key={vendor.vendorId}>
+                          <TableCell className="font-medium">{vendor.vendorName}</TableCell>
+                          <TableCell>
+                            <div>{vendor.contactPerson || "—"}</div>
+                            {vendor.email && (
+                              <div className="text-xs text-muted-foreground">{vendor.email}</div>
+                            )}
+                          </TableCell>
+                          <TableCell>{vendor.category || "—"}</TableCell>
+                          <TableCell>
+                            <Badge variant={vendor.status === "Active" ? "default" : "secondary"}>
+                              {vendor.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Button variant="outline" size="sm">
+                              View
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
       </Tabs>
 
-      <AddPayableInvoiceForm open={openAddInvoiceForm} onOpenChange={setOpenAddInvoiceForm} />
+      <AddPayableInvoiceForm
+        open={openAddInvoiceForm}
+        onOpenChange={(open) => {
+          setOpenAddInvoiceForm(open)
+          if (!open) {
+            setEditingPayable(null)
+          }
+        }}
+        onSuccess={() => {
+          loadPayables()
+          loadSummary()
+          setEditingPayable(null)
+        }}
+        editData={editingPayable}
+        vendors={vendors}
+      />
+
+      {/* View Dialog */}
+      {selectedPayable && (
+        <ViewPayableDialog
+          open={viewDialogOpen}
+          onOpenChange={setViewDialogOpen}
+          payable={selectedPayable}
+        />
+      )}
+
+      {/* Pay Dialog */}
+      {isMounted && selectedPayable && (
+        <PayablePaymentDialog
+          open={payDialogOpen}
+          onOpenChange={setPayDialogOpen}
+          payable={selectedPayable}
+          onSuccess={() => {
+            loadPayables()
+            loadSummary()
+            setSelectedPayable(null)
+          }}
+        />
+      )}
+
+      {/* Delete Confirmation */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Payable Invoice</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete invoice {payableToDelete?.invoiceNumber}?
+              {payableToDelete?.status === "paid" && (
+                <span className="block mt-2 text-destructive">
+                  This invoice has been paid. It will be marked as cancelled instead of deleted.
+                </span>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDelete}
+              className="bg-destructive text-destructive-foreground"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
+  )
+}
+
+// Payment Dialog Component
+function PayablePaymentDialog({ open, onOpenChange, payable, onSuccess }: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  payable: any
+  onSuccess?: () => void
+}) {
+  const [loading, setLoading] = useState(false)
+  const [isMounted, setIsMounted] = useState(false)
+  const [paymentAmount, setPaymentAmount] = useState("")
+  const [paymentDate, setPaymentDate] = useState("")
+  const [paymentMethod, setPaymentMethod] = useState("")
+  const [referenceNumber, setReferenceNumber] = useState("")
+  const [notes, setNotes] = useState("")
+
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat("en-KE", { 
+      style: "currency", 
+      currency: "KES",
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(amount)
+  }
+
+  useEffect(() => {
+    setIsMounted(true)
+  }, [])
+
+  useEffect(() => {
+    if (open && payable && isMounted) {
+      setPaymentAmount(payable.outstandingAmount.toString())
+      // Use client-side date only after mount
+      setPaymentDate(new Date().toISOString().split('T')[0])
+      setPaymentMethod("")
+      setReferenceNumber("")
+      setNotes("")
+    }
+  }, [open, payable, isMounted])
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    
+    if (!paymentAmount || parseFloat(paymentAmount) <= 0) {
+      toast({
+        title: "Error",
+        description: "Payment amount must be greater than 0.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    if (parseFloat(paymentAmount) > parseFloat(payable.outstandingAmount)) {
+      toast({
+        title: "Error",
+        description: "Payment amount cannot exceed outstanding amount.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    try {
+      setLoading(true)
+      await payableApi.recordPayment(payable.payableId.toString(), {
+        paymentAmount: parseFloat(paymentAmount),
+        paymentDate,
+        paymentMethod: paymentMethod || null,
+        referenceNumber: referenceNumber || null,
+        notes: notes || null,
+      })
+      toast({
+        title: "Success",
+        description: "Payment recorded successfully.",
+      })
+      onOpenChange(false)
+      if (onSuccess) onSuccess()
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to record payment.",
+        variant: "destructive",
+      })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  if (!isMounted) {
+    return null
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[500px]">
+        <DialogHeader>
+          <DialogTitle>Record Payment</DialogTitle>
+          <DialogDescription>
+            Record a payment for invoice {payable?.invoiceNumber}
+          </DialogDescription>
+        </DialogHeader>
+        {isMounted && (
+          <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="text-sm font-medium">Outstanding Amount</label>
+            <Input
+              value={formatCurrency(parseFloat(payable?.outstandingAmount || 0))}
+              readOnly
+              className="mt-1"
+            />
+          </div>
+          <div>
+            <label className="text-sm font-medium">Payment Amount *</label>
+            <Input
+              type="number"
+              min="0.01"
+              step="0.01"
+              max={payable?.outstandingAmount}
+              value={paymentAmount}
+              onChange={(e) => setPaymentAmount(e.target.value)}
+              className="mt-1"
+              required
+            />
+          </div>
+          <div>
+            <label className="text-sm font-medium">Payment Date *</label>
+            <Input
+              type="date"
+              value={paymentDate}
+              onChange={(e) => setPaymentDate(e.target.value)}
+              className="mt-1"
+              required
+            />
+          </div>
+          <div>
+            <label className="text-sm font-medium">Payment Method</label>
+            <Select value={paymentMethod} onValueChange={setPaymentMethod}>
+              <SelectTrigger className="mt-1">
+                <SelectValue placeholder="Select payment method" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="cash">Cash</SelectItem>
+                <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
+                <SelectItem value="cheque">Cheque</SelectItem>
+                <SelectItem value="mpesa">M-Pesa</SelectItem>
+                <SelectItem value="other">Other</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <label className="text-sm font-medium">Reference Number</label>
+            <Input
+              value={referenceNumber}
+              onChange={(e) => setReferenceNumber(e.target.value)}
+              placeholder="Receipt/Transaction number"
+              className="mt-1"
+            />
+          </div>
+          <div>
+            <label className="text-sm font-medium">Notes</label>
+            <Input
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Additional notes"
+              className="mt-1"
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-4">
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={loading}>
+              {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Record Payment
+            </Button>
+          </div>
+        </form>
+        )}
+      </DialogContent>
+    </Dialog>
   )
 }

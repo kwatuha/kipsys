@@ -773,6 +773,37 @@ export const serviceChargeApi = {
     apiRequest<any>(`/api/billing/charges/${id}`, { method: 'DELETE' }),
 };
 
+// Payables API
+export const payableApi = {
+  getAll: (status?: string, vendorId?: string, search?: string, startDate?: string, endDate?: string) => {
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    if (vendorId) params.append('vendorId', vendorId);
+    if (search) params.append('search', search);
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    return apiRequest<any[]>(`/api/payables?${params.toString()}`);
+  },
+  
+  getById: (id: string) =>
+    apiRequest<any>(`/api/payables/${id}`),
+  
+  create: (data: any) =>
+    apiRequest<any>('/api/payables', { method: 'POST', body: data }),
+  
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/payables/${id}`, { method: 'PUT', body: data }),
+  
+  delete: (id: string) =>
+    apiRequest<any>(`/api/payables/${id}`, { method: 'DELETE' }),
+  
+  recordPayment: (id: string, data: any) =>
+    apiRequest<any>(`/api/payables/${id}/payment`, { method: 'POST', body: data }),
+  
+  getSummary: () =>
+    apiRequest<any>('/api/payables/stats/summary'),
+};
+
 // Role API
 export const roleApi = {
   getAll: () =>

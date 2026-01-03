@@ -39,6 +39,7 @@ const dashboardRoutes = require('./routes/dashboardRoutes');
 const analyticsRoutes = require('./routes/analyticsRoutes');
 const roleRoutes = require('./routes/roleRoutes');
 const privilegeRoutes = require('./routes/privilegeRoutes');
+const payableRoutes = require('./routes/payableRoutes');
 
 const authenticate = require('./middleware/authenticate');
 
@@ -94,6 +95,7 @@ app.use('/api/patients', patientRoutes);
 app.use('/api/appointments', appointmentRoutes);
 app.use('/api/queue', queueRoutes);
 app.use('/api/billing', billingRoutes);
+app.use('/api/payables', payableRoutes);
 // IMPORTANT: More specific routes must come before generic routes
 app.use('/api/inventory/transactions', inventoryTransactionRoutes);
 app.use('/api/inventory', inventoryRoutes);
