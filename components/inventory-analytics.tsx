@@ -3,7 +3,7 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import {
   BarChart,
   Bar,
@@ -19,50 +19,79 @@ import {
   LineChart,
   Line,
 } from "recharts"
-
-// Mock data for inventory analytics
-const stockValueByCategory = [
-  { name: "Medical Supplies", value: 125000 },
-  { name: "Pharmaceuticals", value: 85000 },
-  { name: "Equipment", value: 210000 },
-  { name: "PPE", value: 45000 },
-  { name: "Furniture", value: 75000 },
-  { name: "Hygiene Products", value: 25000 },
-  { name: "Office Supplies", value: 15000 },
-  { name: "Laboratory Supplies", value: 65000 },
-]
-
-const stockMovementData = [
-  { name: "Jan", stockIn: 12500, stockOut: 10200 },
-  { name: "Feb", stockIn: 15000, stockOut: 12800 },
-  { name: "Mar", stockIn: 18000, stockOut: 15500 },
-  { name: "Apr", stockIn: 16000, stockOut: 14200 },
-  { name: "May", stockIn: 14000, stockOut: 13800 },
-  { name: "Jun", stockIn: 17000, stockOut: 15000 },
-]
-
-const topMovingItems = [
-  { name: "Surgical Gloves", value: 8500 },
-  { name: "Paracetamol 500mg", value: 7200 },
-  { name: "Disposable Syringes", value: 6800 },
-  { name: "Surgical Masks", value: 5500 },
-  { name: "Amoxicillin 250mg", value: 4200 },
-]
-
-const expiryData = [
-  { name: "0-30 days", value: 12 },
-  { name: "31-60 days", value: 18 },
-  { name: "61-90 days", value: 25 },
-  { name: "91-180 days", value: 42 },
-  { name: "181-365 days", value: 78 },
-  { name: ">365 days", value: 125 },
-]
+import { inventoryApi } from "@/lib/api"
+import { Loader2, Package, AlertTriangle, CheckCircle2 } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 
 // Colors for charts
 const COLORS = ["#0088FE", "#00C49F", "#FFBB28", "#FF8042", "#8884D8", "#82CA9D", "#FF6B6B", "#6B66FF"]
 
 export function InventoryAnalytics() {
   const [timeRange, setTimeRange] = useState("6months")
+  const [loading, setLoading] = useState(true)
+  const [stockValueByCategory, setStockValueByCategory] = useState<any[]>([])
+  const [stockMovementData, setStockMovementData] = useState<any[]>([])
+  const [topMovingItems, setTopMovingItems] = useState<any[]>([])
+  const [expiryData, setExpiryData] = useState<any[]>([])
+  const [categoryBreakdown, setCategoryBreakdown] = useState<any[]>([])
+
+  useEffect(() => {
+    const fetchAnalytics = async () => {
+      try {
+        setLoading(true)
+        const data = await inventoryApi.getAnalytics(timeRange)
+        
+        // Convert string values to numbers for charts
+        setStockValueByCategory(
+          (data.stockValueByCategory || []).map((item: any) => ({
+            name: item.name,
+            value: parseFloat(item.value) || 0
+          }))
+        )
+        setStockMovementData(
+          (data.stockMovementData || []).map((item: any) => ({
+            name: item.name,
+            stockIn: parseFloat(item.stockIn) || 0,
+            stockOut: parseFloat(item.stockOut) || 0
+          }))
+        )
+        setTopMovingItems(
+          (data.topMovingItems || []).map((item: any) => ({
+            name: item.name,
+            value: parseFloat(item.value) || 0
+          }))
+        )
+        setExpiryData(
+          (data.expiryData || []).map((item: any) => ({
+            name: item.name,
+            value: parseInt(item.value) || 0
+          }))
+        )
+        setCategoryBreakdown(data.categoryBreakdown || [])
+      } catch (error) {
+        console.error("Error fetching analytics:", error)
+        // Set empty arrays on error
+        setStockValueByCategory([])
+        setStockMovementData([])
+        setTopMovingItems([])
+        setExpiryData([])
+        setCategoryBreakdown([])
+      } finally {
+        setLoading(false)
+      }
+    }
+    fetchAnalytics()
+  }, [timeRange])
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-4">
@@ -96,17 +125,23 @@ export function InventoryAnalytics() {
                 <CardTitle className="text-sm font-medium">Stock Value by Category</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="h-80">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={stockValueByCategory} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="name" />
-                      <YAxis />
-                      <Tooltip formatter={(value) => [`KES ${value.toLocaleString()}`, "Value"]} />
-                      <Bar dataKey="value" fill="#0088FE" name="Value (KES)" />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
+                {stockValueByCategory.length > 0 ? (
+                  <div className="h-80">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={stockValueByCategory} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="name" angle={-45} textAnchor="end" height={100} />
+                        <YAxis />
+                        <Tooltip formatter={(value: number) => [`KES ${parseFloat(value.toString()).toLocaleString()}`, "Value"]} />
+                        <Bar dataKey="value" fill="#0088FE" name="Value (KES)" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                ) : (
+                  <div className="h-80 flex items-center justify-center text-muted-foreground">
+                    No data available
+                  </div>
+                )}
               </CardContent>
             </Card>
 
@@ -115,28 +150,34 @@ export function InventoryAnalytics() {
                 <CardTitle className="text-sm font-medium">Top Moving Items</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="h-80">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={topMovingItems}
-                        cx="50%"
-                        cy="50%"
-                        labelLine={false}
-                        label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
-                        outerRadius={80}
-                        fill="#8884d8"
-                        dataKey="value"
-                      >
-                        {topMovingItems.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                        ))}
-                      </Pie>
-                      <Tooltip formatter={(value) => [`${value} units`, "Quantity"]} />
-                      <Legend />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
+                {topMovingItems.length > 0 ? (
+                  <div className="h-80">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={topMovingItems}
+                          cx="50%"
+                          cy="50%"
+                          labelLine={false}
+                          label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
+                          outerRadius={80}
+                          fill="#8884d8"
+                          dataKey="value"
+                        >
+                          {topMovingItems.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                          ))}
+                        </Pie>
+                        <Tooltip formatter={(value: number) => [`${value} units`, "Quantity"]} />
+                        <Legend />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                ) : (
+                  <div className="h-80 flex items-center justify-center text-muted-foreground">
+                    No movement data available
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -149,19 +190,25 @@ export function InventoryAnalytics() {
               <CardDescription>Comparison of stock in vs stock out over time</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="h-96">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={stockMovementData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="name" />
-                    <YAxis />
-                    <Tooltip />
-                    <Legend />
-                    <Bar dataKey="stockIn" fill="#82ca9d" name="Stock In" />
-                    <Bar dataKey="stockOut" fill="#ff7c7c" name="Stock Out" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
+              {stockMovementData.length > 0 ? (
+                <div className="h-96">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={stockMovementData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="name" />
+                      <YAxis />
+                      <Tooltip />
+                      <Legend />
+                      <Bar dataKey="stockIn" fill="#82ca9d" name="Stock In" />
+                      <Bar dataKey="stockOut" fill="#ff7c7c" name="Stock Out" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <div className="h-96 flex items-center justify-center text-muted-foreground">
+                  No movement data available for the selected time range
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -173,18 +220,24 @@ export function InventoryAnalytics() {
               <CardDescription>Number of items expiring in different time periods</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="h-96">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={expiryData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="name" />
-                    <YAxis />
-                    <Tooltip />
-                    <Legend />
-                    <Line type="monotone" dataKey="value" stroke="#ff7300" name="Number of Items" />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
+              {expiryData.length > 0 ? (
+                <div className="h-96">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={expiryData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="name" angle={-45} textAnchor="end" height={100} />
+                      <YAxis />
+                      <Tooltip />
+                      <Legend />
+                      <Line type="monotone" dataKey="value" stroke="#ff7300" name="Number of Items" />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <div className="h-96 flex items-center justify-center text-muted-foreground">
+                  No expiry data available
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -196,7 +249,98 @@ export function InventoryAnalytics() {
               <CardDescription>Detailed breakdown of inventory by categories</CardDescription>
             </CardHeader>
             <CardContent>
-              <p>Category analysis content will go here</p>
+              {categoryBreakdown.length > 0 ? (
+                <Accordion type="single" collapsible className="w-full">
+                  {categoryBreakdown.map((category: any, index: number) => (
+                    <AccordionItem key={index} value={`category-${index}`}>
+                      <AccordionTrigger className="hover:no-underline">
+                        <div className="flex items-center justify-between w-full pr-4">
+                          <div className="flex items-center gap-3">
+                            <Package className="h-5 w-5 text-muted-foreground" />
+                            <span className="font-semibold">{category.category}</span>
+                          </div>
+                          <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                            <span>{category.totalItems} items</span>
+                            <span>Qty: {category.totalQuantity.toLocaleString()}</span>
+                            <span className="font-medium text-foreground">
+                              KES {category.totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                        </div>
+                      </AccordionTrigger>
+                      <AccordionContent>
+                        <div className="pt-4">
+                          <Table>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead>Item Code</TableHead>
+                                <TableHead>Item Name</TableHead>
+                                <TableHead>Quantity</TableHead>
+                                <TableHead>Unit Price</TableHead>
+                                <TableHead className="text-right">Total Value</TableHead>
+                                <TableHead>Location</TableHead>
+                                <TableHead>Stock Status</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {category.items.map((item: any) => (
+                                <TableRow key={item.itemId}>
+                                  <TableCell className="font-mono text-xs">{item.itemCode}</TableCell>
+                                  <TableCell className="font-medium">{item.name}</TableCell>
+                                  <TableCell>
+                                    <div className="flex items-center gap-2">
+                                      <span>{item.quantity.toLocaleString()}</span>
+                                      {item.unit && (
+                                        <span className="text-xs text-muted-foreground">({item.unit})</span>
+                                      )}
+                                    </div>
+                                  </TableCell>
+                                  <TableCell>
+                                    {item.unitPrice > 0 ? (
+                                      `KES ${item.unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                    ) : (
+                                      <span className="text-muted-foreground">—</span>
+                                    )}
+                                  </TableCell>
+                                  <TableCell className="text-right font-medium">
+                                    KES {item.totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </TableCell>
+                                  <TableCell className="text-sm text-muted-foreground">
+                                    {item.location || "—"}
+                                  </TableCell>
+                                  <TableCell>
+                                    {item.stockStatus === 'Low Stock' ? (
+                                      <Badge variant="destructive" className="gap-1">
+                                        <AlertTriangle className="h-3 w-3" />
+                                        Low Stock
+                                      </Badge>
+                                    ) : item.stockStatus === 'Warning' ? (
+                                      <Badge variant="outline" className="gap-1 border-yellow-500 text-yellow-700">
+                                        <AlertTriangle className="h-3 w-3" />
+                                        Warning
+                                      </Badge>
+                                    ) : (
+                                      <Badge variant="outline" className="gap-1 border-green-500 text-green-700">
+                                        <CheckCircle2 className="h-3 w-3" />
+                                        In Stock
+                                      </Badge>
+                                    )}
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      </AccordionContent>
+                    </AccordionItem>
+                  ))}
+                </Accordion>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-12 text-center">
+                  <Package className="h-12 w-12 text-muted-foreground mb-4" />
+                  <p className="text-sm text-muted-foreground">No category data available</p>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

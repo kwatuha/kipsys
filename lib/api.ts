@@ -368,6 +368,9 @@ export const inventoryApi = {
   getSummary: () =>
     apiRequest<any>('/api/inventory/summary'),
   
+  getAnalytics: (timeRange?: string) =>
+    apiRequest<any>(`/api/inventory/analytics${timeRange ? `?timeRange=${timeRange}` : ''}`),
+  
   getById: (id: string) =>
     apiRequest<any>(`/api/inventory/${id}`),
   

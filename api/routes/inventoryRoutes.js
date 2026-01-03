@@ -81,6 +81,166 @@ router.get('/summary', async (req, res) => {
 });
 
 /**
+ * @route GET /api/inventory/analytics
+ * @description Get inventory analytics data
+ */
+router.get('/analytics', async (req, res) => {
+    try {
+        const { timeRange = '6months' } = req.query;
+        
+        // Calculate date range
+        let monthsBack = 6;
+        if (timeRange === '30days') monthsBack = 1;
+        else if (timeRange === '3months') monthsBack = 3;
+        else if (timeRange === '6months') monthsBack = 6;
+        else if (timeRange === '1year') monthsBack = 12;
+
+        // Stock value by category
+        const [stockValueByCategory] = await pool.query(`
+            SELECT 
+                COALESCE(category, 'Uncategorized') as name,
+                SUM(COALESCE(quantity, 0) * COALESCE(unitPrice, 0)) as value
+            FROM inventory_items
+            WHERE status = 'Active'
+            GROUP BY category
+            ORDER BY SUM(COALESCE(quantity, 0) * COALESCE(unitPrice, 0)) DESC
+        `);
+
+        // Stock movement data (monthly)
+        const [stockMovementData] = await pool.query(`
+            SELECT 
+                DATE_FORMAT(transactionDate, '%b') as name,
+                SUM(CASE WHEN quantity > 0 THEN quantity ELSE 0 END) as stockIn,
+                SUM(CASE WHEN quantity < 0 THEN ABS(quantity) ELSE 0 END) as stockOut
+            FROM inventory_transactions
+            WHERE transactionDate >= DATE_SUB(CURDATE(), INTERVAL ? MONTH)
+            GROUP BY DATE_FORMAT(transactionDate, '%Y-%m'), DATE_FORMAT(transactionDate, '%b')
+            ORDER BY MIN(DATE_FORMAT(transactionDate, '%Y-%m'))
+        `, [monthsBack]);
+
+        // Top moving items
+        const [topMovingItems] = await pool.query(`
+            SELECT 
+                MAX(ii.name) as name,
+                SUM(ABS(it.quantity)) as value
+            FROM inventory_transactions it
+            JOIN inventory_items ii ON it.itemId = ii.itemId
+            WHERE it.transactionDate >= DATE_SUB(CURDATE(), INTERVAL ? MONTH)
+            GROUP BY it.itemId
+            ORDER BY SUM(ABS(it.quantity)) DESC
+            LIMIT 10
+        `, [monthsBack]);
+
+        // Expiry analysis
+        const [expiryData] = await pool.query(`
+            SELECT 
+                name,
+                value
+            FROM (
+                SELECT 
+                    CASE 
+                        WHEN DATEDIFF(expiryDate, CURDATE()) BETWEEN 0 AND 30 THEN '0-30 days'
+                        WHEN DATEDIFF(expiryDate, CURDATE()) BETWEEN 31 AND 60 THEN '31-60 days'
+                        WHEN DATEDIFF(expiryDate, CURDATE()) BETWEEN 61 AND 90 THEN '61-90 days'
+                        WHEN DATEDIFF(expiryDate, CURDATE()) BETWEEN 91 AND 180 THEN '91-180 days'
+                        WHEN DATEDIFF(expiryDate, CURDATE()) BETWEEN 181 AND 365 THEN '181-365 days'
+                        WHEN DATEDIFF(expiryDate, CURDATE()) > 365 THEN '>365 days'
+                        ELSE 'Expired'
+                    END as name,
+                    COUNT(*) as value
+                FROM inventory_items
+                WHERE expiryDate IS NOT NULL
+                GROUP BY 
+                    CASE 
+                        WHEN DATEDIFF(expiryDate, CURDATE()) BETWEEN 0 AND 30 THEN '0-30 days'
+                        WHEN DATEDIFF(expiryDate, CURDATE()) BETWEEN 31 AND 60 THEN '31-60 days'
+                        WHEN DATEDIFF(expiryDate, CURDATE()) BETWEEN 61 AND 90 THEN '61-90 days'
+                        WHEN DATEDIFF(expiryDate, CURDATE()) BETWEEN 91 AND 180 THEN '91-180 days'
+                        WHEN DATEDIFF(expiryDate, CURDATE()) BETWEEN 181 AND 365 THEN '181-365 days'
+                        WHEN DATEDIFF(expiryDate, CURDATE()) > 365 THEN '>365 days'
+                        ELSE 'Expired'
+                    END
+            ) as expiry_groups
+            ORDER BY 
+                CASE name
+                    WHEN '0-30 days' THEN 1
+                    WHEN '31-60 days' THEN 2
+                    WHEN '61-90 days' THEN 3
+                    WHEN '91-180 days' THEN 4
+                    WHEN '181-365 days' THEN 5
+                    WHEN '>365 days' THEN 6
+                    ELSE 7
+                END
+        `);
+
+        // Category detailed breakdown
+        const [categoryBreakdown] = await pool.query(`
+            SELECT 
+                COALESCE(category, 'Uncategorized') as category,
+                itemId,
+                itemCode,
+                name,
+                quantity,
+                unitPrice,
+                (quantity * COALESCE(unitPrice, 0)) as totalValue,
+                unit,
+                location,
+                status,
+                reorderLevel,
+                CASE 
+                    WHEN quantity <= reorderLevel THEN 'Low Stock'
+                    WHEN quantity <= (reorderLevel * 1.5) THEN 'Warning'
+                    ELSE 'In Stock'
+                END as stockStatus
+            FROM inventory_items
+            WHERE status = 'Active'
+            ORDER BY category, name
+        `);
+
+        // Group items by category
+        const categoryDetails = {};
+        categoryBreakdown.forEach((item) => {
+            const cat = item.category || 'Uncategorized';
+            if (!categoryDetails[cat]) {
+                categoryDetails[cat] = {
+                    category: cat,
+                    items: [],
+                    totalItems: 0,
+                    totalQuantity: 0,
+                    totalValue: 0
+                };
+            }
+            categoryDetails[cat].items.push({
+                itemId: item.itemId,
+                itemCode: item.itemCode,
+                name: item.name,
+                quantity: item.quantity,
+                unitPrice: parseFloat(item.unitPrice) || 0,
+                totalValue: parseFloat(item.totalValue) || 0,
+                unit: item.unit,
+                location: item.location,
+                stockStatus: item.stockStatus,
+                reorderLevel: item.reorderLevel
+            });
+            categoryDetails[cat].totalItems += 1;
+            categoryDetails[cat].totalQuantity += parseInt(item.quantity) || 0;
+            categoryDetails[cat].totalValue += parseFloat(item.totalValue) || 0;
+        });
+
+        res.status(200).json({
+            stockValueByCategory: stockValueByCategory || [],
+            stockMovementData: stockMovementData || [],
+            topMovingItems: topMovingItems || [],
+            expiryData: expiryData || [],
+            categoryBreakdown: Object.values(categoryDetails) || []
+        });
+    } catch (error) {
+        console.error('Error fetching inventory analytics:', error);
+        res.status(500).json({ message: 'Error fetching inventory analytics', error: error.message });
+    }
+});
+
+/**
  * @route GET /api/inventory/:id
  * @description Get a single inventory item by ID
  */
