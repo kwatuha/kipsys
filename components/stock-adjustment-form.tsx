@@ -14,7 +14,7 @@ import { Badge } from "@/components/ui/badge"
 import { Search, Plus, Minus, AlertTriangle, Loader2 } from "lucide-react"
 import { inventoryApi, inventoryTransactionApi } from "@/lib/api"
 import { toast } from "@/components/ui/use-toast"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 
 // Form schema
 const formSchema = z.object({
@@ -39,6 +39,7 @@ const formSchema = z.object({
 
 export function StockAdjustmentForm() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [searchTerm, setSearchTerm] = useState("")
   const [selectedItem, setSelectedItem] = useState<any>(null)
   const [items, setItems] = useState<any[]>([])
@@ -55,6 +56,13 @@ export function StockAdjustmentForm() {
     },
   })
 
+  // Handle selecting an item
+  const selectItem = (item: any) => {
+    setSelectedItem(item)
+    form.setValue("itemId", item.itemId.toString(), { shouldValidate: true })
+    setSearchTerm("") // Clear search after selection
+  }
+
   // Load inventory items
   useEffect(() => {
     const loadItems = async () => {
@@ -62,6 +70,15 @@ export function StockAdjustmentForm() {
         setLoading(true)
         const data = await inventoryApi.getAll(undefined, "Active")
         setItems(data)
+        
+        // Pre-select item if itemId is provided in query params
+        const itemIdParam = searchParams?.get("itemId")
+        if (itemIdParam) {
+          const item = data.find((i: any) => i.itemId.toString() === itemIdParam)
+          if (item) {
+            selectItem(item)
+          }
+        }
       } catch (error: any) {
         console.error("Error loading inventory items:", error)
         toast({
@@ -74,7 +91,7 @@ export function StockAdjustmentForm() {
       }
     }
     loadItems()
-  }, [])
+  }, [searchParams, form])
 
   // Filter items based on search term
   const filteredItems = items.filter(
@@ -82,13 +99,6 @@ export function StockAdjustmentForm() {
       item.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       item.itemCode?.toLowerCase().includes(searchTerm.toLowerCase()),
   )
-
-  // Handle selecting an item
-  function selectItem(item: any) {
-    setSelectedItem(item)
-    form.setValue("itemId", item.itemId.toString(), { shouldValidate: true })
-    setSearchTerm("") // Clear search after selection
-  }
 
   // Handle form submission
   async function onSubmit(values: z.infer<typeof formSchema>) {

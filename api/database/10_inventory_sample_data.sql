@@ -60,3 +60,5 @@ UPDATE inventory_items
 SET expiryDate = DATE_ADD(CURDATE(), INTERVAL 60 DAY)
 WHERE itemCode IN ('MED-INS-007', 'MED-A250-004');
 
+
+

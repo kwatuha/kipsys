@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { Search, PlusCircle, ArrowDownUp, Layers, Edit, Trash2, Loader2 } from "lucide-react"
+import { Search, PlusCircle, ArrowDownUp, Layers, Edit, Trash2, Loader2, Eye } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -464,7 +464,7 @@ export default function InventoryPage() {
                     filteredItems.map((item) => (
                       <TableRow key={item.id}>
                         <TableCell className="font-medium">
-                          <Link href={`/inventory/${item.id}`} className="hover:underline">
+                          <Link href={`/inventory/${item.itemId}`} className="hover:underline text-primary hover:text-primary/80">
                             {item.name}
                           </Link>
                         </TableCell>
@@ -506,8 +506,20 @@ export default function InventoryPage() {
                             <Button
                               variant="ghost"
                               size="icon"
+                              asChild
+                              className="h-8 w-8"
+                              title="View Details"
+                            >
+                              <Link href={`/inventory/${item.itemId}`}>
+                                <Eye className="h-4 w-4" />
+                              </Link>
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
                               onClick={() => handleEdit(item)}
                               className="h-8 w-8"
+                              title="Edit"
                             >
                               <Edit className="h-4 w-4" />
                             </Button>
@@ -519,6 +531,7 @@ export default function InventoryPage() {
                                 setDeleteDialogOpen(true)
                               }}
                               className="h-8 w-8 text-destructive hover:text-destructive"
+                              title="Delete"
                             >
                               <Trash2 className="h-4 w-4" />
                             </Button>

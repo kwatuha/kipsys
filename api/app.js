@@ -85,8 +85,9 @@ app.use('/api/patients', patientRoutes);
 app.use('/api/appointments', appointmentRoutes);
 app.use('/api/queue', queueRoutes);
 app.use('/api/billing', billingRoutes);
-app.use('/api/inventory', inventoryRoutes);
+// IMPORTANT: More specific routes must come before generic routes
 app.use('/api/inventory/transactions', inventoryTransactionRoutes);
+app.use('/api/inventory', inventoryRoutes);
 app.use('/api/pharmacy', pharmacyRoutes);
 app.use('/api/laboratory', laboratoryRoutes);
 app.use('/api/radiology', radiologyRoutes);

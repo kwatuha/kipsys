@@ -9,9 +9,14 @@ const pool = require('../config/db');
  */
 router.get('/', async (req, res) => {
     try {
-        const { itemId, transactionType, startDate, endDate, page = 1, limit = 50 } = req.query;
-        let query = `
-            SELECT 
+        const { itemId, transactionType, startDate, endDate } = req.query;
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 50;
+        
+        console.log('=== FETCHING INVENTORY TRANSACTIONS ===');
+        console.log('Query params received:', { itemId, transactionType, startDate, endDate, page, limit });
+        
+        let query = `SELECT 
                 it.*,
                 ii.name as itemName,
                 ii.itemCode,
@@ -20,18 +25,24 @@ router.get('/', async (req, res) => {
             FROM inventory_transactions it
             LEFT JOIN inventory_items ii ON it.itemId = ii.itemId
             LEFT JOIN users u ON it.performedBy = u.userId
-            WHERE 1=1
-        `;
+            WHERE 1=1`;
         const params = [];
 
         if (itemId) {
+            const itemIdInt = parseInt(itemId);
+            if (isNaN(itemIdInt)) {
+                console.error('Invalid itemId provided:', itemId);
+                return res.status(400).json({ message: 'Invalid itemId parameter' });
+            }
             query += ' AND it.itemId = ?';
-            params.push(itemId);
+            params.push(itemIdInt);
+            console.log('Filtering transactions by itemId:', itemIdInt);
         }
 
         if (transactionType) {
             query += ' AND it.transactionType = ?';
             params.push(transactionType);
+            console.log('Filtering by transactionType:', transactionType);
         }
 
         if (startDate) {
@@ -45,10 +56,30 @@ router.get('/', async (req, res) => {
         }
 
         query += ' ORDER BY it.transactionDate DESC, it.createdAt DESC';
+        const offsetInt = (page - 1) * limit;
         query += ` LIMIT ? OFFSET ?`;
-        params.push(parseInt(limit), (parseInt(page) - 1) * parseInt(limit));
+        // Ensure limit and offset are integers
+        params.push(Number(limit), Number(offsetInt));
 
-        const [rows] = await pool.execute(query, params);
+        console.log('Final SQL Query:', query.replace(/\s+/g, ' ').trim());
+        console.log('Query parameters:', params);
+        console.log('Parameter types:', params.map(p => typeof p));
+        console.log('Number of placeholders in query:', (query.match(/\?/g) || []).length);
+        console.log('Number of parameters:', params.length);
+        
+        // Use query instead of execute to avoid prepared statement issues
+        const [rows] = await pool.query(query, params);
+        
+        console.log(`Found ${rows.length} transactions`);
+        if (rows.length > 0) {
+            console.log('Sample transaction:', {
+                transactionId: rows[0].transactionId,
+                itemId: rows[0].itemId,
+                transactionType: rows[0].transactionType,
+                transactionNumber: rows[0].transactionNumber
+            });
+        }
+        
         res.status(200).json(rows);
     } catch (error) {
         console.error('Error fetching inventory transactions:', error);
@@ -132,6 +163,23 @@ router.post('/', async (req, res) => {
         const transactionType = transactionData.transactionType || reasonToType[transactionData.reason] || 'adjustment';
 
         // Insert transaction
+        const itemIdInt = parseInt(transactionData.itemId);
+        if (isNaN(itemIdInt)) {
+            await connection.rollback();
+            return res.status(400).json({ message: 'Invalid itemId provided' });
+        }
+        
+        console.log('=== CREATING INVENTORY TRANSACTION ===');
+        console.log('Transaction data:', {
+            transactionNumber,
+            itemId: itemIdInt,
+            transactionType,
+            quantity,
+            reason: transactionData.reason,
+            date: transactionData.date || new Date().toISOString().split('T')[0],
+            performedBy: userId
+        });
+        
         const [result] = await connection.execute(
             `INSERT INTO inventory_transactions 
             (transactionNumber, itemId, transactionType, transactionDate, quantity, unitPrice, totalValue, 
@@ -139,7 +187,7 @@ router.post('/', async (req, res) => {
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 transactionNumber,
-                transactionData.itemId,
+                itemIdInt,
                 transactionType,
                 transactionData.date || new Date().toISOString().split('T')[0],
                 quantity,
@@ -156,6 +204,15 @@ router.post('/', async (req, res) => {
                 transactionData.notes || null
             ]
         );
+        
+        console.log('Transaction created successfully with ID:', result.insertId);
+        
+        // Verify the transaction was saved correctly
+        const [verify] = await connection.execute(
+            'SELECT transactionId, itemId, transactionType, quantity, reason FROM inventory_transactions WHERE transactionId = ?',
+            [result.insertId]
+        );
+        console.log('Verified saved transaction:', verify[0]);
 
         // Update inventory item quantity
         const [itemUpdate] = await connection.execute(
@@ -289,4 +346,5 @@ router.delete('/:id', async (req, res) => {
 });
 
 module.exports = router;
+
 
