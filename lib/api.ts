@@ -699,3 +699,12 @@ export const employeeApi = {
     apiRequest<any>(`/api/employees/attendance`, { method: 'POST', body: data }),
 };
 
+// Dashboard API
+export const dashboardApi = {
+  getStats: () =>
+    apiRequest<any>('/api/dashboard/stats'),
+  
+  getRecentActivities: (limit?: number) =>
+    apiRequest<any>(`/api/dashboard/recent-activities?${new URLSearchParams({ ...(limit && { limit: limit.toString() }) })}`),
+};
+

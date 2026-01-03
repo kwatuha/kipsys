@@ -1,5 +1,5 @@
-import { ContextualDashboard } from "@/components/contextual-dashboard"
+import { ComprehensiveDashboard } from "@/components/comprehensive-dashboard"
 
 export default function HomePage() {
-  return <ContextualDashboard />
+  return <ComprehensiveDashboard />
 }

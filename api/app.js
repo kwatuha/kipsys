@@ -35,6 +35,7 @@ const employeeRoutes = require('./routes/employeeRoutes');
 const employeeLeaveRoutes = require('./routes/employeeLeaveRoutes');
 const employeePayrollRoutes = require('./routes/employeePayrollRoutes');
 const employeePromotionRoutes = require('./routes/employeePromotionRoutes');
+const dashboardRoutes = require('./routes/dashboardRoutes');
 
 const authenticate = require('./middleware/authenticate');
 
@@ -110,6 +111,7 @@ app.use('/api/clinical-services', clinicalServicesRoutes);
 app.use('/api/doctors', doctorsRoutes);
 app.use('/api/medical-records', medicalRecordsRoutes);
 app.use('/api/ledger', ledgerRoutes);
+app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/procurement/purchase-orders', purchaseOrderRoutes);
 // Vendor sub-routes must be mounted with more specific paths BEFORE main vendor routes to avoid route conflicts
 // These routes use /:vendorId/products pattern, so they need to be checked before /:id pattern
