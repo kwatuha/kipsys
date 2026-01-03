@@ -413,7 +413,11 @@ export default function PharmacyPage() {
                               )}
                             </TableCell>
                             <TableCell>{getDoctorName(prescription)}</TableCell>
-                            <TableCell>{new Date(prescription.prescriptionDate).toLocaleDateString()}</TableCell>
+                            <TableCell>
+                              {prescription.prescriptionDate 
+                                ? new Date(prescription.prescriptionDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+                                : '-'}
+                            </TableCell>
                             <TableCell>
                               <Badge variant={prescription.status === "pending" ? "secondary" : "default"}>
                                 {prescription.status.charAt(0).toUpperCase() + prescription.status.slice(1)}
@@ -625,7 +629,9 @@ export default function PharmacyPage() {
                             <TableCell>KES {item.sellPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
                             <TableCell>{item.minPrice ? `KES ${item.minPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '-'}</TableCell>
                             <TableCell>
-                              {item.expiryDate ? new Date(item.expiryDate).toLocaleDateString() : '-'}
+                              {item.expiryDate 
+                                ? new Date(item.expiryDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+                                : '-'}
                             </TableCell>
                             <TableCell>{item.location || '-'}</TableCell>
                             <TableCell>
@@ -729,7 +735,9 @@ export default function PharmacyPage() {
                 <div>
                   <p className="text-sm text-muted-foreground">Date</p>
                   <p className="font-medium">
-                    {new Date(selectedPrescription.prescriptionDate).toLocaleDateString()}
+                    {selectedPrescription.prescriptionDate 
+                      ? new Date(selectedPrescription.prescriptionDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+                      : '-'}
                   </p>
                 </div>
                 <div>
@@ -759,28 +767,66 @@ export default function PharmacyPage() {
                           <TableHead>Frequency</TableHead>
                           <TableHead>Duration</TableHead>
                           <TableHead>Quantity</TableHead>
+                          <TableHead>Unit Price</TableHead>
+                          <TableHead>Total Cost</TableHead>
                           <TableHead>Instructions</TableHead>
                           <TableHead>Status</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {selectedPrescription.items.map((item: any) => (
-                          <TableRow key={item.itemId}>
-                            <TableCell className="font-medium">{item.medicationName || 'Unknown'}</TableCell>
-                            <TableCell>{item.dosage}</TableCell>
-                            <TableCell>{item.frequency}</TableCell>
-                            <TableCell>{item.duration}</TableCell>
-                            <TableCell>{item.quantity || '-'}</TableCell>
-                            <TableCell>{item.instructions || '-'}</TableCell>
-                            <TableCell>
-                              <Badge variant={item.status === "pending" ? "secondary" : "default"}>
-                                {item.status?.charAt(0).toUpperCase() + item.status?.slice(1)}
-                              </Badge>
-                            </TableCell>
-                          </TableRow>
-                        ))}
+                        {selectedPrescription.items.map((item: any) => {
+                          const quantity = item.quantity ? parseInt(item.quantity) : null
+                          // Use sellPrice from drug_inventory (fetched by API)
+                          const unitPrice = item.sellPrice ? parseFloat(item.sellPrice) : null
+                          const totalCost = quantity && unitPrice ? quantity * unitPrice : null
+                          const isInInventory = item.inInventory === true
+                          
+                          return (
+                            <TableRow key={item.itemId}>
+                              <TableCell className="font-medium">{item.medicationName || 'Unknown'}</TableCell>
+                              <TableCell>{item.dosage}</TableCell>
+                              <TableCell>{item.frequency}</TableCell>
+                              <TableCell>{item.duration}</TableCell>
+                              <TableCell>
+                                {isInInventory ? (quantity || '-') : '-'}
+                              </TableCell>
+                              <TableCell>
+                                {isInInventory && unitPrice 
+                                  ? `KES ${unitPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                  : (isInInventory === false ? 'Not in inventory' : 'N/A')}
+                              </TableCell>
+                              <TableCell>
+                                {isInInventory && totalCost 
+                                  ? `KES ${totalCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                  : (isInInventory === false ? 'N/A' : 'N/A')}
+                              </TableCell>
+                              <TableCell>{item.instructions || '-'}</TableCell>
+                              <TableCell>
+                                <Badge variant={item.status === "pending" ? "secondary" : "default"}>
+                                  {item.status?.charAt(0).toUpperCase() + item.status?.slice(1)}
+                                </Badge>
+                              </TableCell>
+                            </TableRow>
+                          )
+                        })}
                       </TableBody>
                     </Table>
+                    {selectedPrescription.items.some((item: any) => item.sellPrice && item.quantity) && (
+                      <div className="border-t p-4 flex justify-end">
+                        <div className="text-right">
+                          <p className="text-sm text-muted-foreground">Total Cost</p>
+                          <p className="text-lg font-bold">
+                            KES {selectedPrescription.items
+                              .reduce((sum: number, item: any) => {
+                                const qty = item.quantity ? parseInt(item.quantity) : 0
+                                const price = item.sellPrice ? parseFloat(item.sellPrice) : 0
+                                return sum + (qty * price)
+                              }, 0)
+                              .toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </p>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

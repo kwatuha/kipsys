@@ -253,17 +253,52 @@ router.get('/prescriptions/:id', async (req, res) => {
             return res.status(404).json({ message: 'Prescription not found' });
         }
 
+        // Get prescription items with medication info
         const [items] = await pool.execute(
-            `SELECT pi.*, m.medicationName, m.genericName
+            `SELECT pi.*, m.name as medicationNameFromCatalog, m.genericName
              FROM prescription_items pi
              LEFT JOIN medications m ON pi.medicationId = m.medicationId
-             WHERE pi.prescriptionId = ?`,
+             WHERE pi.prescriptionId = ?
+             ORDER BY pi.itemId`,
             [req.params.id]
         );
 
+        // Get pricing from drug_inventory for each medication
+        // Use the minimum sellPrice if multiple batches exist
+        const itemsWithPricing = await Promise.all(items.map(async (item) => {
+            if (!item.medicationId) {
+                return { ...item, sellPrice: null, unitPrice: null, inInventory: false };
+            }
+
+            try {
+                const [pricing] = await pool.execute(
+                    `SELECT MIN(di.sellPrice) as minSellPrice, AVG(di.sellPrice) as avgSellPrice,
+                            MIN(di.unitPrice) as minUnitPrice, SUM(di.quantity) as totalQuantity
+                     FROM drug_inventory di
+                     WHERE di.medicationId = ? AND di.quantity > 0
+                     GROUP BY di.medicationId`,
+                    [item.medicationId]
+                );
+
+                if (pricing.length > 0 && pricing[0].minSellPrice) {
+                    return {
+                        ...item,
+                        sellPrice: parseFloat(pricing[0].minSellPrice),
+                        unitPrice: pricing[0].minUnitPrice ? parseFloat(pricing[0].minUnitPrice) : null,
+                        inInventory: true,
+                        availableQuantity: pricing[0].totalQuantity ? parseInt(pricing[0].totalQuantity) : 0
+                    };
+                }
+            } catch (error) {
+                console.error(`Error fetching pricing for medication ${item.medicationId}:`, error);
+            }
+
+            return { ...item, sellPrice: null, unitPrice: null, inInventory: false };
+        }));
+
         res.status(200).json({
             ...prescription[0],
-            items
+            items: itemsWithPricing
         });
     } catch (error) {
         console.error('Error fetching prescription:', error);
@@ -369,47 +404,205 @@ router.post('/prescriptions', async (req, res) => {
  * @description Update a prescription
  */
 router.put('/prescriptions/:id', async (req, res) => {
+    const connection = await pool.getConnection();
     try {
+        await connection.beginTransaction();
+        
         const { id } = req.params;
-        const { status, notes } = req.body;
+        const { status, notes, patientId, doctorId, prescriptionDate, items } = req.body;
+        const userId = req.user?.id || req.user?.userId || null;
 
-        // Check if prescription exists
-        const [existing] = await pool.execute(
-            'SELECT prescriptionId FROM prescriptions WHERE prescriptionId = ?',
+        // Get existing prescription
+        const [existing] = await connection.execute(
+            'SELECT * FROM prescriptions WHERE prescriptionId = ?',
             [id]
         );
 
         if (existing.length === 0) {
+            await connection.rollback();
             return res.status(404).json({ message: 'Prescription not found' });
         }
+
+        const oldPrescription = existing[0];
 
         // Build update query
         const updates = [];
         const values = [];
+        const historyEntries = [];
 
-        if (status !== undefined) {
+        // Track changes for history
+        if (status !== undefined && status !== oldPrescription.status) {
             updates.push('status = ?');
             values.push(status);
+            historyEntries.push({
+                fieldName: 'status',
+                oldValue: oldPrescription.status,
+                newValue: status
+            });
         }
 
-        if (notes !== undefined) {
+        if (notes !== undefined && notes !== oldPrescription.notes) {
             updates.push('notes = ?');
             values.push(notes);
+            historyEntries.push({
+                fieldName: 'notes',
+                oldValue: oldPrescription.notes || '',
+                newValue: notes || ''
+            });
         }
 
-        if (updates.length === 0) {
-            return res.status(400).json({ message: 'No fields to update' });
+        if (patientId !== undefined && patientId !== oldPrescription.patientId) {
+            updates.push('patientId = ?');
+            values.push(patientId);
+            historyEntries.push({
+                fieldName: 'patientId',
+                oldValue: oldPrescription.patientId?.toString() || '',
+                newValue: patientId?.toString() || ''
+            });
         }
 
-        values.push(id);
+        if (doctorId !== undefined && doctorId !== oldPrescription.doctorId) {
+            updates.push('doctorId = ?');
+            values.push(doctorId);
+            historyEntries.push({
+                fieldName: 'doctorId',
+                oldValue: oldPrescription.doctorId?.toString() || '',
+                newValue: doctorId?.toString() || ''
+            });
+        }
 
-        await pool.execute(
-            `UPDATE prescriptions SET ${updates.join(', ')}, updatedAt = NOW() WHERE prescriptionId = ?`,
-            values
-        );
+        if (prescriptionDate !== undefined && prescriptionDate !== oldPrescription.prescriptionDate) {
+            updates.push('prescriptionDate = ?');
+            values.push(prescriptionDate);
+            historyEntries.push({
+                fieldName: 'prescriptionDate',
+                oldValue: oldPrescription.prescriptionDate || '',
+                newValue: prescriptionDate || ''
+            });
+        }
+
+        // Update prescription if there are changes
+        if (updates.length > 0) {
+            values.push(id);
+            await connection.execute(
+                `UPDATE prescriptions SET ${updates.join(', ')}, updatedAt = NOW() WHERE prescriptionId = ?`,
+                values
+            );
+
+            // Record history
+            for (const entry of historyEntries) {
+                await connection.execute(
+                    `INSERT INTO prescription_history (prescriptionId, fieldName, oldValue, newValue, changedBy, changeType)
+                     VALUES (?, ?, ?, ?, ?, 'update')`,
+                    [id, entry.fieldName, entry.oldValue, entry.newValue, userId]
+                );
+            }
+        }
+
+        // Handle items updates if provided
+        if (items && Array.isArray(items)) {
+            // Get existing items
+            const [existingItems] = await connection.execute(
+                'SELECT * FROM prescription_items WHERE prescriptionId = ?',
+                [id]
+            );
+
+            // Delete removed items
+            const newItemIds = items.filter(item => item.itemId).map(item => item.itemId);
+            const itemsToDelete = existingItems.filter(item => !newItemIds.includes(item.itemId));
+            
+            for (const item of itemsToDelete) {
+                await connection.execute(
+                    `INSERT INTO prescription_items_history (itemId, prescriptionId, fieldName, oldValue, newValue, changedBy, changeType)
+                     VALUES (?, ?, 'item', ?, ?, ?, 'delete')`,
+                    [item.itemId, id, JSON.stringify(item), '', userId]
+                );
+                await connection.execute('DELETE FROM prescription_items WHERE itemId = ?', [item.itemId]);
+            }
+
+            // Update or insert items
+            for (const item of items) {
+                let medicationName = item.medicationName || 'Unknown';
+                if (item.medicationId && !medicationName) {
+                    const [medRows] = await connection.execute(
+                        'SELECT name FROM medications WHERE medicationId = ?',
+                        [item.medicationId]
+                    );
+                    if (medRows.length > 0) {
+                        medicationName = medRows[0].name;
+                    }
+                }
+
+                if (item.itemId) {
+                    // Update existing item
+                    const existingItem = existingItems.find(ei => ei.itemId === item.itemId);
+                    if (existingItem) {
+                        const itemUpdates = [];
+                        const itemValues = [];
+                        const itemHistoryEntries = [];
+
+                        const fieldsToCheck = ['medicationId', 'medicationName', 'dosage', 'frequency', 'duration', 'quantity', 'instructions', 'status'];
+                        for (const field of fieldsToCheck) {
+                            if (item[field] !== undefined && item[field] !== existingItem[field]) {
+                                itemUpdates.push(`${field} = ?`);
+                                itemValues.push(item[field] === null ? null : item[field]);
+                                itemHistoryEntries.push({
+                                    fieldName: field,
+                                    oldValue: existingItem[field]?.toString() || '',
+                                    newValue: item[field]?.toString() || ''
+                                });
+                            }
+                        }
+
+                        if (itemUpdates.length > 0) {
+                            itemValues.push(item.itemId);
+                            await connection.execute(
+                                `UPDATE prescription_items SET ${itemUpdates.join(', ')}, updatedAt = NOW() WHERE itemId = ?`,
+                                itemValues
+                            );
+
+                            // Record item history
+                            for (const entry of itemHistoryEntries) {
+                                await connection.execute(
+                                    `INSERT INTO prescription_items_history (itemId, prescriptionId, fieldName, oldValue, newValue, changedBy, changeType)
+                                     VALUES (?, ?, ?, ?, ?, ?, 'update')`,
+                                    [item.itemId, id, entry.fieldName, entry.oldValue, entry.newValue, userId]
+                                );
+                            }
+                        }
+                    }
+                } else {
+                    // Insert new item
+                    const [result] = await connection.execute(
+                        `INSERT INTO prescription_items (prescriptionId, medicationId, medicationName, dosage, frequency, duration, quantity, instructions, status)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                        [
+                            id,
+                            item.medicationId || null,
+                            medicationName,
+                            item.dosage || '',
+                            item.frequency || '',
+                            item.duration || '',
+                            item.quantity || null,
+                            item.instructions || null,
+                            item.status || 'pending'
+                        ]
+                    );
+
+                    // Record creation in history
+                    await connection.execute(
+                        `INSERT INTO prescription_items_history (itemId, prescriptionId, fieldName, oldValue, newValue, changedBy, changeType)
+                         VALUES (?, ?, 'item', '', ?, ?, 'create')`,
+                        [result.insertId, id, JSON.stringify(item), userId]
+                    );
+                }
+            }
+        }
+
+        await connection.commit();
 
         // Get updated prescription with joined data
-        const [updated] = await pool.execute(
+        const [updated] = await connection.execute(
             `SELECT p.*, 
                     pt.firstName, pt.lastName, pt.patientNumber,
                     u.firstName as doctorFirstName, u.lastName as doctorLastName
@@ -420,8 +613,11 @@ router.put('/prescriptions/:id', async (req, res) => {
             [id]
         );
 
+        connection.release();
         res.status(200).json(updated[0]);
     } catch (error) {
+        await connection.rollback();
+        connection.release();
         console.error('Error updating prescription:', error);
         res.status(500).json({ message: 'Error updating prescription', error: error.message });
     }
@@ -434,10 +630,10 @@ router.put('/prescriptions/:id', async (req, res) => {
 router.get('/inventory', async (req, res) => {
     try {
         const [rows] = await pool.execute(
-            `SELECT pi.*, m.medicationName, m.medicationCode, m.genericName
+            `SELECT pi.*, m.name as medicationName, m.medicationCode, m.genericName
              FROM pharmacy_inventory pi
              LEFT JOIN medications m ON pi.medicationId = m.medicationId
-             ORDER BY m.medicationName`
+             ORDER BY m.name`
         );
         res.status(200).json(rows);
     } catch (error) {
@@ -713,6 +909,75 @@ router.delete('/drug-inventory/:id', async (req, res) => {
     } catch (error) {
         console.error('Error deleting drug inventory item:', error);
         res.status(500).json({ message: 'Error deleting drug inventory item', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/pharmacy/prescriptions/:id/history
+ * @description Get prescription history/audit log
+ */
+router.get('/prescriptions/:id/history', async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        const [history] = await pool.execute(
+            `SELECT ph.*, 
+                    u.firstName as changedByFirstName, 
+                    u.lastName as changedByLastName,
+                    u.username as changedByUsername
+             FROM prescription_history ph
+             LEFT JOIN users u ON ph.changedBy = u.userId
+             WHERE ph.prescriptionId = ?
+             ORDER BY ph.changeDate DESC`,
+            [id]
+        );
+
+        const [itemsHistory] = await pool.execute(
+            `SELECT pih.*, 
+                    u.firstName as changedByFirstName, 
+                    u.lastName as changedByLastName,
+                    u.username as changedByUsername
+             FROM prescription_items_history pih
+             LEFT JOIN users u ON pih.changedBy = u.userId
+             WHERE pih.prescriptionId = ?
+             ORDER BY pih.changeDate DESC`,
+            [id]
+        );
+
+        res.status(200).json({
+            prescriptionHistory: history,
+            itemsHistory: itemsHistory
+        });
+    } catch (error) {
+        console.error('Error fetching prescription history:', error);
+        res.status(500).json({ message: 'Error fetching prescription history', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/pharmacy/drug-inventory/:id/history
+ * @description Get drug inventory history/audit log
+ */
+router.get('/drug-inventory/:id/history', async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        const [history] = await pool.execute(
+            `SELECT dih.*, 
+                    u.firstName as changedByFirstName, 
+                    u.lastName as changedByLastName,
+                    u.username as changedByUsername
+             FROM drug_inventory_history dih
+             LEFT JOIN users u ON dih.changedBy = u.userId
+             WHERE dih.drugInventoryId = ?
+             ORDER BY dih.changeDate DESC`,
+            [id]
+        );
+
+        res.status(200).json(history);
+    } catch (error) {
+        console.error('Error fetching drug inventory history:', error);
+        res.status(500).json({ message: 'Error fetching drug inventory history', error: error.message });
     }
 });
 

@@ -23,7 +23,20 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { PatientCombobox } from "@/components/patient-combobox"
+import { MedicationCombobox } from "@/components/medication-combobox"
 import { patientApi, doctorsApi, pharmacyApi } from "@/lib/api"
+import { Badge } from "@/components/ui/badge"
+import { Package, AlertTriangle } from "lucide-react"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 
 const medicationSchema = z.object({
   medicationId: z.string({
@@ -85,12 +98,16 @@ interface AddPrescriptionFormProps {
   onSuccess?: () => void
 }
 
+const STORAGE_KEY = 'prescription_form_draft'
+
 export function AddPrescriptionForm({ open, onOpenChange, onSuccess }: AddPrescriptionFormProps) {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [doctors, setDoctors] = useState<any[]>([])
-  const [medications, setMedications] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [selectedMedicationsInventory, setSelectedMedicationsInventory] = useState<Record<number, { totalQuantity: number; hasStock: boolean; sellPrice: number | null }>>({})
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
+  const [showCloseConfirm, setShowCloseConfirm] = useState(false)
 
   const form = useForm<PrescriptionFormValues>({
     resolver: zodResolver(prescriptionFormSchema),
@@ -102,32 +119,62 @@ export function AddPrescriptionForm({ open, onOpenChange, onSuccess }: AddPrescr
     name: "medications",
   })
 
+  // Load saved draft when form opens
   useEffect(() => {
     if (open) {
       loadData()
-      form.reset({
-        patientId: "",
-        doctorId: "",
-        diagnosis: "",
-        medications: [defaultMedication],
-        notes: "",
-      })
+      const savedDraft = loadDraftFromStorage()
+      if (savedDraft) {
+        // Convert date string back to Date object if present
+        if (savedDraft.prescriptionDate) {
+          savedDraft.prescriptionDate = new Date(savedDraft.prescriptionDate)
+        }
+        form.reset(savedDraft)
+        setHasUnsavedChanges(true)
+      } else {
+        form.reset({
+          patientId: "",
+          doctorId: "",
+          diagnosis: "",
+          medications: [defaultMedication],
+          notes: "",
+        })
+        setHasUnsavedChanges(false)
+      }
       setError(null)
     }
   }, [open, form])
+
+  // Auto-save form data to localStorage
+  useEffect(() => {
+    if (!open) return
+
+    const subscription = form.watch((value) => {
+      // Check if form has any meaningful data
+      const hasData = value.patientId || value.doctorId || value.diagnosis || 
+                      (value.medications && value.medications.some((med: any) => 
+                        med.medicationId || med.dosage || med.frequency || med.duration
+                      )) || value.notes
+      
+      if (hasData) {
+        saveDraftToStorage(value as any)
+        setHasUnsavedChanges(true)
+      } else {
+        clearDraftFromStorage()
+        setHasUnsavedChanges(false)
+      }
+    })
+
+    return () => subscription.unsubscribe()
+  }, [form, open])
 
   const loadData = async () => {
     try {
       setLoading(true)
       setError(null)
-      const [patientsData, doctorsData, medicationsData] = await Promise.all([
-        patientApi.getAll(),
-        doctorsApi.getAll(),
-        pharmacyApi.getMedications(),
-      ])
-      setPatients(patientsData)
+      const doctorsData = await doctorsApi.getAll()
       setDoctors(doctorsData)
-      setMedications(medicationsData)
+      await loadInventoryData()
     } catch (err: any) {
       setError(err.message || 'Failed to load data')
       console.error('Error loading form data:', err)
@@ -136,20 +183,98 @@ export function AddPrescriptionForm({ open, onOpenChange, onSuccess }: AddPrescr
     }
   }
 
+  const loadInventoryData = async () => {
+    try {
+      // Load all drug inventory to calculate totals per medication
+      const inventoryItems = await pharmacyApi.getDrugInventory()
+      
+      // Calculate total quantity and min sellPrice per medication
+      const inventoryMap: Record<number, { totalQuantity: number; hasStock: boolean; sellPrice: number | null }> = {}
+      
+      inventoryItems.forEach((item: any) => {
+        const medId = item.medicationId
+        const quantity = parseInt(item.quantity || 0)
+        const sellPrice = item.sellPrice ? parseFloat(item.sellPrice) : null
+        
+        if (!inventoryMap[medId]) {
+          inventoryMap[medId] = { totalQuantity: 0, hasStock: false, sellPrice: null }
+        }
+        
+        inventoryMap[medId].totalQuantity += quantity
+        if (quantity > 0) {
+          inventoryMap[medId].hasStock = true
+          // Use minimum sellPrice if multiple batches exist
+          if (sellPrice && (!inventoryMap[medId].sellPrice || sellPrice < inventoryMap[medId].sellPrice!)) {
+            inventoryMap[medId].sellPrice = sellPrice
+          }
+        }
+      })
+      
+      setSelectedMedicationsInventory(inventoryMap)
+    } catch (error) {
+      console.error("Error loading inventory data:", error)
+    }
+  }
+
+  const getInventoryStatus = (medicationId: number) => {
+    const inventory = selectedMedicationsInventory[medicationId]
+    if (!inventory) {
+      return { hasStock: false, quantity: 0, sellPrice: null }
+    }
+    return {
+      hasStock: inventory.hasStock && inventory.totalQuantity > 0,
+      quantity: inventory.totalQuantity,
+      sellPrice: inventory.sellPrice,
+    }
+  }
+
   async function onSubmit(data: PrescriptionFormValues) {
     try {
-      setIsSubmitting(true)
       setError(null)
 
+      // Validate quantity for drugs in inventory (quantity is required for drugs in inventory)
+      let hasValidationError = false
+      for (let i = 0; i < data.medications.length; i++) {
+        const med = data.medications[i]
+        const medId = parseInt(med.medicationId)
+        const inventoryStatus = getInventoryStatus(medId)
+        
+        // Quantity is required only for drugs in inventory
+        if (inventoryStatus?.hasStock && (!med.quantity || med.quantity.trim() === '')) {
+          form.setError(`medications.${i}.quantity`, {
+            type: 'manual',
+            message: 'Quantity is required for medications in inventory'
+          })
+          hasValidationError = true
+        } else {
+          // Clear any previous errors for this field
+          form.clearErrors(`medications.${i}.quantity`)
+        }
+      }
+
+      // If validation failed, stop submission
+      if (hasValidationError) {
+        return
+      }
+
+      setIsSubmitting(true)
+
       // Transform medications to match API structure
-      const items = data.medications.map((med) => ({
-        medicationId: parseInt(med.medicationId),
-        dosage: med.dosage,
-        frequency: med.frequency,
-        duration: med.duration,
-        quantity: med.quantity ? parseInt(med.quantity) : null,
-        instructions: med.instructions || null,
-      }))
+      const items = data.medications.map((med) => {
+        const medId = parseInt(med.medicationId)
+        const inventoryStatus = getInventoryStatus(medId)
+        // Only include quantity if drug is in inventory and quantity is provided
+        const quantity = (inventoryStatus?.hasStock && med.quantity) ? parseInt(med.quantity) : null
+        
+        return {
+          medicationId: medId,
+          dosage: med.dosage,
+          frequency: med.frequency,
+          duration: med.duration,
+          quantity,
+          instructions: med.instructions || null,
+        }
+      })
 
       const prescriptionData = {
         patientId: parseInt(data.patientId),
@@ -161,6 +286,10 @@ export function AddPrescriptionForm({ open, onOpenChange, onSuccess }: AddPrescr
       }
 
       await pharmacyApi.createPrescription(prescriptionData)
+      
+      // Clear draft after successful submission
+      clearDraftFromStorage()
+      setHasUnsavedChanges(false)
       
       if (onSuccess) {
         onSuccess()
@@ -187,8 +316,78 @@ export function AddPrescriptionForm({ open, onOpenChange, onSuccess }: AddPrescr
     return medication.name || medication.medicationName || medication.medicationCode || 'Unknown'
   }
 
+  const handleMedicationSelect = (index: number, medicationId: string) => {
+    // Update the form field
+    form.setValue(`medications.${index}.medicationId`, medicationId)
+    // Refresh inventory data when medication is selected
+    loadInventoryData()
+  }
+
+  // Save draft to localStorage
+  const saveDraftToStorage = (data: Partial<PrescriptionFormValues>) => {
+    if (typeof window === 'undefined') return
+    try {
+      const dataToSave = {
+        ...data,
+        // Convert Date to string for storage
+        prescriptionDate: data.prescriptionDate instanceof Date 
+          ? data.prescriptionDate.toISOString() 
+          : data.prescriptionDate,
+      }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave))
+    } catch (error) {
+      console.error('Error saving draft to localStorage:', error)
+    }
+  }
+
+  // Load draft from localStorage
+  const loadDraftFromStorage = (): Partial<PrescriptionFormValues> | null => {
+    if (typeof window === 'undefined') return null
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY)
+      if (saved) {
+        return JSON.parse(saved)
+      }
+    } catch (error) {
+      console.error('Error loading draft from localStorage:', error)
+    }
+    return null
+  }
+
+  // Clear draft from localStorage
+  const clearDraftFromStorage = () => {
+    if (typeof window === 'undefined') return
+    try {
+      localStorage.removeItem(STORAGE_KEY)
+    } catch (error) {
+      console.error('Error clearing draft from localStorage:', error)
+    }
+  }
+
+  // Handle dialog close with confirmation if there are unsaved changes
+  const handleDialogClose = (shouldClose: boolean) => {
+    if (hasUnsavedChanges && shouldClose) {
+      setShowCloseConfirm(true)
+    } else if (shouldClose) {
+      onOpenChange(false)
+      setHasUnsavedChanges(false)
+    }
+  }
+
+  const handleConfirmClose = () => {
+    clearDraftFromStorage()
+    setHasUnsavedChanges(false)
+    setShowCloseConfirm(false)
+    onOpenChange(false)
+  }
+
+  const handleCancelClose = () => {
+    setShowCloseConfirm(false)
+  }
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <>
+    <Dialog open={open} onOpenChange={handleDialogClose}>
       <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Create New Prescription</DialogTitle>
@@ -319,26 +518,42 @@ export function AddPrescriptionForm({ open, onOpenChange, onSuccess }: AddPrescr
                       <FormField
                         control={form.control}
                         name={`medications.${index}.medicationId`}
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Medication *</FormLabel>
-                            <Select onValueChange={field.onChange} defaultValue={field.value || ""}>
+                        render={({ field }) => {
+                          const medicationId = field.value ? parseInt(field.value) : null
+                          const inventoryStatus = medicationId ? getInventoryStatus(medicationId) : null
+                          
+                          return (
+                            <FormItem>
+                              <FormLabel>Medication *</FormLabel>
                               <FormControl>
-                                <SelectTrigger>
-                                  <SelectValue placeholder="Select medication" />
-                                </SelectTrigger>
+                                <MedicationCombobox
+                                  value={field.value}
+                                  onValueChange={(value) => {
+                                    field.onChange(value)
+                                    handleMedicationSelect(index, value)
+                                  }}
+                                  placeholder="Search medication..."
+                                />
                               </FormControl>
-                              <SelectContent>
-                                {medications.map((medication) => (
-                                  <SelectItem key={medication.medicationId} value={medication.medicationId.toString()}>
-                                    {getMedicationName(medication)}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                            <FormMessage />
-                          </FormItem>
-                        )}
+                              {medicationId && inventoryStatus && (
+                                <div className="mt-1">
+                                  {inventoryStatus.hasStock ? (
+                                    <Badge variant="default" className="text-xs">
+                                      <Package className="h-3 w-3 mr-1" />
+                                      {inventoryStatus.quantity} in stock
+                                    </Badge>
+                                  ) : (
+                                    <Badge variant="secondary" className="text-xs">
+                                      <AlertTriangle className="h-3 w-3 mr-1" />
+                                      Out of stock
+                                    </Badge>
+                                  )}
+                                </div>
+                              )}
+                              <FormMessage />
+                            </FormItem>
+                          )
+                        }}
                       />
                       <FormField
                         control={form.control}
@@ -384,15 +599,40 @@ export function AddPrescriptionForm({ open, onOpenChange, onSuccess }: AddPrescr
                       <FormField
                         control={form.control}
                         name={`medications.${index}.quantity`}
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Quantity</FormLabel>
-                            <FormControl>
-                              <Input type="number" placeholder="21" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
+                        render={({ field }) => {
+                          const medicationId = form.watch(`medications.${index}.medicationId`)
+                          const medId = medicationId ? parseInt(medicationId) : null
+                          const inventoryStatus = medId ? getInventoryStatus(medId) : null
+                          const isInInventory = inventoryStatus?.hasStock || false
+                          
+                          return (
+                            <FormItem>
+                              <FormLabel>
+                                Quantity {isInInventory && <span className="text-destructive">*</span>}
+                                {!isInInventory && <span className="text-muted-foreground text-xs"> (Not in inventory)</span>}
+                              </FormLabel>
+                              <FormControl>
+                                <Input 
+                                  type="number" 
+                                  min="1"
+                                  placeholder={isInInventory ? "Enter quantity" : "Not in inventory"} 
+                                  disabled={!isInInventory}
+                                  value={field.value || ''}
+                                  onChange={(e) => field.onChange(e.target.value || undefined)}
+                                />
+                              </FormControl>
+                              {!isInInventory && (
+                                <p className="text-xs text-muted-foreground">This medication is not in inventory</p>
+                              )}
+                              {isInInventory && inventoryStatus?.sellPrice && (
+                                <p className="text-xs text-muted-foreground">
+                                  Price: KES {inventoryStatus.sellPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} per unit
+                                </p>
+                              )}
+                              <FormMessage />
+                            </FormItem>
+                          )
+                        }}
                       />
                     </div>
                     <FormField
@@ -452,5 +692,23 @@ export function AddPrescriptionForm({ open, onOpenChange, onSuccess }: AddPrescr
         </Form>
       </DialogContent>
     </Dialog>
+
+    <AlertDialog open={showCloseConfirm} onOpenChange={setShowCloseConfirm}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Unsaved Changes</AlertDialogTitle>
+          <AlertDialogDescription>
+            You have unsaved changes in this prescription form. Your draft has been saved and will be restored when you open the form again.
+            <br /><br />
+            Do you want to close the form? Your data will be saved as a draft.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel onClick={handleCancelClose}>Continue Editing</AlertDialogCancel>
+          <AlertDialogAction onClick={handleConfirmClose}>Close Form</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   )
 }
