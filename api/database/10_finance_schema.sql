@@ -275,3 +275,26 @@ CREATE TABLE IF NOT EXISTS payment_plan_installments (
     INDEX idx_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Mobile payment logs (mobile money transaction history)
+CREATE TABLE IF NOT EXISTS mobile_payment_logs (
+    logId INT NOT NULL AUTO_INCREMENT,
+    name VARCHAR(200) NOT NULL,
+    amount DECIMAL(15, 2) NOT NULL,
+    refNo VARCHAR(100) NOT NULL, -- Reference/Transaction number
+    phoneNumber VARCHAR(20) NOT NULL,
+    mobileProvider VARCHAR(50) NOT NULL, -- M-Pesa, Airtel Money, T-Kash, etc.
+    accountNumber VARCHAR(100),
+    transactionDate DATETIME NOT NULL,
+    notes TEXT,
+    createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    createdBy INT,
+    PRIMARY KEY (logId),
+    FOREIGN KEY (createdBy) REFERENCES users(userId) ON DELETE SET NULL,
+    INDEX idx_ref_no (refNo),
+    INDEX idx_phone_number (phoneNumber),
+    INDEX idx_mobile_provider (mobileProvider),
+    INDEX idx_transaction_date (transactionDate),
+    INDEX idx_account_number (accountNumber)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+

@@ -38,6 +38,7 @@ import {
 import { Label } from "@/components/ui/label"
 import { format } from "date-fns"
 import { ViewBillDialog } from "@/components/view-bill-dialog"
+import { MobilePaymentLogsSection } from "@/components/mobile-payment-logs-section"
 
 export default function BillingPage() {
   const [isMounted, setIsMounted] = useState(false)
@@ -321,11 +322,18 @@ export default function BillingPage() {
         </Card>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Patient Bills</CardTitle>
-          <CardDescription>View and manage patient bills and invoices</CardDescription>
-        </CardHeader>
+      <Tabs defaultValue="invoices" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="invoices">Invoices</TabsTrigger>
+          <TabsTrigger value="mobile-payments">Mobile Payment Logs</TabsTrigger>
+        </TabsList>
+        
+        <TabsContent value="invoices" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Patient Bills</CardTitle>
+              <CardDescription>View and manage patient bills and invoices</CardDescription>
+            </CardHeader>
         <CardContent>
           <div className="flex items-center justify-between mb-4">
             <div className="flex gap-2">
@@ -462,6 +470,12 @@ export default function BillingPage() {
           </div>
         </CardContent>
       </Card>
+        </TabsContent>
+
+        <TabsContent value="mobile-payments" className="space-y-4">
+          <MobilePaymentLogsSection />
+        </TabsContent>
+      </Tabs>
 
       {selectedInvoice && (
         <ViewBillDialog

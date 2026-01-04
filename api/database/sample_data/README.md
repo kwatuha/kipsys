@@ -19,7 +19,8 @@ Run scripts in this order to avoid foreign key constraint errors:
 11. **10_insurance.sql** - Insurance providers and packages
 12. **11_procurement.sql** - Vendors
 13. **12_finance.sql** - Payment methods, accounts, budgets
-14. **13_transactions.sql** - Sample transactions (appointments, prescriptions, etc.)
+mobile14. **_payment_logs.sql** - Mobile payment transaction logs (M-Pesa, Airtel Money, T-Kash, Equitel)
+15. **13_transactions.sql** - Sample transactions (appointments, prescriptions, etc.)
 
 ## Usage
 

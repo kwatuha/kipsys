@@ -77,12 +77,7 @@ export function ViewBillDialog({ open, onOpenChange, patientId, queueNotes }: Vi
             Patient Bills
           </DialogTitle>
           <DialogDescription>
-            {queueNotes && (
-              <div className="mt-2 p-2 bg-muted rounded-md">
-                <span className="text-sm font-medium">Queue Note: </span>
-                <span className="text-sm">{queueNotes}</span>
-              </div>
-            )}
+            View and manage patient invoices and billing details
           </DialogDescription>
         </DialogHeader>
 

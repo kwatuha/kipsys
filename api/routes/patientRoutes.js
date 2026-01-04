@@ -64,15 +64,18 @@ router.get('/:id', async (req, res) => {
 router.post('/', async (req, res) => {
     const patientData = req.body;
     const userId = req.user?.id;
+    const connection = await pool.getConnection();
 
     try {
+        await connection.beginTransaction();
+
         // Generate patient number if not provided
         if (!patientData.patientNumber) {
-            const [count] = await pool.execute('SELECT COUNT(*) as count FROM patients');
+            const [count] = await connection.execute('SELECT COUNT(*) as count FROM patients');
             patientData.patientNumber = `P-${String(count[0].count + 1).padStart(6, '0')}`;
         }
 
-        const [result] = await pool.execute(
+        const [result] = await connection.execute(
             `INSERT INTO patients (
                 patientNumber, firstName, lastName, middleName, dateOfBirth, gender,
                 phone, email, address, county, subcounty, ward, idNumber, idType,
@@ -104,39 +107,109 @@ router.post('/', async (req, res) => {
             ]
         );
 
-        // After patient registration, create queue entry for cashier (registration fees payment)
+        const patientId = result.insertId;
+
+        // After patient registration, create invoice for registration fees, then create queue entry for cashier
         try {
+            // Find or get registration fee service charge
+            // Try to find by chargeCode 'REG-FEE' or name containing 'Registration'
+            let [regFeeCharge] = await connection.execute(
+                `SELECT chargeId, cost FROM service_charges 
+                 WHERE (chargeCode = 'REG-FEE' OR name LIKE '%Registration%Fee%') 
+                 AND status = 'Active' 
+                 LIMIT 1`
+            );
+
+            let registrationFeeAmount = 500.00; // Default fee if not found
+            let chargeId = null;
+
+            if (regFeeCharge.length > 0) {
+                chargeId = regFeeCharge[0].chargeId;
+                registrationFeeAmount = parseFloat(regFeeCharge[0].cost);
+            } else {
+                // Create a default registration fee service charge if it doesn't exist
+                const [newCharge] = await connection.execute(
+                    `INSERT INTO service_charges (chargeCode, name, category, cost, description, status)
+                     VALUES ('REG-FEE', 'Patient Registration Fee', 'Registration', ?, 'Patient registration fee', 'Active')`,
+                    [registrationFeeAmount]
+                );
+                chargeId = newCharge.insertId;
+            }
+
+            // Generate invoice number
+            const [invoiceCount] = await connection.execute(
+                'SELECT COUNT(*) as count FROM invoices WHERE DATE(createdAt) = CURDATE()'
+            );
+            const invoiceNum = invoiceCount[0].count + 1;
+            const invoiceNumber = `INV-${new Date().toISOString().split('T')[0].replace(/-/g, '')}-${String(invoiceNum).padStart(4, '0')}`;
+
+            // Create invoice for registration fee
+            const [invoiceResult] = await connection.execute(
+                `INSERT INTO invoices (invoiceNumber, patientId, invoiceDate, totalAmount, balance, status, notes, createdBy)
+                 VALUES (?, ?, CURDATE(), ?, ?, 'pending', ?, ?)`,
+                [
+                    invoiceNumber,
+                    patientId,
+                    registrationFeeAmount,
+                    registrationFeeAmount, // balance = totalAmount initially
+                    'Registration fee payment',
+                    userId || null
+                ]
+            );
+
+            const invoiceId = invoiceResult.insertId;
+
+            // Create invoice item
+            await connection.execute(
+                `INSERT INTO invoice_items (invoiceId, chargeId, description, quantity, unitPrice, totalPrice)
+                 VALUES (?, ?, ?, 1, ?, ?)`,
+                [
+                    invoiceId,
+                    chargeId,
+                    'Patient Registration Fee',
+                    registrationFeeAmount,
+                    registrationFeeAmount
+                ]
+            );
+
             // Generate ticket number for cashier queue
-            const [cashierCount] = await pool.execute(
+            const [cashierCount] = await connection.execute(
                 'SELECT COUNT(*) as count FROM queue_entries WHERE DATE(arrivalTime) = CURDATE() AND servicePoint = "cashier"'
             );
             const cashierTicketNum = cashierCount[0].count + 1;
             const cashierTicketNumber = `C-${String(cashierTicketNum).padStart(3, '0')}`;
 
             // Create queue entry for cashier (registration fees payment)
-            await pool.execute(
+            await connection.execute(
                 `INSERT INTO queue_entries 
                 (patientId, ticketNumber, servicePoint, priority, status, notes, createdBy)
                 VALUES (?, ?, 'cashier', 'normal', 'waiting', ?, ?)`,
                 [
-                    result.insertId,
+                    patientId,
                     cashierTicketNumber,
                     'Registration fees payment',
                     userId || null
                 ]
             );
         } catch (queueError) {
-            // Log error but don't fail patient registration if queue creation fails
-            console.error('Error creating cashier queue after patient registration:', queueError);
+            // Log error but don't fail patient registration if queue/invoice creation fails
+            console.error('Error creating invoice and cashier queue after patient registration:', queueError);
+            // Rollback only the invoice/queue creation, but keep patient registration
+            // We'll let the transaction continue since patient registration is the main operation
         }
 
-        const [newPatient] = await pool.execute(
+        await connection.commit();
+
+        const [newPatient] = await connection.execute(
             'SELECT * FROM patients WHERE patientId = ?',
-            [result.insertId]
+            [patientId]
         );
 
+        connection.release();
         res.status(201).json(newPatient[0]);
     } catch (error) {
+        await connection.rollback();
+        connection.release();
         console.error('Error creating patient:', error);
         res.status(500).json({ message: 'Error creating patient', error: error.message });
     }

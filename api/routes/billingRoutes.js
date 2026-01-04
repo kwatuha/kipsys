@@ -675,5 +675,285 @@ router.get('/invoices/stats/summary', async (req, res) => {
     }
 });
 
+// Mobile Payment Logs Routes
+/**
+ * @route GET /api/billing/mobile-payment-logs
+ * @description Get all mobile payment logs (optionally filtered)
+ */
+router.get('/mobile-payment-logs', async (req, res) => {
+    try {
+        const { search, mobileProvider, startDate, endDate, page = 1, limit = 50 } = req.query;
+        const offset = (parseInt(page) - 1) * parseInt(limit);
+
+        let query = `
+            SELECT mpl.*, 
+                   u.firstName as createdByFirstName, 
+                   u.lastName as createdByLastName
+            FROM mobile_payment_logs mpl
+            LEFT JOIN users u ON mpl.createdBy = u.userId
+            WHERE 1=1
+        `;
+        const params = [];
+
+        if (search) {
+            query += ` AND (mpl.name LIKE ? OR mpl.refNo LIKE ? OR mpl.phoneNumber LIKE ? OR mpl.accountNumber LIKE ?)`;
+            const searchTerm = `%${search}%`;
+            params.push(searchTerm, searchTerm, searchTerm, searchTerm);
+        }
+
+        if (mobileProvider) {
+            query += ` AND mpl.mobileProvider = ?`;
+            params.push(mobileProvider);
+        }
+
+        if (startDate) {
+            query += ` AND DATE(mpl.transactionDate) >= ?`;
+            params.push(startDate);
+        }
+
+        if (endDate) {
+            query += ` AND DATE(mpl.transactionDate) <= ?`;
+            params.push(endDate);
+        }
+
+        query += ` ORDER BY mpl.transactionDate DESC LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset)}`;
+
+        const [rows] = await pool.execute(query, params);
+
+        // Get total count for pagination
+        let countQuery = `SELECT COUNT(*) as total FROM mobile_payment_logs mpl WHERE 1=1`;
+        const countParams = [];
+
+        if (search) {
+            countQuery += ` AND (mpl.name LIKE ? OR mpl.refNo LIKE ? OR mpl.phoneNumber LIKE ? OR mpl.accountNumber LIKE ?)`;
+            const searchTerm = `%${search}%`;
+            countParams.push(searchTerm, searchTerm, searchTerm, searchTerm);
+        }
+
+        if (mobileProvider) {
+            countQuery += ` AND mpl.mobileProvider = ?`;
+            countParams.push(mobileProvider);
+        }
+
+        if (startDate) {
+            countQuery += ` AND DATE(mpl.transactionDate) >= ?`;
+            countParams.push(startDate);
+        }
+
+        if (endDate) {
+            countQuery += ` AND DATE(mpl.transactionDate) <= ?`;
+            countParams.push(endDate);
+        }
+
+        const [countResult] = await pool.execute(countQuery, countParams);
+        const total = countResult[0].total;
+
+        res.status(200).json({
+            data: rows,
+            pagination: {
+                total,
+                page: parseInt(page),
+                limit: parseInt(limit),
+                totalPages: Math.ceil(total / parseInt(limit))
+            }
+        });
+    } catch (error) {
+        console.error('Error fetching mobile payment logs:', error);
+        res.status(500).json({ message: 'Error fetching mobile payment logs', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/billing/mobile-payment-logs/:id
+ * @description Get a single mobile payment log by ID
+ */
+router.get('/mobile-payment-logs/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const [rows] = await pool.execute(
+            `SELECT mpl.*, 
+                    u.firstName as createdByFirstName, 
+                    u.lastName as createdByLastName
+             FROM mobile_payment_logs mpl
+             LEFT JOIN users u ON mpl.createdBy = u.userId
+             WHERE mpl.logId = ?`,
+            [id]
+        );
+
+        if (rows.length === 0) {
+            return res.status(404).json({ message: 'Mobile payment log not found' });
+        }
+
+        res.status(200).json(rows[0]);
+    } catch (error) {
+        console.error('Error fetching mobile payment log:', error);
+        res.status(500).json({ message: 'Error fetching mobile payment log', error: error.message });
+    }
+});
+
+/**
+ * @route POST /api/billing/mobile-payment-logs
+ * @description Create a new mobile payment log
+ */
+router.post('/mobile-payment-logs', async (req, res) => {
+    try {
+        const { name, amount, refNo, phoneNumber, mobileProvider, accountNumber, transactionDate, notes } = req.body;
+        const userId = req.user?.id;
+
+        if (!name || !amount || !refNo || !phoneNumber || !mobileProvider || !transactionDate) {
+            return res.status(400).json({ error: 'Name, amount, refNo, phoneNumber, mobileProvider, and transactionDate are required' });
+        }
+
+        // Check if refNo already exists
+        const [existing] = await pool.execute(
+            'SELECT logId FROM mobile_payment_logs WHERE refNo = ?',
+            [refNo]
+        );
+
+        if (existing.length > 0) {
+            return res.status(400).json({ error: 'Reference number already exists' });
+        }
+
+        const [result] = await pool.execute(
+            `INSERT INTO mobile_payment_logs 
+             (name, amount, refNo, phoneNumber, mobileProvider, accountNumber, transactionDate, notes, createdBy)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                name,
+                parseFloat(amount),
+                refNo,
+                phoneNumber,
+                mobileProvider,
+                accountNumber || null,
+                transactionDate,
+                notes || null,
+                userId || null
+            ]
+        );
+
+        const [newLog] = await pool.execute(
+            `SELECT mpl.*, 
+                    u.firstName as createdByFirstName, 
+                    u.lastName as createdByLastName
+             FROM mobile_payment_logs mpl
+             LEFT JOIN users u ON mpl.createdBy = u.userId
+             WHERE mpl.logId = ?`,
+            [result.insertId]
+        );
+
+        res.status(201).json(newLog[0]);
+    } catch (error) {
+        console.error('Error creating mobile payment log:', error);
+        if (error.code === 'ER_DUP_ENTRY') {
+            return res.status(400).json({ error: 'Reference number already exists' });
+        }
+        res.status(500).json({ message: 'Error creating mobile payment log', error: error.message });
+    }
+});
+
+/**
+ * @route PUT /api/billing/mobile-payment-logs/:id
+ * @description Update a mobile payment log
+ */
+router.put('/mobile-payment-logs/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { name, amount, refNo, phoneNumber, mobileProvider, accountNumber, transactionDate, notes } = req.body;
+
+        // Check if log exists
+        const [existing] = await pool.execute(
+            'SELECT logId FROM mobile_payment_logs WHERE logId = ?',
+            [id]
+        );
+
+        if (existing.length === 0) {
+            return res.status(404).json({ message: 'Mobile payment log not found' });
+        }
+
+        // Check if refNo already exists (excluding current record)
+        if (refNo) {
+            const [refCheck] = await pool.execute(
+                'SELECT logId FROM mobile_payment_logs WHERE refNo = ? AND logId != ?',
+                [refNo, id]
+            );
+
+            if (refCheck.length > 0) {
+                return res.status(400).json({ error: 'Reference number already exists' });
+            }
+        }
+
+        const updates = [];
+        const values = [];
+
+        if (name !== undefined) { updates.push('name = ?'); values.push(name); }
+        if (amount !== undefined) { updates.push('amount = ?'); values.push(parseFloat(amount)); }
+        if (refNo !== undefined) { updates.push('refNo = ?'); values.push(refNo); }
+        if (phoneNumber !== undefined) { updates.push('phoneNumber = ?'); values.push(phoneNumber); }
+        if (mobileProvider !== undefined) { updates.push('mobileProvider = ?'); values.push(mobileProvider); }
+        if (accountNumber !== undefined) { updates.push('accountNumber = ?'); values.push(accountNumber || null); }
+        if (transactionDate !== undefined) { updates.push('transactionDate = ?'); values.push(transactionDate); }
+        if (notes !== undefined) { updates.push('notes = ?'); values.push(notes || null); }
+
+        if (updates.length === 0) {
+            return res.status(400).json({ error: 'No fields to update' });
+        }
+
+        values.push(id);
+
+        await pool.execute(
+            `UPDATE mobile_payment_logs SET ${updates.join(', ')}, updatedAt = NOW() WHERE logId = ?`,
+            values
+        );
+
+        const [updated] = await pool.execute(
+            `SELECT mpl.*, 
+                    u.firstName as createdByFirstName, 
+                    u.lastName as createdByLastName
+             FROM mobile_payment_logs mpl
+             LEFT JOIN users u ON mpl.createdBy = u.userId
+             WHERE mpl.logId = ?`,
+            [id]
+        );
+
+        res.status(200).json(updated[0]);
+    } catch (error) {
+        console.error('Error updating mobile payment log:', error);
+        if (error.code === 'ER_DUP_ENTRY') {
+            return res.status(400).json({ error: 'Reference number already exists' });
+        }
+        res.status(500).json({ message: 'Error updating mobile payment log', error: error.message });
+    }
+});
+
+/**
+ * @route DELETE /api/billing/mobile-payment-logs/:id
+ * @description Delete a mobile payment log
+ */
+router.delete('/mobile-payment-logs/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // Check if log exists
+        const [existing] = await pool.execute(
+            'SELECT logId FROM mobile_payment_logs WHERE logId = ?',
+            [id]
+        );
+
+        if (existing.length === 0) {
+            return res.status(404).json({ message: 'Mobile payment log not found' });
+        }
+
+        await pool.execute('DELETE FROM mobile_payment_logs WHERE logId = ?', [id]);
+
+        res.status(200).json({ 
+            message: 'Mobile payment log deleted successfully',
+            logId: id
+        });
+    } catch (error) {
+        console.error('Error deleting mobile payment log:', error);
+        res.status(500).json({ message: 'Error deleting mobile payment log', error: error.message });
+    }
+});
+
 module.exports = router;
 

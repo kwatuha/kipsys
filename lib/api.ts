@@ -849,6 +849,30 @@ export const billingApi = {
   
   getInvoiceStats: () =>
     apiRequest<any>('/api/billing/invoices/stats/summary'),
+  
+  // Mobile Payment Logs
+  getMobilePaymentLogs: (params?: { search?: string; mobileProvider?: string; startDate?: string; endDate?: string; page?: number; limit?: number }) => {
+    const queryParams = new URLSearchParams();
+    if (params?.search) queryParams.append('search', params.search);
+    if (params?.mobileProvider) queryParams.append('mobileProvider', params.mobileProvider);
+    if (params?.startDate) queryParams.append('startDate', params.startDate);
+    if (params?.endDate) queryParams.append('endDate', params.endDate);
+    if (params?.page) queryParams.append('page', params.page.toString());
+    if (params?.limit) queryParams.append('limit', params.limit.toString());
+    return apiRequest<any>(`/api/billing/mobile-payment-logs?${queryParams.toString()}`);
+  },
+  
+  getMobilePaymentLogById: (id: string) =>
+    apiRequest<any>(`/api/billing/mobile-payment-logs/${id}`),
+  
+  createMobilePaymentLog: (data: any) =>
+    apiRequest<any>('/api/billing/mobile-payment-logs', { method: 'POST', body: data }),
+  
+  updateMobilePaymentLog: (id: string, data: any) =>
+    apiRequest<any>(`/api/billing/mobile-payment-logs/${id}`, { method: 'PUT', body: data }),
+  
+  deleteMobilePaymentLog: (id: string) =>
+    apiRequest<any>(`/api/billing/mobile-payment-logs/${id}`, { method: 'DELETE' }),
 };
 
 // Receivables API
