@@ -3,6 +3,7 @@
 import { useState } from "react"
 import { useAuth } from "@/lib/auth/auth-context"
 import { useRouter } from "next/navigation"
+import { Heart } from "lucide-react"
 
 export default function LoginPage() {
   const { login, isLoading } = useAuth()
@@ -39,22 +40,65 @@ export default function LoginPage() {
         borderRadius: '8px',
         boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)'
       }}>
-        <h1 style={{ 
-          fontSize: '1.5rem', 
-          fontWeight: 'bold', 
-          textAlign: 'center',
-          marginBottom: '1rem',
-          color: '#1f2937'
-        }}>
-          Kiplombe Medical Centre HMIS
-        </h1>
-        <p style={{ 
-          textAlign: 'center', 
-          color: '#6b7280',
+        {/* Logo Section */}
+        <div style={{ 
+          display: 'flex', 
+          flexDirection: 'column', 
+          alignItems: 'center', 
           marginBottom: '2rem'
         }}>
-          Hospital Management Information System
-        </p>
+          <div style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'center', 
+            marginBottom: '1rem'
+          }}>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: '64px',
+              height: '64px',
+              borderRadius: '50%',
+              backgroundColor: '#0f4c75',
+              marginRight: '12px'
+            }}>
+              <Heart style={{ 
+                width: '32px', 
+                height: '32px', 
+                color: 'white',
+                fill: 'white'
+              }} />
+            </div>
+          </div>
+          <h1 style={{ 
+            fontSize: '1.5rem', 
+            fontWeight: 'bold', 
+            textAlign: 'center',
+            marginBottom: '0.25rem',
+            color: '#0f4c75'
+          }}>
+            KIPLOMBE
+          </h1>
+          <p style={{ 
+            fontSize: '0.875rem',
+            fontWeight: '500',
+            textAlign: 'center', 
+            color: '#6b7280',
+            marginBottom: '0.125rem'
+          }}>
+            Medical Centre
+          </p>
+          <p style={{ 
+            fontSize: '0.75rem',
+            fontStyle: 'italic',
+            textAlign: 'center', 
+            color: '#9ca3af',
+            marginBottom: '0'
+          }}>
+            For Quality Healthcare Service Delivery
+          </p>
+        </div>
         
         <form onSubmit={handleSubmit} style={{ marginBottom: '1rem' }}>
           <div style={{ marginBottom: '1rem' }}>
@@ -159,10 +203,12 @@ export default function LoginPage() {
           }}>
             Test Credentials
           </h3>
-          <p style={{ fontSize: '0.75rem', color: '#6b7280' }}>
-            Username: admin<br/>
-            Password: admin123
-          </p>
+          <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
+            <p><strong>Admin:</strong> admin / admin123</p>
+            <p><strong>Doctor:</strong> doctor1 / password123</p>
+            <p><strong>Nurse:</strong> nurse1 / password123</p>
+            <p><strong>Pharmacist:</strong> pharmacist1 / password123</p>
+          </div>
         </div>
       </div>
     </div>
