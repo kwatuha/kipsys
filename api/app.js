@@ -105,6 +105,7 @@ app.use('/api/receivables', receivableRoutes);
 app.use('/api/budgets', budgetRoutes);
 app.use('/api/cash', cashRoutes);
 app.use('/api/assets', assetRoutes);
+app.use('/api/insurance', insuranceRoutes);
 // IMPORTANT: More specific routes must come before generic routes
 app.use('/api/inventory/transactions', inventoryTransactionRoutes);
 app.use('/api/inventory', inventoryRoutes);

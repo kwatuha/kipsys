@@ -1,132 +1,344 @@
 "use client"
 
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { useState, useEffect } from "react"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Badge } from "@/components/ui/badge"
+import { Search, MoreVertical, Eye, Edit, Trash2, Plus } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
+  DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu"
-import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { MoreHorizontal, Edit, Trash, FileText } from "lucide-react"
-
-interface InsuranceProvider {
-  id: string
-  name: string
-  contactPerson: string
-  email: string
-  phone: string
-  active: boolean
-}
-
-const providers: InsuranceProvider[] = [
-  {
-    id: "INS-001",
-    name: "NHIF",
-    contactPerson: "John Mwangi",
-    email: "john.mwangi@nhif.or.ke",
-    phone: "+254 712 345 678",
-    active: true,
-  },
-  {
-    id: "INS-002",
-    name: "AAR Insurance",
-    contactPerson: "Sarah Ochieng",
-    email: "sarah.o@aar.co.ke",
-    phone: "+254 723 456 789",
-    active: true,
-  },
-  {
-    id: "INS-003",
-    name: "Jubilee Insurance",
-    contactPerson: "David Kimani",
-    email: "david.k@jubilee.co.ke",
-    phone: "+254 734 567 890",
-    active: true,
-  },
-  {
-    id: "INS-004",
-    name: "Britam Insurance",
-    contactPerson: "Mary Wanjiku",
-    email: "mary.w@britam.com",
-    phone: "+254 745 678 901",
-    active: true,
-  },
-  {
-    id: "INS-005",
-    name: "CIC Insurance",
-    contactPerson: "James Omondi",
-    email: "james.o@cic.co.ke",
-    phone: "+254 756 789 012",
-    active: false,
-  },
-]
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import { insuranceApi } from "@/lib/api"
+import { toast } from "@/components/ui/use-toast"
+import { Loader2 } from "lucide-react"
+import { AddInsuranceProviderForm } from "@/components/add-insurance-provider-form"
 
 export function InsuranceProvidersTable() {
+  const [providers, setProviders] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [searchQuery, setSearchQuery] = useState("")
+  const [selectedProvider, setSelectedProvider] = useState<any>(null)
+  const [viewDialogOpen, setViewDialogOpen] = useState(false)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [deletingProvider, setDeletingProvider] = useState<any>(null)
+  const [deleteLoading, setDeleteLoading] = useState(false)
+  const [openAddForm, setOpenAddForm] = useState(false)
+  const [editingProvider, setEditingProvider] = useState<any>(null)
+
+  useEffect(() => {
+    loadProviders()
+  }, [])
+
+  const loadProviders = async () => {
+    try {
+      setLoading(true)
+      const data = await insuranceApi.getProviders()
+      setProviders(data || [])
+    } catch (error: any) {
+      console.error("Error loading providers:", error)
+      toast({
+        title: "Error loading providers",
+        description: error.message || "Failed to load insurance providers",
+        variant: "destructive",
+      })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleView = async (provider: any) => {
+    try {
+      const details = await insuranceApi.getProviderById(provider.providerId.toString())
+      setSelectedProvider(details)
+      setViewDialogOpen(true)
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to load provider details",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleEdit = (provider: any) => {
+    setEditingProvider(provider)
+    setOpenAddForm(true)
+  }
+
+  const handleDeleteClick = (provider: any) => {
+    setDeletingProvider(provider)
+    setDeleteDialogOpen(true)
+  }
+
+  const handleDeleteConfirm = async () => {
+    if (!deletingProvider) return
+
+    try {
+      setDeleteLoading(true)
+      await insuranceApi.deleteProvider(deletingProvider.providerId.toString())
+      toast({
+        title: "Success",
+        description: "Insurance provider deleted successfully",
+      })
+      setDeleteDialogOpen(false)
+      setDeletingProvider(null)
+      loadProviders()
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to delete provider",
+        variant: "destructive",
+      })
+    } finally {
+      setDeleteLoading(false)
+    }
+  }
+
+  const handleProviderSaved = () => {
+    loadProviders()
+    setEditingProvider(null)
+  }
+
+  const filteredProviders = providers.filter((provider) => {
+    if (!searchQuery) return true
+    const query = searchQuery.toLowerCase()
+    return (
+      provider.providerName?.toLowerCase().includes(query) ||
+      provider.providerCode?.toLowerCase().includes(query) ||
+      provider.contactPerson?.toLowerCase().includes(query) ||
+      provider.phone?.toLowerCase().includes(query)
+    )
+  })
+
   return (
-    <div className="rounded-md border">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Provider</TableHead>
-            <TableHead>Contact Person</TableHead>
-            <TableHead>Contact</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead className="w-[80px]"></TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {providers.map((provider) => (
-            <TableRow key={provider.id}>
-              <TableCell className="font-medium">
-                {provider.name}
-                <div className="text-xs text-muted-foreground">{provider.id}</div>
-              </TableCell>
-              <TableCell>{provider.contactPerson}</TableCell>
-              <TableCell>
-                {provider.email}
-                <div className="text-xs text-muted-foreground">{provider.phone}</div>
-              </TableCell>
-              <TableCell>
-                {provider.active ? (
-                  <Badge className="bg-green-500">Active</Badge>
-                ) : (
-                  <Badge variant="outline">Inactive</Badge>
-                )}
-              </TableCell>
-              <TableCell>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" className="h-8 w-8 p-0">
-                      <span className="sr-only">Open menu</span>
-                      <MoreHorizontal className="h-4 w-4" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                    <DropdownMenuItem>
-                      <Edit className="mr-2 h-4 w-4" />
-                      <span>Edit</span>
-                    </DropdownMenuItem>
-                    <DropdownMenuItem>
-                      <FileText className="mr-2 h-4 w-4" />
-                      <span>View Details</span>
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem>
-                      <Trash className="mr-2 h-4 w-4" />
-                      <span>Delete</span>
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </TableCell>
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="relative w-64">
+          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input
+            type="search"
+            placeholder="Search providers..."
+            className="w-full pl-8"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+        </div>
+        <Button onClick={() => {
+          setEditingProvider(null)
+          setOpenAddForm(true)
+        }}>
+          <Plus className="mr-2 h-4 w-4" />
+          Add Provider
+        </Button>
+      </div>
+
+      <div className="rounded-md border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Provider Code</TableHead>
+              <TableHead>Provider Name</TableHead>
+              <TableHead>Contact Person</TableHead>
+              <TableHead>Phone</TableHead>
+              <TableHead>Email</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
             </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {loading ? (
+              <TableRow>
+                <TableCell colSpan={7} className="text-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" />
+                  <p className="text-sm text-muted-foreground mt-2">Loading providers...</p>
+                </TableCell>
+              </TableRow>
+            ) : filteredProviders.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                  No providers found
+                </TableCell>
+              </TableRow>
+            ) : (
+              filteredProviders.map((provider) => (
+                <TableRow key={provider.providerId}>
+                  <TableCell className="font-medium">{provider.providerCode || "-"}</TableCell>
+                  <TableCell>{provider.providerName || "-"}</TableCell>
+                  <TableCell>{provider.contactPerson || "-"}</TableCell>
+                  <TableCell>{provider.phone || "-"}</TableCell>
+                  <TableCell>{provider.email || "-"}</TableCell>
+                  <TableCell>
+                    <Badge variant={provider.isActive ? "default" : "secondary"}>
+                      {provider.isActive ? "Active" : "Inactive"}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon">
+                          <MoreVertical className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => handleView(provider)}>
+                          <Eye className="mr-2 h-4 w-4" />
+                          View Details
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => handleEdit(provider)}>
+                          <Edit className="mr-2 h-4 w-4" />
+                          Edit
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          onClick={() => handleDeleteClick(provider)}
+                          className="text-destructive"
+                        >
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </div>
+
+      {selectedProvider && (
+        <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
+          <DialogContent className="sm:max-w-[600px]">
+            <DialogHeader>
+              <DialogTitle>Provider Details</DialogTitle>
+              <DialogDescription>View complete insurance provider information</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Provider Code</p>
+                  <p className="text-sm font-semibold">{selectedProvider.providerCode || "—"}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Provider Name</p>
+                  <p className="text-sm font-semibold">{selectedProvider.providerName || "—"}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Contact Person</p>
+                  <p className="text-sm">{selectedProvider.contactPerson || "—"}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Phone</p>
+                  <p className="text-sm">{selectedProvider.phone || "—"}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Email</p>
+                  <p className="text-sm">{selectedProvider.email || "—"}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Status</p>
+                  <Badge variant={selectedProvider.isActive ? "default" : "secondary"}>
+                    {selectedProvider.isActive ? "Active" : "Inactive"}
+                  </Badge>
+                </div>
+              </div>
+              {selectedProvider.address && (
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Address</p>
+                  <p className="text-sm">{selectedProvider.address}</p>
+                </div>
+              )}
+              {selectedProvider.claimsAddress && (
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Claims Address</p>
+                  <p className="text-sm">{selectedProvider.claimsAddress}</p>
+                </div>
+              )}
+              {selectedProvider.website && (
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Website</p>
+                  <p className="text-sm">{selectedProvider.website}</p>
+                </div>
+              )}
+              {selectedProvider.notes && (
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Notes</p>
+                  <p className="text-sm">{selectedProvider.notes}</p>
+                </div>
+              )}
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Provider?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this insurance provider? This action cannot be undone.
+              {deletingProvider && (
+                <div className="mt-2 p-2 bg-muted rounded">
+                  <p className="font-medium">Provider: {deletingProvider.providerCode}</p>
+                  <p className="text-sm">{deletingProvider.providerName}</p>
+                </div>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteLoading}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteConfirm}
+              disabled={deleteLoading}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {deleteLoading ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AddInsuranceProviderForm
+        open={openAddForm}
+        onOpenChange={(open: boolean) => {
+          setOpenAddForm(open)
+          if (!open) {
+            setEditingProvider(null)
+          }
+        }}
+        onSuccess={handleProviderSaved}
+        editData={editingProvider}
+      />
     </div>
   )
 }

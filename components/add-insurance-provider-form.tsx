@@ -1,153 +1,335 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useForm } from "react-hook-form"
-import * as z from "zod"
+import { z } from "zod"
+import { Loader2 } from "lucide-react"
+
 import { Button } from "@/components/ui/button"
-import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import {
+  Form,
+  FormControl,
+  FormDescription,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form"
 import { Input } from "@/components/ui/input"
-import { Checkbox } from "@/components/ui/checkbox"
+import { Textarea } from "@/components/ui/textarea"
+import { Switch } from "@/components/ui/switch"
+import { insuranceApi } from "@/lib/api"
 import { toast } from "@/components/ui/use-toast"
 
-const formSchema = z.object({
-  name: z.string().min(2, {
-    message: "Provider name must be at least 2 characters.",
+const providerFormSchema = z.object({
+  providerCode: z.string().optional(),
+  providerName: z.string().min(1, {
+    message: "Provider name is required",
   }),
-  contactPerson: z.string().min(2, {
-    message: "Contact person name must be at least 2 characters.",
-  }),
-  email: z.string().email({
-    message: "Please enter a valid email address.",
-  }),
-  phone: z.string().min(10, {
-    message: "Phone number must be at least 10 characters.",
-  }),
-  address: z.string().min(5, {
-    message: "Address must be at least 5 characters.",
-  }),
-  active: z.boolean().default(true),
+  contactPerson: z.string().optional(),
+  phone: z.string().optional(),
+  email: z.string().email().optional().or(z.literal("")),
+  address: z.string().optional(),
+  claimsAddress: z.string().optional(),
+  website: z.string().url().optional().or(z.literal("")),
+  isActive: z.boolean(),
+  notes: z.string().optional(),
 })
 
-export function AddInsuranceProviderForm() {
+type ProviderFormValues = z.infer<typeof providerFormSchema>
+
+interface AddInsuranceProviderFormProps {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onSuccess?: () => void
+  editData?: any
+}
+
+export function AddInsuranceProviderForm({
+  open,
+  onOpenChange,
+  onSuccess,
+  editData,
+}: AddInsuranceProviderFormProps) {
   const [isSubmitting, setIsSubmitting] = useState(false)
 
-  const form = useForm<z.infer<typeof formSchema>>({
-    resolver: zodResolver(formSchema),
+  const form = useForm<ProviderFormValues>({
+    resolver: zodResolver(providerFormSchema),
     defaultValues: {
-      name: "",
+      providerCode: "",
+      providerName: "",
       contactPerson: "",
-      email: "",
       phone: "",
+      email: "",
       address: "",
-      active: true,
+      claimsAddress: "",
+      website: "",
+      isActive: true,
+      notes: "",
     },
   })
 
-  function onSubmit(values: z.infer<typeof formSchema>) {
-    setIsSubmitting(true)
+  useEffect(() => {
+    if (open) {
+      if (editData) {
+        form.reset({
+          providerCode: editData.providerCode || "",
+          providerName: editData.providerName || "",
+          contactPerson: editData.contactPerson || "",
+          phone: editData.phone || "",
+          email: editData.email || "",
+          address: editData.address || "",
+          claimsAddress: editData.claimsAddress || "",
+          website: editData.website || "",
+          isActive: editData.isActive !== undefined ? editData.isActive : true,
+          notes: editData.notes || "",
+        })
+      } else {
+        form.reset({
+          providerCode: "",
+          providerName: "",
+          contactPerson: "",
+          phone: "",
+          email: "",
+          address: "",
+          claimsAddress: "",
+          website: "",
+          isActive: true,
+          notes: "",
+        })
+      }
+    }
+  }, [open, editData, form])
 
-    // Simulate API call
-    setTimeout(() => {
-      console.log(values)
-      toast({
-        title: "Provider Added",
-        description: `${values.name} has been added successfully.`,
-      })
+  async function onSubmit(data: ProviderFormValues) {
+    try {
+      setIsSubmitting(true)
+
+      const payload: any = {
+        providerName: data.providerName,
+        contactPerson: data.contactPerson || undefined,
+        phone: data.phone || undefined,
+        email: data.email || undefined,
+        address: data.address || undefined,
+        claimsAddress: data.claimsAddress || undefined,
+        website: data.website || undefined,
+        isActive: data.isActive,
+        notes: data.notes || undefined,
+      }
+
+      if (data.providerCode) {
+        payload.providerCode = data.providerCode
+      }
+
+      if (editData) {
+        await insuranceApi.updateProvider(editData.providerId.toString(), payload)
+        toast({
+          title: "Success",
+          description: "Insurance provider updated successfully",
+        })
+      } else {
+        await insuranceApi.createProvider(payload)
+        toast({
+          title: "Success",
+          description: "Insurance provider created successfully",
+        })
+      }
+
+      onOpenChange(false)
       form.reset()
+      if (onSuccess) {
+        onSuccess()
+      }
+    } catch (error: any) {
+      console.error("Error saving provider:", error)
+      toast({
+        title: "Error",
+        description: error.message || "Failed to save insurance provider",
+        variant: "destructive",
+      })
+    } finally {
       setIsSubmitting(false)
-    }, 1000)
+    }
   }
 
   return (
-    <Form {...form}>
-      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-        <FormField
-          control={form.control}
-          name="name"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Provider Name</FormLabel>
-              <FormControl>
-                <Input placeholder="e.g., NHIF" {...field} />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-        <FormField
-          control={form.control}
-          name="contactPerson"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Contact Person</FormLabel>
-              <FormControl>
-                <Input placeholder="e.g., John Mwangi" {...field} />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <FormField
-            control={form.control}
-            name="email"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Email</FormLabel>
-                <FormControl>
-                  <Input placeholder="e.g., contact@provider.co.ke" {...field} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-          <FormField
-            control={form.control}
-            name="phone"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Phone</FormLabel>
-                <FormControl>
-                  <Input placeholder="e.g., +254 712 345 678" {...field} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        </div>
-        <FormField
-          control={form.control}
-          name="address"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Address</FormLabel>
-              <FormControl>
-                <Input placeholder="e.g., P.O. Box 12345, Nairobi" {...field} />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-        <FormField
-          control={form.control}
-          name="active"
-          render={({ field }) => (
-            <FormItem className="flex flex-row items-start space-x-3 space-y-0 rounded-md border p-4">
-              <FormControl>
-                <Checkbox checked={field.value} onCheckedChange={field.onChange} />
-              </FormControl>
-              <div className="space-y-1 leading-none">
-                <FormLabel>Active</FormLabel>
-                <FormDescription>This provider is currently active and can be used for claims.</FormDescription>
-              </div>
-            </FormItem>
-          )}
-        />
-        <Button type="submit" className="w-full" disabled={isSubmitting}>
-          {isSubmitting ? "Adding..." : "Add Provider"}
-        </Button>
-      </form>
-    </Form>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{editData ? "Edit Insurance Provider" : "Add New Insurance Provider"}</DialogTitle>
+          <DialogDescription>
+            {editData ? "Update insurance provider information" : "Register a new insurance provider"}
+          </DialogDescription>
+        </DialogHeader>
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <FormField
+                control={form.control}
+                name="providerCode"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Provider Code</FormLabel>
+                    <FormControl>
+                      <Input placeholder="Auto-generated if empty" {...field} />
+                    </FormControl>
+                    <FormDescription>Optional - will be auto-generated if not provided</FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="providerName"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Provider Name *</FormLabel>
+                    <FormControl>
+                      <Input placeholder="e.g., NHIF" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+
+            <FormField
+              control={form.control}
+              name="contactPerson"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Contact Person</FormLabel>
+                  <FormControl>
+                    <Input placeholder="Contact person name" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <div className="grid grid-cols-2 gap-4">
+              <FormField
+                control={form.control}
+                name="phone"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Phone</FormLabel>
+                    <FormControl>
+                      <Input placeholder="+254 20 1234567" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="email"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Email</FormLabel>
+                    <FormControl>
+                      <Input type="email" placeholder="info@provider.com" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+
+            <FormField
+              control={form.control}
+              name="address"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Address</FormLabel>
+                  <FormControl>
+                    <Textarea placeholder="Provider address" className="min-h-[60px]" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="claimsAddress"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Claims Address</FormLabel>
+                  <FormControl>
+                    <Textarea placeholder="Claims submission address" className="min-h-[60px]" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="website"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Website</FormLabel>
+                  <FormControl>
+                    <Input type="url" placeholder="https://www.provider.com" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="isActive"
+              render={({ field }) => (
+                <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                  <div className="space-y-0.5">
+                    <FormLabel className="text-base">Active</FormLabel>
+                    <FormDescription>Enable or disable this provider</FormDescription>
+                  </div>
+                  <FormControl>
+                    <Switch checked={field.value} onCheckedChange={field.onChange} />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="notes"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Notes</FormLabel>
+                  <FormControl>
+                    <Textarea placeholder="Additional notes" className="min-h-[80px]" {...field} />
+                  </FormControl>
+                  <FormDescription>Optional</FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={isSubmitting}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isSubmitting}>
+                {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                {editData ? "Update Provider" : "Create Provider"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </Form>
+      </DialogContent>
+    </Dialog>
   )
 }

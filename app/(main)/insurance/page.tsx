@@ -1,13 +1,37 @@
+"use client"
+
+import { useState, useEffect } from "react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { PlusCircle, FileText, Users, Building, RefreshCw } from "lucide-react"
-import { AddInsuranceProviderForm } from "@/components/add-insurance-provider-form"
-import { InsuranceClaimsTable } from "@/components/insurance-claims-table"
+import { PlusCircle, FileText, Users, Building, RefreshCw, Loader2 } from "lucide-react"
 import { InsuranceProvidersTable } from "@/components/insurance-providers-table"
-import { InsurancePackagesTable } from "@/components/insurance-packages-table"
+import { insuranceApi } from "@/lib/api"
 
 export default function InsurancePage() {
+  const [stats, setStats] = useState<any>(null)
+  const [statsLoading, setStatsLoading] = useState(true)
+
+  useEffect(() => {
+    loadStats()
+  }, [])
+
+  const loadStats = async () => {
+    try {
+      setStatsLoading(true)
+      const data = await insuranceApi.getStats()
+      setStats(data)
+    } catch (error: any) {
+      console.error("Error loading stats:", error)
+    } finally {
+      setStatsLoading(false)
+    }
+  }
+
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat("en-KE", { style: "currency", currency: "KES" }).format(amount)
+  }
+
   return (
     <div className="flex flex-col gap-4 p-4 md:p-8">
       <div className="flex items-center justify-between">
@@ -16,7 +40,7 @@ export default function InsurancePage() {
           <p className="text-muted-foreground">Manage insurance providers, packages, and claims processing</p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline">
+          <Button variant="outline" onClick={loadStats}>
             <RefreshCw className="mr-2 h-4 w-4" />
             Refresh
           </Button>
@@ -27,7 +51,7 @@ export default function InsurancePage() {
         </div>
       </div>
 
-      <Tabs defaultValue="claims" className="w-full">
+      <Tabs defaultValue="providers" className="w-full">
         <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="claims">Claims</TabsTrigger>
           <TabsTrigger value="providers">Providers</TabsTrigger>
@@ -42,8 +66,10 @@ export default function InsurancePage() {
                 <FileText className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">1,248</div>
-                <p className="text-xs text-muted-foreground">+12% from last month</p>
+                <div className="text-2xl font-bold">
+                  {statsLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : stats?.pendingClaims + stats?.approvedClaims || 0}
+                </div>
+                <p className="text-xs text-muted-foreground">All claims</p>
               </CardContent>
             </Card>
             <Card>
@@ -52,8 +78,10 @@ export default function InsurancePage() {
                 <FileText className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">342</div>
-                <p className="text-xs text-muted-foreground">-4% from last month</p>
+                <div className="text-2xl font-bold">
+                  {statsLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : stats?.pendingClaims || 0}
+                </div>
+                <p className="text-xs text-muted-foreground">Awaiting processing</p>
               </CardContent>
             </Card>
             <Card>
@@ -62,12 +90,22 @@ export default function InsurancePage() {
                 <FileText className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">4.2M</div>
-                <p className="text-xs text-muted-foreground">+8% from last month</p>
+                <div className="text-2xl font-bold">
+                  {statsLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : formatCurrency(parseFloat(stats?.totalApprovedAmount || 0))}
+                </div>
+                <p className="text-xs text-muted-foreground">Total approved amount</p>
               </CardContent>
             </Card>
           </div>
-          <InsuranceClaimsTable />
+          <Card>
+            <CardHeader>
+              <CardTitle>Insurance Claims</CardTitle>
+              <CardDescription>Claims functionality coming soon</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <p className="text-muted-foreground">Claims management will be available in a future update.</p>
+            </CardContent>
+          </Card>
         </TabsContent>
         <TabsContent value="providers" className="space-y-4">
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -77,42 +115,65 @@ export default function InsurancePage() {
                 <Building className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">24</div>
+                <div className="text-2xl font-bold">
+                  {statsLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : stats?.activeProviders || 0}
+                </div>
               </CardContent>
             </Card>
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Covered Patients</CardTitle>
+                <CardTitle className="text-sm font-medium">Active Policies</CardTitle>
                 <Users className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">8,942</div>
-              </CardContent>
-            </Card>
-          </div>
-          <div className="grid gap-4 md:grid-cols-2">
-            <Card>
-              <CardHeader>
-                <CardTitle>Insurance Providers</CardTitle>
-                <CardDescription>Manage all insurance providers</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <InsuranceProvidersTable />
+                <div className="text-2xl font-bold">
+                  {statsLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : stats?.activePolicies || 0}
+                </div>
               </CardContent>
             </Card>
             <Card>
-              <CardHeader>
-                <CardTitle>Add New Provider</CardTitle>
-                <CardDescription>Register a new insurance provider</CardDescription>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Pending Claims</CardTitle>
+                <FileText className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <AddInsuranceProviderForm />
+                <div className="text-2xl font-bold">
+                  {statsLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : stats?.pendingClaims || 0}
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Approved Claims</CardTitle>
+                <FileText className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  {statsLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : stats?.approvedClaims || 0}
+                </div>
               </CardContent>
             </Card>
           </div>
+          <Card>
+            <CardHeader>
+              <CardTitle>Insurance Providers</CardTitle>
+              <CardDescription>Manage all insurance providers</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <InsuranceProvidersTable />
+            </CardContent>
+          </Card>
         </TabsContent>
         <TabsContent value="packages" className="space-y-4">
-          <InsurancePackagesTable />
+          <Card>
+            <CardHeader>
+              <CardTitle>Insurance Packages</CardTitle>
+              <CardDescription>Packages functionality coming soon</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <p className="text-muted-foreground">Insurance packages management will be available in a future update.</p>
+            </CardContent>
+          </Card>
         </TabsContent>
         <TabsContent value="reports" className="space-y-4">
           <Card>

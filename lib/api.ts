@@ -1028,6 +1028,56 @@ export const assetApi = {
     apiRequest<any>('/api/assets/stats/summary'),
 };
 
+// Insurance Management API
+export const insuranceApi = {
+  // Providers
+  getProviders: (status?: string, providerType?: string, search?: string) => {
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    if (providerType) params.append('providerType', providerType);
+    if (search) params.append('search', search);
+    return apiRequest<any[]>(`/api/insurance/providers?${params.toString()}`);
+  },
+  
+  getProviderById: (id: string) =>
+    apiRequest<any>(`/api/insurance/providers/${id}`),
+  
+  createProvider: (data: any) =>
+    apiRequest<any>('/api/insurance/providers', { method: 'POST', body: data }),
+  
+  updateProvider: (id: string, data: any) =>
+    apiRequest<any>(`/api/insurance/providers/${id}`, { method: 'PUT', body: data }),
+  
+  deleteProvider: (id: string) =>
+    apiRequest<any>(`/api/insurance/providers/${id}`, { method: 'DELETE' }),
+  
+  // Policies
+  getPolicies: (patientId?: string, providerId?: string, status?: string, search?: string) => {
+    const params = new URLSearchParams();
+    if (patientId) params.append('patientId', patientId);
+    if (providerId) params.append('providerId', providerId);
+    if (status) params.append('status', status);
+    if (search) params.append('search', search);
+    return apiRequest<any[]>(`/api/insurance/policies?${params.toString()}`);
+  },
+  
+  getPolicyById: (id: string) =>
+    apiRequest<any>(`/api/insurance/policies/${id}`),
+  
+  createPolicy: (data: any) =>
+    apiRequest<any>('/api/insurance/policies', { method: 'POST', body: data }),
+  
+  updatePolicy: (id: string, data: any) =>
+    apiRequest<any>(`/api/insurance/policies/${id}`, { method: 'PUT', body: data }),
+  
+  deletePolicy: (id: string) =>
+    apiRequest<any>(`/api/insurance/policies/${id}`, { method: 'DELETE' }),
+  
+  // Statistics
+  getStats: () =>
+    apiRequest<any>('/api/insurance/stats/summary'),
+};
+
 // User API
 export const userApi = {
   getAll: () =>
