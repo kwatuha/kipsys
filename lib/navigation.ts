@@ -50,7 +50,7 @@ export interface NavigationCategory {
 export const navigationCategories: NavigationCategory[] = [
   {
     id: "overview",
-    title: "Overview",
+    title: "Dashboard",
     icon: Home,
     description: "Main dashboard and overview sections",
     items: [
