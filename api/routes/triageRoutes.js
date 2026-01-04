@@ -94,7 +94,8 @@ router.post('/', async (req, res) => {
 
         const { 
             patientId, chiefComplaint, temperature, bloodPressure, heartRate, 
-            respiratoryRate, oxygenSaturation, painLevel, priority, notes, triagedBy 
+            respiratoryRate, oxygenSaturation, painLevel, priority, notes, triagedBy,
+            assignedToDoctorId, assignedToDepartment, servicePoint
         } = req.body;
 
         // Validate required fields
@@ -143,9 +144,9 @@ router.post('/', async (req, res) => {
         const [result] = await connection.query(
             `INSERT INTO triage_assessments (
                 triageNumber, patientId, triageDate, chiefComplaint, triageCategory, 
-                priorityLevel, status, notes, triagedBy
+                priorityLevel, status, notes, triagedBy, assignedToDoctorId, assignedToDepartment
             )
-            VALUES (?, ?, NOW(), ?, ?, ?, 'pending', ?, ?)`,
+            VALUES (?, ?, NOW(), ?, ?, ?, 'pending', ?, ?, ?, ?)`,
             [
                 triageNumber,
                 patientId,
@@ -153,7 +154,9 @@ router.post('/', async (req, res) => {
                 triageCategory,
                 priorityLevel,
                 notes || null,
-                triagedByUserId
+                triagedByUserId,
+                assignedToDoctorId || null,
+                assignedToDepartment || null
             ]
         );
 
@@ -178,6 +181,35 @@ router.post('/', async (req, res) => {
                     oxygenSaturation ? parseFloat(oxygenSaturation) : null,
                     painLevel ? parseInt(painLevel) : null,
                     triageId,
+                    triagedByUserId
+                ]
+            );
+        }
+
+        // After triage completion, create queue entry for cashier (consultation fees payment)
+        if (servicePoint) {
+            // Determine queue priority based on triage category
+            let queuePriority = 'normal';
+            if (triageCategory === 'red') queuePriority = 'emergency';
+            else if (triageCategory === 'yellow') queuePriority = 'urgent';
+
+            // Generate ticket number for cashier queue
+            const [cashierCount] = await connection.query(
+                'SELECT COUNT(*) as count FROM queue_entries WHERE DATE(arrivalTime) = CURDATE() AND servicePoint = "cashier"'
+            );
+            const cashierTicketNum = cashierCount[0].count + 1;
+            const cashierTicketNumber = `C-${String(cashierTicketNum).padStart(3, '0')}`;
+
+            // Create queue entry for cashier (consultation fees payment)
+            await connection.query(
+                `INSERT INTO queue_entries 
+                (patientId, ticketNumber, servicePoint, priority, status, notes, createdBy)
+                VALUES (?, ?, 'cashier', ?, 'waiting', ?, ?)`,
+                [
+                    patientId,
+                    cashierTicketNumber,
+                    queuePriority,
+                    `Consultation fees payment - Service: ${servicePoint}`,
                     triagedByUserId
                 ]
             );

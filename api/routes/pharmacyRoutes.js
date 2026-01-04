@@ -376,6 +376,122 @@ router.post('/prescriptions', async (req, res) => {
             }
         }
 
+        // After prescription creation, create invoice and queue entry for cashier (drug payment)
+        // Only create if prescription has items with quantity (drugs in inventory)
+        const itemsWithQuantity = items.filter(item => item.quantity !== null && item.quantity > 0);
+        const hasItemsInInventory = itemsWithQuantity.length > 0;
+        
+        if (hasItemsInInventory) {
+            // Calculate total amount for invoice by getting prices from drug_inventory
+            let totalAmount = 0;
+            const invoiceItems = [];
+
+            for (const item of itemsWithQuantity) {
+                if (item.medicationId) {
+                    try {
+                        // Get the minimum sellPrice from drug_inventory for this medication
+                        const [pricing] = await connection.execute(
+                            `SELECT MIN(di.sellPrice) as minSellPrice
+                             FROM drug_inventory di
+                             WHERE di.medicationId = ? AND di.quantity > 0
+                             GROUP BY di.medicationId`,
+                            [item.medicationId]
+                        );
+
+                        if (pricing.length > 0 && pricing[0].minSellPrice) {
+                            const unitPrice = parseFloat(pricing[0].minSellPrice);
+                            const quantity = parseInt(item.quantity);
+                            const itemTotal = unitPrice * quantity;
+                            totalAmount += itemTotal;
+
+                            // Get medication name
+                            let medicationName = item.medicationName || 'Unknown';
+                            if (!medicationName || medicationName === 'Unknown') {
+                                const [medRows] = await connection.execute(
+                                    'SELECT name FROM medications WHERE medicationId = ?',
+                                    [item.medicationId]
+                                );
+                                if (medRows.length > 0 && medRows[0].name) {
+                                    medicationName = medRows[0].name;
+                                }
+                            }
+
+                            invoiceItems.push({
+                                medicationId: item.medicationId,
+                                description: medicationName,
+                                quantity: quantity,
+                                unitPrice: unitPrice,
+                                totalPrice: itemTotal
+                            });
+                        }
+                    } catch (error) {
+                        console.error(`Error fetching pricing for medication ${item.medicationId}:`, error);
+                    }
+                }
+            }
+
+            // Create invoice if we have items with pricing
+            if (invoiceItems.length > 0 && totalAmount > 0) {
+                // Generate invoice number
+                const [invoiceCount] = await connection.execute(
+                    'SELECT COUNT(*) as count FROM invoices WHERE DATE(invoiceDate) = CURDATE()'
+                );
+                const invoiceNum = invoiceCount[0].count + 1;
+                const invoiceNumber = `INV-${new Date().toISOString().split('T')[0].replace(/-/g, '')}-${String(invoiceNum).padStart(4, '0')}`;
+
+                // Create invoice
+                const [invoiceResult] = await connection.execute(
+                    `INSERT INTO invoices (invoiceNumber, patientId, invoiceDate, totalAmount, balance, status, notes, createdBy)
+                     VALUES (?, ?, CURDATE(), ?, ?, 'pending', ?, ?)`,
+                    [
+                        invoiceNumber,
+                        patientId,
+                        totalAmount,
+                        totalAmount, // balance = totalAmount initially
+                        `Drug payment - Prescription: ${prescNumber}`,
+                        userId || null
+                    ]
+                );
+
+                const invoiceId = invoiceResult.insertId;
+
+                // Create invoice items
+                for (const invoiceItem of invoiceItems) {
+                    await connection.execute(
+                        `INSERT INTO invoice_items (invoiceId, description, quantity, unitPrice, totalPrice)
+                         VALUES (?, ?, ?, ?, ?)`,
+                        [
+                            invoiceId,
+                            invoiceItem.description,
+                            invoiceItem.quantity,
+                            invoiceItem.unitPrice,
+                            invoiceItem.totalPrice
+                        ]
+                    );
+                }
+
+                // Generate ticket number for cashier queue
+                const [cashierCount] = await connection.execute(
+                    'SELECT COUNT(*) as count FROM queue_entries WHERE DATE(arrivalTime) = CURDATE() AND servicePoint = "cashier"'
+                );
+                const cashierTicketNum = cashierCount[0].count + 1;
+                const cashierTicketNumber = `C-${String(cashierTicketNum).padStart(3, '0')}`;
+
+                // Create queue entry for cashier (drug payment)
+                await connection.execute(
+                    `INSERT INTO queue_entries 
+                    (patientId, ticketNumber, servicePoint, priority, status, notes, createdBy)
+                    VALUES (?, ?, 'cashier', 'normal', 'waiting', ?, ?)`,
+                    [
+                        patientId,
+                        cashierTicketNumber,
+                        `Drug payment - Prescription: ${prescNumber}`,
+                        userId || null
+                    ]
+                );
+            }
+        }
+
         await connection.commit();
 
         const [newPrescription] = await connection.execute(

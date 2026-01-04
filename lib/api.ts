@@ -504,6 +504,37 @@ export const appointmentsApi = {
     apiRequest<any>(`/api/appointments/${id}`, { method: 'DELETE' }),
 };
 
+// Workflow API
+export const workflowApi = {
+  // After triage, create cashier queue for consultation fees
+  triageToCashier: (data: any) =>
+    apiRequest<any>('/api/workflow/triage-to-cashier', { method: 'POST', body: data }),
+  
+  // After payment, create consultation queue
+  cashierToConsultation: (data: any) =>
+    apiRequest<any>('/api/workflow/cashier-to-consultation', { method: 'POST', body: data }),
+  
+  // After consultation, send to lab
+  consultationToLab: (data: any) =>
+    apiRequest<any>('/api/workflow/consultation-to-lab', { method: 'POST', body: data }),
+  
+  // After prescription, create cashier queue for drug payment
+  prescriptionToCashier: (data: any) =>
+    apiRequest<any>('/api/workflow/prescription-to-cashier', { method: 'POST', body: data }),
+  
+  // After drug payment, create pharmacy queue
+  cashierToPharmacy: (data: any) =>
+    apiRequest<any>('/api/workflow/cashier-to-pharmacy', { method: 'POST', body: data }),
+  
+  // Get time summary for a queue entry
+  getQueueTimeSummary: (queueId: string) =>
+    apiRequest<any>(`/api/workflow/queue/${queueId}/time-summary`),
+  
+  // Get patient queue history with time tracking
+  getPatientQueueHistory: (patientId: string) =>
+    apiRequest<any[]>(`/api/workflow/patients/${patientId}/queue-history`),
+};
+
 // Queue API
 export const queueApi = {
   getAll: (servicePoint?: string, status?: string, page = 1, limit = 50) =>
@@ -787,6 +818,22 @@ export const serviceChargeApi = {
   
   delete: (id: string) =>
     apiRequest<any>(`/api/billing/charges/${id}`, { method: 'DELETE' }),
+};
+
+// Billing/Invoice API
+export const billingApi = {
+  getInvoices: (patientId?: string, status?: string) => {
+    const params = new URLSearchParams();
+    if (patientId) params.append('patientId', patientId);
+    if (status) params.append('status', status);
+    return apiRequest<any[]>(`/api/billing/invoices?${params.toString()}`);
+  },
+  
+  getInvoiceById: (id: string) =>
+    apiRequest<any>(`/api/billing/invoices/${id}`),
+  
+  getPendingInvoicesForPatient: (patientId: string) =>
+    apiRequest<any[]>(`/api/billing/invoices/patient/${patientId}/pending`),
 };
 
 // Payables API

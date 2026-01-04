@@ -218,12 +218,16 @@ router.delete('/charges/:id', async (req, res) => {
 // Invoices
 router.get('/invoices', async (req, res) => {
     try {
-        const { patientId } = req.query;
+        const { patientId, status } = req.query;
         let query = 'SELECT * FROM invoices WHERE 1=1';
         const params = [];
         if (patientId) {
             query += ' AND patientId = ?';
             params.push(patientId);
+        }
+        if (status) {
+            query += ' AND status = ?';
+            params.push(status);
         }
         query += ' ORDER BY invoiceDate DESC';
         const [rows] = await pool.execute(query, params);
@@ -231,6 +235,91 @@ router.get('/invoices', async (req, res) => {
     } catch (error) {
         console.error('Error fetching invoices:', error);
         res.status(500).json({ message: 'Error fetching invoices', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/billing/invoices/:id
+ * @description Get a single invoice by ID with items
+ */
+router.get('/invoices/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        // Get invoice
+        const [invoices] = await pool.execute(
+            `SELECT i.*, 
+                    p.firstName as patientFirstName, p.lastName as patientLastName,
+                    p.patientNumber, p.phone as patientPhone
+             FROM invoices i
+             LEFT JOIN patients p ON i.patientId = p.patientId
+             WHERE i.invoiceId = ?`,
+            [id]
+        );
+        
+        if (invoices.length === 0) {
+            return res.status(404).json({ message: 'Invoice not found' });
+        }
+        
+        // Get invoice items
+        const [items] = await pool.execute(
+            `SELECT ii.*, sc.name as chargeName, sc.chargeCode
+             FROM invoice_items ii
+             LEFT JOIN service_charges sc ON ii.chargeId = sc.chargeId
+             WHERE ii.invoiceId = ?
+             ORDER BY ii.itemId`,
+            [id]
+        );
+        
+        res.status(200).json({
+            ...invoices[0],
+            items: items
+        });
+    } catch (error) {
+        console.error('Error fetching invoice:', error);
+        res.status(500).json({ message: 'Error fetching invoice', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/billing/invoices/patient/:patientId/pending
+ * @description Get pending invoices for a patient
+ */
+router.get('/invoices/patient/:patientId/pending', async (req, res) => {
+    try {
+        const { patientId } = req.params;
+        
+        const [invoices] = await pool.execute(
+            `SELECT i.*, 
+                    p.firstName as patientFirstName, p.lastName as patientLastName,
+                    p.patientNumber
+             FROM invoices i
+             LEFT JOIN patients p ON i.patientId = p.patientId
+             WHERE i.patientId = ? AND i.status IN ('pending', 'partial')
+             ORDER BY i.invoiceDate DESC`,
+            [patientId]
+        );
+        
+        // Get items for each invoice
+        const invoicesWithItems = await Promise.all(invoices.map(async (invoice) => {
+            const [items] = await pool.execute(
+                `SELECT ii.*, sc.name as chargeName, sc.chargeCode
+                 FROM invoice_items ii
+                 LEFT JOIN service_charges sc ON ii.chargeId = sc.chargeId
+                 WHERE ii.invoiceId = ?
+                 ORDER BY ii.itemId`,
+                [invoice.invoiceId]
+            );
+            return {
+                ...invoice,
+                items: items
+            };
+        }));
+        
+        res.status(200).json(invoicesWithItems);
+    } catch (error) {
+        console.error('Error fetching pending invoices:', error);
+        res.status(500).json({ message: 'Error fetching pending invoices', error: error.message });
     }
 });
 

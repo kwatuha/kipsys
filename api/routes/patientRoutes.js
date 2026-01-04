@@ -104,6 +104,32 @@ router.post('/', async (req, res) => {
             ]
         );
 
+        // After patient registration, create queue entry for cashier (registration fees payment)
+        try {
+            // Generate ticket number for cashier queue
+            const [cashierCount] = await pool.execute(
+                'SELECT COUNT(*) as count FROM queue_entries WHERE DATE(arrivalTime) = CURDATE() AND servicePoint = "cashier"'
+            );
+            const cashierTicketNum = cashierCount[0].count + 1;
+            const cashierTicketNumber = `C-${String(cashierTicketNum).padStart(3, '0')}`;
+
+            // Create queue entry for cashier (registration fees payment)
+            await pool.execute(
+                `INSERT INTO queue_entries 
+                (patientId, ticketNumber, servicePoint, priority, status, notes, createdBy)
+                VALUES (?, ?, 'cashier', 'normal', 'waiting', ?, ?)`,
+                [
+                    result.insertId,
+                    cashierTicketNumber,
+                    'Registration fees payment',
+                    userId || null
+                ]
+            );
+        } catch (queueError) {
+            // Log error but don't fail patient registration if queue creation fails
+            console.error('Error creating cashier queue after patient registration:', queueError);
+        }
+
         const [newPatient] = await pool.execute(
             'SELECT * FROM patients WHERE patientId = ?',
             [result.insertId]

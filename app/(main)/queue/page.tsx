@@ -36,8 +36,9 @@ import { Label } from "@/components/ui/label"
 import { AddToQueueForm } from "@/components/add-to-queue-form"
 import { queueApi } from "@/lib/api"
 import { toast } from "@/components/ui/use-toast"
-import { Search, Plus, Edit, Trash2, MoreHorizontal, Loader2, ArrowRight, Monitor, Users } from "lucide-react"
+import { Search, Plus, Edit, Trash2, MoreHorizontal, Loader2, ArrowRight, Monitor, Users, Receipt } from "lucide-react"
 import Link from "next/link"
+import { ViewBillDialog } from "@/components/view-bill-dialog"
 
 const servicePoints = [
   { value: "triage", label: "Triage" },
@@ -66,7 +67,8 @@ const priorities = [
 
 export default function QueueManagement() {
   const [isMounted, setIsMounted] = useState(false)
-  const [queues, setQueues] = useState<any[]>([])
+  const [allQueues, setAllQueues] = useState<any[]>([]) // Unfiltered queues for summary stats
+  const [queues, setQueues] = useState<any[]>([]) // Filtered queues for display
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState("")
   const [servicePointFilter, setServicePointFilter] = useState<string | null>(null)
@@ -78,16 +80,34 @@ export default function QueueManagement() {
   const [newStatus, setNewStatus] = useState<string>("")
   const [deleteLoading, setDeleteLoading] = useState(false)
   const [statusLoading, setStatusLoading] = useState(false)
+  const [viewingBill, setViewingBill] = useState<any>(null)
 
   useEffect(() => {
     setIsMounted(true)
   }, [])
 
+  // Load all queues for summary stats
+  useEffect(() => {
+    if (isMounted) {
+      loadAllQueues()
+    }
+  }, [isMounted])
+
+  // Load filtered queues for display
   useEffect(() => {
     if (isMounted) {
       loadQueues()
     }
   }, [isMounted, servicePointFilter, statusFilter])
+
+  const loadAllQueues = async () => {
+    try {
+      const data = await queueApi.getAll(undefined, undefined)
+      setAllQueues(data || [])
+    } catch (error: any) {
+      console.error("Error loading all queues:", error)
+    }
+  }
 
   const loadQueues = async () => {
     try {
@@ -117,7 +137,8 @@ export default function QueueManagement() {
         description: "Queue entry has been deleted successfully.",
       })
       setDeletingQueue(null)
-      loadQueues()
+      await loadAllQueues() // Update summary stats
+      loadQueues() // Update filtered view
     } catch (error: any) {
       console.error("Error deleting queue entry:", error)
       toast({
@@ -142,7 +163,8 @@ export default function QueueManagement() {
       })
       setChangingStatus(null)
       setNewStatus("")
-      loadQueues()
+      await loadAllQueues() // Update summary stats
+      loadQueues() // Update filtered view
     } catch (error: any) {
       console.error("Error updating status:", error)
       toast({
@@ -226,11 +248,11 @@ export default function QueueManagement() {
     }
   }
 
-  // Calculate summary statistics
+  // Calculate summary statistics from all queues (unfiltered)
   const summaryStats = useMemo(() => {
     const stats: Record<string, { total: number; waiting: number; serving: number }> = {}
     servicePoints.forEach((sp) => {
-      const serviceQueues = queues.filter((q) => q.servicePoint === sp.value)
+      const serviceQueues = allQueues.filter((q) => q.servicePoint === sp.value)
       stats[sp.value] = {
         total: serviceQueues.length,
         waiting: serviceQueues.filter((q) => q.status === "waiting").length,
@@ -238,11 +260,11 @@ export default function QueueManagement() {
       }
     })
     return stats
-  }, [queues])
+  }, [allQueues])
 
-  const totalInQueue = queues.filter((q) => q.status === "waiting" || q.status === "called").length
-  const emergencyCount = queues.filter((q) => q.priority === "emergency" && (q.status === "waiting" || q.status === "called")).length
-  const urgentCount = queues.filter((q) => q.priority === "urgent" && (q.status === "waiting" || q.status === "called")).length
+  const totalInQueue = allQueues.filter((q) => q.status === "waiting" || q.status === "called").length
+  const emergencyCount = allQueues.filter((q) => q.priority === "emergency" && (q.status === "waiting" || q.status === "called")).length
+  const urgentCount = allQueues.filter((q) => q.priority === "urgent" && (q.status === "waiting" || q.status === "called")).length
 
   if (!isMounted) {
     return (
@@ -387,6 +409,12 @@ export default function QueueManagement() {
                                 </Button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
+                                {queue.servicePoint === "cashier" && (
+                                  <DropdownMenuItem onClick={() => setViewingBill(queue)}>
+                                    <Receipt className="mr-2 h-4 w-4" />
+                                    View Bill
+                                  </DropdownMenuItem>
+                                )}
                                 <DropdownMenuItem onClick={() => handleEdit(queue)}>
                                   <Edit className="mr-2 h-4 w-4" />
                                   Edit
@@ -431,8 +459,15 @@ export default function QueueManagement() {
                 <div className="grid grid-cols-2 gap-2">
                   {servicePoints.map((sp) => {
                     const stats = summaryStats[sp.value] || { total: 0, waiting: 0, serving: 0 }
+                    const isSelected = servicePointFilter === sp.value
                     return (
-                      <div key={sp.value} className="rounded-lg border p-3">
+                      <button
+                        key={sp.value}
+                        onClick={() => setServicePointFilter(isSelected ? null : sp.value)}
+                        className={`rounded-lg border p-3 text-left transition-colors hover:bg-accent hover:border-primary cursor-pointer ${
+                          isSelected ? "border-primary bg-accent" : ""
+                        }`}
+                      >
                         <div className="text-xs font-medium text-muted-foreground">{sp.label}</div>
                         <div className="mt-1 flex items-center justify-between">
                           <div className="text-2xl font-bold">{stats.total}</div>
@@ -440,7 +475,7 @@ export default function QueueManagement() {
                             {stats.waiting} waiting, {stats.serving} serving
                           </div>
                         </div>
-                      </div>
+                      </button>
                     )
                   })}
                 </div>
@@ -503,12 +538,22 @@ export default function QueueManagement() {
       <AddToQueueForm
         open={addQueueOpen}
         onOpenChange={handleCloseForm}
-        onSuccess={() => {
-          loadQueues()
+        onSuccess={async () => {
+          await loadAllQueues() // Update summary stats
+          loadQueues() // Update filtered view
           setEditingQueue(null)
         }}
         queueEntry={editingQueue}
       />
+
+      {viewingBill && (
+        <ViewBillDialog
+          open={!!viewingBill}
+          onOpenChange={(open) => !open && setViewingBill(null)}
+          patientId={viewingBill.patientId}
+          queueNotes={viewingBill.notes}
+        />
+      )}
 
       <AlertDialog open={!!deletingQueue} onOpenChange={(open) => !open && setDeletingQueue(null)}>
         <AlertDialogContent>

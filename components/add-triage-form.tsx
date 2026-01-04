@@ -20,7 +20,7 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { PatientCombobox } from "@/components/patient-combobox"
-import { triageApi } from "@/lib/api"
+import { triageApi, doctorsApi } from "@/lib/api"
 import { toast } from "@/components/ui/use-toast"
 import { useAuth } from "@/lib/auth/auth-context"
 
@@ -31,31 +31,33 @@ const triageFormSchema = z.object({
   chiefComplaint: z.string().min(2, {
     message: "Chief complaint must be at least 2 characters.",
   }),
-  temperature: z.string().regex(/^\d+(\.\d+)?$/, {
-    message: "Please enter a valid temperature.",
-  }),
-  bloodPressure: z.string().regex(/^\d+\/\d+$/, {
-    message: "Please enter a valid blood pressure (e.g., 120/80).",
-  }),
-  heartRate: z.string().regex(/^\d+$/, {
-    message: "Please enter a valid heart rate.",
-  }),
-  respiratoryRate: z.string().regex(/^\d+$/, {
-    message: "Please enter a valid respiratory rate.",
-  }),
-  oxygenSaturation: z.string().regex(/^\d+$/, {
-    message: "Please enter a valid oxygen saturation.",
-  }),
-  painLevel: z.string().regex(/^([0-9]|10)$/, {
-    message: "Please enter a valid pain level (0-10).",
-  }),
+  temperature: z.string().optional().or(z.literal("")),
+  bloodPressure: z.string().optional().or(z.literal("")),
+  heartRate: z.string().optional().or(z.literal("")),
+  respiratoryRate: z.string().optional().or(z.literal("")),
+  oxygenSaturation: z.string().optional().or(z.literal("")),
+  painLevel: z.string().optional().or(z.literal("")),
   priority: z.string({
     required_error: "Please select a priority level.",
+  }),
+  assignedToDoctorId: z.string({
+    required_error: "Please select a doctor or service point.",
+  }),
+  assignedToDepartment: z.string().optional(),
+  servicePoint: z.string({
+    required_error: "Please select a service point.",
   }),
   notes: z.string().optional(),
 })
 
 type TriageFormValues = z.infer<typeof triageFormSchema>
+
+const SERVICE_POINTS = [
+  { value: "consultation", label: "Consultation" },
+  { value: "laboratory", label: "Laboratory" },
+  { value: "radiology", label: "Radiology" },
+  { value: "pharmacy", label: "Pharmacy" },
+]
 
 const defaultValues: Partial<TriageFormValues> = {
   patientId: "",
@@ -67,6 +69,9 @@ const defaultValues: Partial<TriageFormValues> = {
   oxygenSaturation: "",
   painLevel: "",
   priority: "",
+  assignedToDoctorId: "",
+  assignedToDepartment: "",
+  servicePoint: "consultation",
   notes: "",
 }
 
@@ -83,6 +88,8 @@ export function AddTriageForm({
 }) {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [doctors, setDoctors] = useState<any[]>([])
+  const [loadingDoctors, setLoadingDoctors] = useState(false)
   const isEditing = !!triage
   const { user } = useAuth()
 
@@ -90,6 +97,25 @@ export function AddTriageForm({
     resolver: zodResolver(triageFormSchema),
     defaultValues,
   })
+
+  // Load doctors when form opens
+  useEffect(() => {
+    if (open) {
+      loadDoctors()
+    }
+  }, [open])
+
+  const loadDoctors = async () => {
+    try {
+      setLoadingDoctors(true)
+      const doctorsData = await doctorsApi.getAll()
+      setDoctors(doctorsData)
+    } catch (error) {
+      console.error("Error loading doctors:", error)
+    } finally {
+      setLoadingDoctors(false)
+    }
+  }
 
   // Populate form when editing
   useEffect(() => {
@@ -131,6 +157,9 @@ export function AddTriageForm({
         oxygenSaturation: data.oxygenSaturation || null,
         painLevel: data.painLevel || null,
         priority: data.priority,
+        assignedToDoctorId: data.assignedToDoctorId ? parseInt(data.assignedToDoctorId) : null,
+        assignedToDepartment: data.assignedToDepartment || null,
+        servicePoint: data.servicePoint,
         notes: data.notes || null,
         triagedBy: user?.id ? parseInt(user.id) : 68, // Use current user ID or default to 68 (first doctor)
       }
@@ -330,6 +359,62 @@ export function AddTriageForm({
                     </SelectContent>
                   </Select>
                   <FormDescription>Based on the patient's condition and vital signs</FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="servicePoint"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Service Point *</FormLabel>
+                  <Select onValueChange={field.onChange} defaultValue={field.value || "consultation"}>
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select service point" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {SERVICE_POINTS.map((sp) => (
+                        <SelectItem key={sp.value} value={sp.value}>
+                          {sp.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormDescription>Where the patient should be sent after triage</FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="assignedToDoctorId"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Assigned Doctor/Service *</FormLabel>
+                  <Select 
+                    onValueChange={field.onChange} 
+                    value={field.value || ""}
+                    disabled={loadingDoctors}
+                  >
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder={loadingDoctors ? "Loading doctors..." : "Select doctor"} />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {doctors.map((doctor) => (
+                        <SelectItem key={doctor.userId} value={doctor.userId.toString()}>
+                          {doctor.firstName} {doctor.lastName} {doctor.department ? `(${doctor.department})` : ''}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormDescription>Doctor or service the patient should see</FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
