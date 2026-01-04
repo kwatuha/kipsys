@@ -968,6 +968,40 @@ export const budgetApi = {
     apiRequest<any>('/api/budgets/stats/summary'),
 };
 
+// Cash Management API
+export const cashApi = {
+  getTransactions: (transactionType?: string, startDate?: string, endDate?: string, search?: string) => {
+    const params = new URLSearchParams();
+    if (transactionType) params.append('transactionType', transactionType);
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    if (search) params.append('search', search);
+    return apiRequest<any[]>(`/api/cash/transactions?${params.toString()}`);
+  },
+  
+  getTransactionById: (id: string) =>
+    apiRequest<any>(`/api/cash/transactions/${id}`),
+  
+  createTransaction: (data: any) =>
+    apiRequest<any>('/api/cash/transactions', { method: 'POST', body: data }),
+  
+  updateTransaction: (id: string, data: any) =>
+    apiRequest<any>(`/api/cash/transactions/${id}`, { method: 'PUT', body: data }),
+  
+  deleteTransaction: (id: string) =>
+    apiRequest<any>(`/api/cash/transactions/${id}`, { method: 'DELETE' }),
+  
+  getAccounts: (status?: string, search?: string) => {
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    if (search) params.append('search', search);
+    return apiRequest<any[]>(`/api/cash/accounts?${params.toString()}`);
+  },
+  
+  getStats: () =>
+    apiRequest<any>('/api/cash/stats/summary'),
+};
+
 // User API
 export const userApi = {
   getAll: () =>
