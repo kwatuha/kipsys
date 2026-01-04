@@ -3,7 +3,11 @@
 import { useState } from "react"
 import { useAuth } from "@/lib/auth/auth-context"
 import { useRouter } from "next/navigation"
-import { Heart } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Card, CardContent, CardHeader } from "@/components/ui/card"
+import { AlertCircle, Loader2, Heart } from "lucide-react"
 
 export default function LoginPage() {
   const { login, isLoading } = useAuth()
@@ -24,193 +28,123 @@ export default function LoginPage() {
   }
 
   return (
-    <div style={{ 
-      minHeight: '100vh', 
-      display: 'flex', 
-      alignItems: 'center', 
-      justifyContent: 'center',
-      backgroundColor: '#f0f9ff',
-      padding: '1rem'
-    }}>
-      <div style={{ 
-        maxWidth: '400px', 
-        width: '100%',
-        backgroundColor: 'white',
-        padding: '2rem',
-        borderRadius: '8px',
-        boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)'
-      }}>
-        {/* Logo Section */}
-        <div style={{ 
-          display: 'flex', 
-          flexDirection: 'column', 
-          alignItems: 'center', 
-          marginBottom: '2rem'
-        }}>
-          <div style={{ 
-            display: 'flex', 
-            alignItems: 'center', 
-            justifyContent: 'center', 
-            marginBottom: '1rem'
-          }}>
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: '64px',
-              height: '64px',
-              borderRadius: '50%',
-              backgroundColor: '#0f4c75',
-              marginRight: '12px'
-            }}>
-              <Heart style={{ 
-                width: '32px', 
-                height: '32px', 
-                color: 'white',
-                fill: 'white'
-              }} />
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-blue-100 p-4">
+      <div className="w-full max-w-md">
+        <Card className="shadow-xl border-0 bg-white/95 backdrop-blur-sm">
+          <CardHeader className="space-y-6 pb-8">
+            <div className="flex justify-center">
+              <div className="flex flex-col items-center space-y-4">
+                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-[#0f4c75] to-[#3282b8] shadow-lg">
+                  <Heart className="h-8 w-8 text-white" fill="white" />
+                </div>
+                <div className="text-center space-y-2">
+                  <h1 className="text-2xl font-bold text-[#0f4c75] tracking-tight">
+                    Kiplombe Medical Centre
+                  </h1>
+                  <p className="text-sm text-muted-foreground">
+                    Hospital Management Information System
+                  </p>
+                  <p className="text-xs text-muted-foreground/80 italic pt-1">
+                    For Quality Healthcare Service Delivery
+                  </p>
+                </div>
+              </div>
             </div>
-          </div>
-          <h1 style={{ 
-            fontSize: '1.5rem', 
-            fontWeight: 'bold', 
-            textAlign: 'center',
-            marginBottom: '0.25rem',
-            color: '#0f4c75'
-          }}>
-            KIPLOMBE
-          </h1>
-          <p style={{ 
-            fontSize: '0.875rem',
-            fontWeight: '500',
-            textAlign: 'center', 
-            color: '#6b7280',
-            marginBottom: '0.125rem'
-          }}>
-            Medical Centre
-          </p>
-          <p style={{ 
-            fontSize: '0.75rem',
-            fontStyle: 'italic',
-            textAlign: 'center', 
-            color: '#9ca3af',
-            marginBottom: '0'
-          }}>
-            For Quality Healthcare Service Delivery
-          </p>
-        </div>
-        
-        <form onSubmit={handleSubmit} style={{ marginBottom: '1rem' }}>
-          <div style={{ marginBottom: '1rem' }}>
-            <label style={{ 
-              display: 'block', 
-              fontSize: '0.875rem', 
-              fontWeight: '500',
-              marginBottom: '0.5rem',
-              color: '#374151'
-            }}>
-              Username
-            </label>
-            <input
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              style={{
-                width: '100%',
-                padding: '0.5rem',
-                border: '1px solid #d1d5db',
-                borderRadius: '4px',
-                fontSize: '0.875rem'
-              }}
-              placeholder="Enter username"
-              autoComplete="username"
-              disabled={isLoading}
-            />
-          </div>
+          </CardHeader>
           
-          <div style={{ marginBottom: '1rem' }}>
-            <label style={{ 
-              display: 'block', 
-              fontSize: '0.875rem', 
-              fontWeight: '500',
-              marginBottom: '0.5rem',
-              color: '#374151'
-            }}>
-              Password
-            </label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              style={{
-                width: '100%',
-                padding: '0.5rem',
-                border: '1px solid #d1d5db',
-                borderRadius: '4px',
-                fontSize: '0.875rem'
-              }}
-              placeholder="Enter password"
-              autoComplete="current-password"
-              disabled={isLoading}
-            />
-          </div>
-          
-          <button
-            type="submit"
-            style={{
-              width: '100%',
-              backgroundColor: '#2563eb',
-              color: 'white',
-              padding: '0.75rem',
-              border: 'none',
-              borderRadius: '4px',
-              fontSize: '0.875rem',
-              fontWeight: '500',
-              cursor: isLoading ? 'not-allowed' : 'pointer',
-              opacity: isLoading ? 0.7 : 1
-            }}
-            disabled={isLoading}
-          >
-            {isLoading ? 'Signing In...' : 'Sign In'}
-          </button>
-        </form>
-        
-        {error && (
-          <div style={{
-            padding: '0.75rem',
-            backgroundColor: '#fef2f2',
-            border: '1px solid #fecaca',
-            borderRadius: '4px',
-            fontSize: '0.875rem',
-            color: '#dc2626',
-            marginBottom: '1rem'
-          }}>
-            {error}
-          </div>
-        )}
-        
-        <div style={{ 
-          marginTop: '1rem',
-          padding: '1rem', 
-          backgroundColor: '#f3f4f6', 
-          borderRadius: '4px'
-        }}>
-          <h3 style={{ 
-            fontSize: '0.875rem', 
-            fontWeight: '500', 
-            marginBottom: '0.5rem',
-            color: '#374151'
-          }}>
-            Test Credentials
-          </h3>
-          <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
-            <p><strong>Admin:</strong> admin / admin123</p>
-            <p><strong>Doctor:</strong> doctor1 / password123</p>
-            <p><strong>Nurse:</strong> nurse1 / password123</p>
-            <p><strong>Pharmacist:</strong> pharmacist1 / password123</p>
-          </div>
-        </div>
+          <CardContent className="space-y-6">
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="username" className="text-sm font-medium">
+                  Username
+                </Label>
+                <Input
+                  id="username"
+                  type="text"
+                  placeholder="Enter your username"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  disabled={isLoading}
+                  className="h-11"
+                  autoComplete="username"
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="password" className="text-sm font-medium">
+                  Password
+                </Label>
+                <Input
+                  id="password"
+                  type="password"
+                  placeholder="Enter your password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  disabled={isLoading}
+                  className="h-11"
+                  autoComplete="current-password"
+                />
+              </div>
+              
+              {error && (
+                <div className="flex items-center gap-2 rounded-md bg-destructive/10 border border-destructive/20 p-3 text-sm text-destructive">
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  <span>{error}</span>
+                </div>
+              )}
+              
+              <Button
+                type="submit"
+                className="w-full h-11 text-base font-medium"
+                disabled={isLoading}
+              >
+                {isLoading ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Signing In...
+                  </>
+                ) : (
+                  "Sign In"
+                )}
+              </Button>
+            </form>
+            
+            <div className="pt-4 border-t">
+              <div className="rounded-lg bg-muted/50 p-4 space-y-3">
+                <h3 className="text-sm font-semibold text-foreground">
+                  Test Credentials
+                </h3>
+                <div className="space-y-2.5 text-xs">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
+                    <span className="font-medium text-foreground">Admin:</span>
+                    <code className="px-2.5 py-1 rounded-md bg-background border text-xs font-mono text-foreground">
+                      admin / admin123
+                    </code>
+                  </div>
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
+                    <span className="font-medium text-foreground">Doctor:</span>
+                    <code className="px-2.5 py-1 rounded-md bg-background border text-xs font-mono text-foreground">
+                      doctor1 / password123
+                    </code>
+                  </div>
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
+                    <span className="font-medium text-foreground">Nurse:</span>
+                    <code className="px-2.5 py-1 rounded-md bg-background border text-xs font-mono text-foreground">
+                      nurse1 / password123
+                    </code>
+                  </div>
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
+                    <span className="font-medium text-foreground">Pharmacist:</span>
+                    <code className="px-2.5 py-1 rounded-md bg-background border text-xs font-mono text-foreground">
+                      pharmacist1 / password123
+                    </code>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     </div>
   )
-} 
+}
