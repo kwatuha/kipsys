@@ -1159,6 +1159,7 @@ export default function TriagingPage() {
           </DialogContent>
         </Dialog>
       )}
+
     </div>
   )
 }

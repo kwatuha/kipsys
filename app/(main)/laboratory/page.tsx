@@ -6,12 +6,12 @@ import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
-import { Search, Plus, Download, Loader2, MoreVertical, Eye, CheckCircle, XCircle, FlaskConical, Edit, FileText } from "lucide-react"
+import { Search, Plus, Download, Loader2, MoreVertical, Eye, CheckCircle, XCircle, FlaskConical, Edit, FileText, AlertTriangle, Trash2, Settings } from "lucide-react"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { AddTestRequestForm } from "@/components/add-test-request-form"
 import { laboratoryApi } from "@/lib/api"
 import { format } from "date-fns"
 import { toast } from "@/components/ui/use-toast"
-import { Textarea } from "@/components/ui/textarea"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -50,6 +50,8 @@ export default function LaboratoryPage() {
   const [error, setError] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState<string>("")
   const [search, setSearch] = useState("")
+  const [criticalResults, setCriticalResults] = useState<any[]>([])
+  const [criticalPatientIds, setCriticalPatientIds] = useState<Set<number>>(new Set())
   
   // Order actions state
   const [viewOrderOpen, setViewOrderOpen] = useState(false)
@@ -78,8 +80,24 @@ export default function LaboratoryPage() {
     }
   }
 
+  const loadCriticalResults = async () => {
+    try {
+      const data = await laboratoryApi.getCriticalResults()
+      console.log('Critical results data:', data)
+      setCriticalResults(data)
+      // Create a set of patient IDs with critical results
+      const patientIds = new Set(data.map((result: any) => result.patientId))
+      console.log('Critical patient IDs:', Array.from(patientIds))
+      setCriticalPatientIds(patientIds)
+    } catch (err: any) {
+      console.error('Error loading critical results:', err)
+      // Don't show error to user, just log it
+    }
+  }
+
   useEffect(() => {
     loadOrders()
+    loadCriticalResults()
   }, [statusFilter])
 
   const filteredOrders = labOrders.filter((order) => {
@@ -264,6 +282,7 @@ export default function LaboratoryPage() {
       setOrderForResults(null)
       setOrderItems([])
       await loadOrders()
+      await loadCriticalResults() // Reload critical results after saving
     } catch (err: any) {
       const errorMessage = err.message || 'Failed to save results'
       setError(errorMessage)
@@ -471,14 +490,28 @@ export default function LaboratoryPage() {
                           </TableCell>
                         </TableRow>
                       ) : (
-                        filteredOrders.map((order) => (
-                          <TableRow key={order.orderId}>
+                        filteredOrders.map((order) => {
+                          const hasCriticalResults = criticalPatientIds.has(order.patientId)
+                          return (
+                          <TableRow 
+                            key={order.orderId}
+                            className={hasCriticalResults ? "bg-red-50 hover:bg-red-100 border-l-4 border-l-red-600" : ""}
+                          >
                             <TableCell className="font-medium">{order.orderNumber}</TableCell>
                             <TableCell>
-                              {getPatientName(order)}
-                              {order.patientNumber && (
-                                <div className="text-xs text-muted-foreground">{order.patientNumber}</div>
-                              )}
+                              <div className="flex items-center gap-2">
+                                {hasCriticalResults && (
+                                  <span className="inline-block h-3 w-3 rounded-full bg-red-600" title="Patient has critical test results requiring urgent attention" />
+                                )}
+                                <div>
+                                  <span className={hasCriticalResults ? "font-semibold text-red-700" : ""}>
+                                    {getPatientName(order)}
+                                  </span>
+                                  {order.patientNumber && (
+                                    <div className="text-xs text-muted-foreground">{order.patientNumber}</div>
+                                  )}
+                                </div>
+                              </div>
                             </TableCell>
                             <TableCell className="max-w-xs truncate">
                               {order.clinicalIndication || "-"}
@@ -564,7 +597,8 @@ export default function LaboratoryPage() {
                               </DropdownMenu>
                             </TableCell>
                           </TableRow>
-                        ))
+                          )
+                        })
                       )}
                     </TableBody>
                   </Table>
@@ -631,7 +665,9 @@ export default function LaboratoryPage() {
             </CardContent>
           </Card>
         </TabsContent>
-      </Tabs>
+
+        </Tabs>
+
 
       <AddTestRequestForm 
         open={addTestRequestOpen} 

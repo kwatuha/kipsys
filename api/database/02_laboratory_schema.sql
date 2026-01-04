@@ -125,3 +125,40 @@ CREATE TABLE IF NOT EXISTS lab_samples (
     INDEX idx_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Critical value ranges configuration
+-- This table defines critical value ranges for specific test parameters
+-- Values outside these ranges indicate life-threatening conditions requiring immediate medical attention
+CREATE TABLE IF NOT EXISTS lab_critical_value_ranges (
+    criticalRangeId INT NOT NULL AUTO_INCREMENT,
+    testTypeId INT NOT NULL,
+    parameterName VARCHAR(200) NOT NULL, -- e.g., "Hemoglobin", "Potassium", "Creatinine"
+    unit VARCHAR(50), -- e.g., "g/dL", "mmol/L", "mg/dL"
+    criticalLowValue DECIMAL(10, 2) NULL, -- Critical if value is BELOW this (e.g., Hemoglobin < 7.0)
+    criticalHighValue DECIMAL(10, 2) NULL, -- Critical if value is ABOVE this (e.g., Potassium > 6.5)
+    description TEXT, -- Description of why this range is critical
+    isActive BOOLEAN DEFAULT TRUE,
+    createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (criticalRangeId),
+    FOREIGN KEY (testTypeId) REFERENCES lab_test_types(testTypeId) ON DELETE CASCADE,
+    INDEX idx_test_type (testTypeId),
+    INDEX idx_parameter (parameterName),
+    INDEX idx_active (isActive)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Legacy table - kept for backward compatibility but deprecated
+-- Use lab_critical_value_ranges instead
+CREATE TABLE IF NOT EXISTS lab_critical_tests (
+    criticalTestId INT NOT NULL AUTO_INCREMENT,
+    testTypeId INT NOT NULL,
+    description TEXT,
+    isActive BOOLEAN DEFAULT TRUE,
+    createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (criticalTestId),
+    FOREIGN KEY (testTypeId) REFERENCES lab_test_types(testTypeId) ON DELETE CASCADE,
+    UNIQUE KEY unique_critical_test (testTypeId),
+    INDEX idx_test_type (testTypeId),
+    INDEX idx_active (isActive)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+

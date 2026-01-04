@@ -60,3 +60,22 @@ CREATE TABLE IF NOT EXISTS vital_signs (
     INDEX idx_triage (triageId)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Critical vital sign ranges configuration
+-- This table defines critical value ranges for vital signs
+-- Values outside these ranges indicate life-threatening conditions requiring immediate medical attention
+CREATE TABLE IF NOT EXISTS critical_vital_ranges (
+    criticalVitalId INT NOT NULL AUTO_INCREMENT,
+    vitalParameter VARCHAR(100) NOT NULL, -- e.g., "systolicBP", "diastolicBP", "heartRate", "temperature", "oxygenSaturation", "respiratoryRate", "glasgowComaScale"
+    unit VARCHAR(50), -- e.g., "mmHg", "bpm", "°C", "%"
+    criticalLowValue DECIMAL(10, 2) NULL, -- Critical if value is BELOW this
+    criticalHighValue DECIMAL(10, 2) NULL, -- Critical if value is ABOVE this
+    description TEXT, -- Description of why this range is critical
+    isActive BOOLEAN DEFAULT TRUE,
+    createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (criticalVitalId),
+    UNIQUE KEY unique_vital_parameter (vitalParameter),
+    INDEX idx_parameter (vitalParameter),
+    INDEX idx_active (isActive)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+

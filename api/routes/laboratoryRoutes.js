@@ -660,4 +660,366 @@ router.put('/results/:resultId', async (req, res) => {
     }
 });
 
+/**
+ * @route GET /api/laboratory/critical-results
+ * @description Get all patients with critical test results that require urgent attention
+ */
+router.get('/critical-results', async (req, res) => {
+    try {
+        const query = `
+            SELECT DISTINCT
+                p.patientId,
+                p.patientNumber,
+                p.firstName,
+                p.lastName,
+                p.phone,
+                p.dateOfBirth,
+                p.gender,
+                lo.orderId,
+                lo.orderNumber,
+                lo.orderDate,
+                ltt.testTypeId,
+                ltt.testCode,
+                ltt.testName,
+                ltr.resultId,
+                ltr.testDate,
+                ltr.status as resultStatus,
+                ltr.notes as resultNotes,
+                GROUP_CONCAT(DISTINCT CONCAT(lrv.parameterName, ': ', lrv.value, ' (', lrv.flag, ')') SEPARATOR '; ') as criticalValues
+            FROM patients p
+            INNER JOIN lab_test_orders lo ON p.patientId = lo.patientId
+            INNER JOIN lab_test_order_items loi ON lo.orderId = loi.orderId
+            INNER JOIN lab_test_types ltt ON loi.testTypeId = ltt.testTypeId
+            INNER JOIN lab_test_results ltr ON loi.itemId = ltr.orderItemId
+            INNER JOIN lab_result_values lrv ON ltr.resultId = lrv.resultId
+            INNER JOIN lab_critical_value_ranges lcvr ON ltt.testTypeId = lcvr.testTypeId 
+                AND lrv.parameterName = lcvr.parameterName
+            WHERE lcvr.isActive = 1
+                AND ltr.status IN ('verified', 'released')
+                AND (
+                    (lcvr.criticalLowValue IS NOT NULL AND CAST(lrv.value AS DECIMAL(10,2)) < lcvr.criticalLowValue)
+                    OR
+                    (lcvr.criticalHighValue IS NOT NULL AND CAST(lrv.value AS DECIMAL(10,2)) > lcvr.criticalHighValue)
+                )
+            GROUP BY p.patientId, lo.orderId, ltt.testTypeId, ltr.resultId
+            ORDER BY ltr.testDate DESC, p.lastName, p.firstName
+        `;
+
+        const [rows] = await pool.execute(query);
+        res.status(200).json(rows);
+    } catch (error) {
+        console.error('Error fetching critical results:', error);
+        res.status(500).json({ message: 'Error fetching critical results', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/laboratory/critical-tests
+ * @description Get all critical test configurations
+ */
+router.get('/critical-tests', async (req, res) => {
+    try {
+        const query = `
+            SELECT lct.*, ltt.testCode, ltt.testName, ltt.category
+            FROM lab_critical_tests lct
+            INNER JOIN lab_test_types ltt ON lct.testTypeId = ltt.testTypeId
+            ORDER BY ltt.testName
+        `;
+        const [rows] = await pool.execute(query);
+        res.status(200).json(rows);
+    } catch (error) {
+        console.error('Error fetching critical tests:', error);
+        res.status(500).json({ message: 'Error fetching critical tests', error: error.message });
+    }
+});
+
+/**
+ * @route POST /api/laboratory/critical-tests
+ * @description Add a test type to critical tests list
+ */
+router.post('/critical-tests', async (req, res) => {
+    try {
+        const { testTypeId, description } = req.body;
+        
+        if (!testTypeId) {
+            return res.status(400).json({ message: 'testTypeId is required' });
+        }
+
+        // Check if test type exists
+        const [testType] = await pool.execute(
+            'SELECT testTypeId FROM lab_test_types WHERE testTypeId = ? AND isActive = 1',
+            [testTypeId]
+        );
+
+        if (testType.length === 0) {
+            return res.status(404).json({ message: 'Test type not found' });
+        }
+
+        // Check if already exists
+        const [existing] = await pool.execute(
+            'SELECT criticalTestId FROM lab_critical_tests WHERE testTypeId = ?',
+            [testTypeId]
+        );
+
+        if (existing.length > 0) {
+            return res.status(400).json({ message: 'Test type is already marked as critical' });
+        }
+
+        // Insert new critical test
+        const [result] = await pool.execute(
+            'INSERT INTO lab_critical_tests (testTypeId, description, isActive) VALUES (?, ?, 1)',
+            [testTypeId, description || null]
+        );
+
+        // Fetch the created record
+        const [newCriticalTest] = await pool.execute(
+            `SELECT lct.*, ltt.testCode, ltt.testName, ltt.category
+             FROM lab_critical_tests lct
+             INNER JOIN lab_test_types ltt ON lct.testTypeId = ltt.testTypeId
+             WHERE lct.criticalTestId = ?`,
+            [result.insertId]
+        );
+
+        res.status(201).json(newCriticalTest[0]);
+    } catch (error) {
+        console.error('Error creating critical test:', error);
+        res.status(500).json({ message: 'Error creating critical test', error: error.message });
+    }
+});
+
+/**
+ * @route DELETE /api/laboratory/critical-tests/:id
+ * @description Remove a test type from critical tests list
+ */
+router.delete('/critical-tests/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // Check if exists
+        const [existing] = await pool.execute(
+            'SELECT criticalTestId FROM lab_critical_tests WHERE criticalTestId = ?',
+            [id]
+        );
+
+        if (existing.length === 0) {
+            return res.status(404).json({ message: 'Critical test configuration not found' });
+        }
+
+        // Delete (not soft delete for now, but could be changed to UPDATE isActive = 0)
+        await pool.execute(
+            'DELETE FROM lab_critical_tests WHERE criticalTestId = ?',
+            [id]
+        );
+
+        res.status(200).json({ message: 'Critical test configuration removed successfully', criticalTestId: id });
+    } catch (error) {
+        console.error('Error deleting critical test:', error);
+        res.status(500).json({ message: 'Error deleting critical test', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/laboratory/critical-value-ranges
+ * @description Get all critical value range configurations
+ */
+router.get('/critical-value-ranges', async (req, res) => {
+    try {
+        const query = `
+            SELECT lcvr.*, ltt.testCode, ltt.testName, ltt.category
+            FROM lab_critical_value_ranges lcvr
+            INNER JOIN lab_test_types ltt ON lcvr.testTypeId = ltt.testTypeId
+            WHERE lcvr.isActive = 1
+            ORDER BY ltt.testName, lcvr.parameterName
+        `;
+        const [rows] = await pool.execute(query);
+        res.status(200).json(rows);
+    } catch (error) {
+        console.error('Error fetching critical value ranges:', error);
+        res.status(500).json({ message: 'Error fetching critical value ranges', error: error.message });
+    }
+});
+
+/**
+ * @route POST /api/laboratory/critical-value-ranges
+ * @description Add a new critical value range
+ */
+router.post('/critical-value-ranges', async (req, res) => {
+    try {
+        const { testTypeId, parameterName, unit, criticalLowValue, criticalHighValue, description } = req.body;
+        
+        if (!testTypeId || !parameterName) {
+            return res.status(400).json({ message: 'testTypeId and parameterName are required' });
+        }
+
+        if (criticalLowValue === null && criticalHighValue === null) {
+            return res.status(400).json({ message: 'At least one of criticalLowValue or criticalHighValue must be provided' });
+        }
+
+        // Check if test type exists
+        const [testType] = await pool.execute(
+            'SELECT testTypeId FROM lab_test_types WHERE testTypeId = ? AND isActive = 1',
+            [testTypeId]
+        );
+
+        if (testType.length === 0) {
+            return res.status(404).json({ message: 'Test type not found' });
+        }
+
+        // Insert new critical value range
+        const [result] = await pool.execute(
+            'INSERT INTO lab_critical_value_ranges (testTypeId, parameterName, unit, criticalLowValue, criticalHighValue, description, isActive) VALUES (?, ?, ?, ?, ?, ?, 1)',
+            [testTypeId, parameterName, unit || null, criticalLowValue || null, criticalHighValue || null, description || null]
+        );
+
+        // Fetch the created record
+        const [newRange] = await pool.execute(
+            `SELECT lcvr.*, ltt.testCode, ltt.testName, ltt.category
+             FROM lab_critical_value_ranges lcvr
+             INNER JOIN lab_test_types ltt ON lcvr.testTypeId = ltt.testTypeId
+             WHERE lcvr.criticalRangeId = ?`,
+            [result.insertId]
+        );
+
+        res.status(201).json(newRange[0]);
+    } catch (error) {
+        console.error('Error creating critical value range:', error);
+        res.status(500).json({ message: 'Error creating critical value range', error: error.message });
+    }
+});
+
+/**
+ * @route PUT /api/laboratory/critical-value-ranges/:id
+ * @description Update a critical value range
+ */
+router.put('/critical-value-ranges/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { parameterName, unit, criticalLowValue, criticalHighValue, description, isActive } = req.body;
+
+        // Check if exists
+        const [existing] = await pool.execute(
+            'SELECT criticalRangeId FROM lab_critical_value_ranges WHERE criticalRangeId = ?',
+            [id]
+        );
+
+        if (existing.length === 0) {
+            return res.status(404).json({ message: 'Critical value range not found' });
+        }
+
+        // Build update query
+        const updates = [];
+        const values = [];
+
+        if (parameterName !== undefined) { updates.push('parameterName = ?'); values.push(parameterName); }
+        if (unit !== undefined) { updates.push('unit = ?'); values.push(unit || null); }
+        if (criticalLowValue !== undefined) { updates.push('criticalLowValue = ?'); values.push(criticalLowValue || null); }
+        if (criticalHighValue !== undefined) { updates.push('criticalHighValue = ?'); values.push(criticalHighValue || null); }
+        if (description !== undefined) { updates.push('description = ?'); values.push(description || null); }
+        if (isActive !== undefined) { updates.push('isActive = ?'); values.push(isActive); }
+
+        if (updates.length === 0) {
+            return res.status(400).json({ message: 'No fields to update' });
+        }
+
+        values.push(id);
+
+        await pool.execute(
+            `UPDATE lab_critical_value_ranges SET ${updates.join(', ')}, updatedAt = NOW() WHERE criticalRangeId = ?`,
+            values
+        );
+
+        // Fetch updated record
+        const [updated] = await pool.execute(
+            `SELECT lcvr.*, ltt.testCode, ltt.testName, ltt.category
+             FROM lab_critical_value_ranges lcvr
+             INNER JOIN lab_test_types ltt ON lcvr.testTypeId = ltt.testTypeId
+             WHERE lcvr.criticalRangeId = ?`,
+            [id]
+        );
+
+        res.status(200).json(updated[0]);
+    } catch (error) {
+        console.error('Error updating critical value range:', error);
+        res.status(500).json({ message: 'Error updating critical value range', error: error.message });
+    }
+});
+
+/**
+ * @route DELETE /api/laboratory/critical-value-ranges/:id
+ * @description Delete a critical value range
+ */
+router.delete('/critical-value-ranges/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // Check if exists
+        const [existing] = await pool.execute(
+            'SELECT criticalRangeId FROM lab_critical_value_ranges WHERE criticalRangeId = ?',
+            [id]
+        );
+
+        if (existing.length === 0) {
+            return res.status(404).json({ message: 'Critical value range not found' });
+        }
+
+        // Delete
+        await pool.execute(
+            'DELETE FROM lab_critical_value_ranges WHERE criticalRangeId = ?',
+            [id]
+        );
+
+        res.status(200).json({ message: 'Critical value range deleted successfully', criticalRangeId: id });
+    } catch (error) {
+        console.error('Error deleting critical value range:', error);
+        res.status(500).json({ message: 'Error deleting critical value range', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/laboratory/critical-results/:patientId
+ * @description Get critical test results for a specific patient
+ */
+router.get('/critical-results/:patientId', async (req, res) => {
+    try {
+        const { patientId } = req.params;
+        const query = `
+            SELECT DISTINCT
+                lo.orderId,
+                lo.orderNumber,
+                lo.orderDate,
+                ltt.testTypeId,
+                ltt.testCode,
+                ltt.testName,
+                ltr.resultId,
+                ltr.testDate,
+                ltr.status as resultStatus,
+                ltr.notes as resultNotes,
+                lrv.valueId,
+                lrv.parameterName,
+                lrv.value,
+                lrv.unit,
+                lrv.normalRange,
+                lrv.flag,
+                lrv.notes
+            FROM lab_test_orders lo
+            INNER JOIN lab_test_order_items loi ON lo.orderId = loi.orderId
+            INNER JOIN lab_test_types ltt ON loi.testTypeId = ltt.testTypeId
+            INNER JOIN lab_critical_tests lct ON ltt.testTypeId = lct.testTypeId
+            INNER JOIN lab_test_results ltr ON loi.itemId = ltr.orderItemId
+            INNER JOIN lab_result_values lrv ON ltr.resultId = lrv.resultId
+            WHERE lo.patientId = ?
+                AND lct.isActive = 1
+                AND lrv.flag = 'critical'
+                AND ltr.status IN ('verified', 'released')
+            ORDER BY ltr.testDate DESC, ltt.testName
+        `;
+
+        const [rows] = await pool.execute(query, [patientId]);
+        res.status(200).json(rows);
+    } catch (error) {
+        console.error('Error fetching patient critical results:', error);
+        res.status(500).json({ message: 'Error fetching patient critical results', error: error.message });
+    }
+});
+
 module.exports = router;

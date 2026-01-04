@@ -204,6 +204,36 @@ export const laboratoryApi = {
   
   updateResult: (resultId: string, data: any) =>
     apiRequest<any>(`/api/laboratory/results/${resultId}`, { method: 'PUT', body: data }),
+
+  // Critical Results API
+  getCriticalResults: () =>
+    apiRequest<any[]>(`/api/laboratory/critical-results`),
+  
+  getPatientCriticalResults: (patientId: string) =>
+    apiRequest<any[]>(`/api/laboratory/critical-results/${patientId}`),
+
+  // Critical Tests Management API (deprecated - use critical value ranges instead)
+  getCriticalTests: () =>
+    apiRequest<any[]>(`/api/laboratory/critical-tests`),
+  
+  addCriticalTest: (data: { testTypeId: number, description?: string }) =>
+    apiRequest<any>(`/api/laboratory/critical-tests`, { method: 'POST', body: data }),
+  
+  removeCriticalTest: (id: string) =>
+    apiRequest<any>(`/api/laboratory/critical-tests/${id}`, { method: 'DELETE' }),
+
+  // Critical Value Ranges API
+  getCriticalValueRanges: () =>
+    apiRequest<any[]>(`/api/laboratory/critical-value-ranges`),
+  
+  createCriticalValueRange: (data: { testTypeId: number, parameterName: string, unit?: string, criticalLowValue?: number, criticalHighValue?: number, description?: string }) =>
+    apiRequest<any>(`/api/laboratory/critical-value-ranges`, { method: 'POST', body: data }),
+  
+  updateCriticalValueRange: (id: string, data: { parameterName?: string, unit?: string, criticalLowValue?: number, criticalHighValue?: number, description?: string, isActive?: boolean }) =>
+    apiRequest<any>(`/api/laboratory/critical-value-ranges/${id}`, { method: 'PUT', body: data }),
+  
+  deleteCriticalValueRange: (id: string) =>
+    apiRequest<any>(`/api/laboratory/critical-value-ranges/${id}`, { method: 'DELETE' }),
 };
 
 // Inpatient API
@@ -375,6 +405,19 @@ export const triageApi = {
   
   updateOrder: (id: string, data: any) =>
     apiRequest<any>(`/api/radiology/orders/${id}`, { method: 'PUT', body: data }),
+
+  // Critical Vital Ranges API
+  getCriticalVitalRanges: () =>
+    apiRequest<any[]>(`/api/triage/critical-vital-ranges`),
+  
+  createCriticalVitalRange: (data: { vitalParameter: string, unit?: string, criticalLowValue?: number, criticalHighValue?: number, description?: string }) =>
+    apiRequest<any>(`/api/triage/critical-vital-ranges`, { method: 'POST', body: data }),
+  
+  updateCriticalVitalRange: (id: string, data: { vitalParameter?: string, unit?: string, criticalLowValue?: number, criticalHighValue?: number, description?: string, isActive?: boolean }) =>
+    apiRequest<any>(`/api/triage/critical-vital-ranges/${id}`, { method: 'PUT', body: data }),
+  
+  deleteCriticalVitalRange: (id: string) =>
+    apiRequest<any>(`/api/triage/critical-vital-ranges/${id}`, { method: 'DELETE' }),
 };
 
 // Medical Records API

@@ -265,6 +265,11 @@ export const navigationCategories: NavigationCategory[] = [
         href: "/administration",
       },
       {
+        title: "Clinical Configuration",
+        icon: ClipboardList,
+        href: "/configuration",
+      },
+      {
         title: "Settings",
         icon: Settings,
         href: "/settings",

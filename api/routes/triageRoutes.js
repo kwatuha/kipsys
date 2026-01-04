@@ -51,6 +51,25 @@ router.get('/', async (req, res) => {
 });
 
 /**
+ * @route GET /api/triage/critical-vital-ranges
+ * @description Get all critical vital sign range configurations
+ */
+router.get('/critical-vital-ranges', async (req, res) => {
+    try {
+        const query = `
+            SELECT * FROM critical_vital_ranges
+            WHERE isActive = 1
+            ORDER BY vitalParameter
+        `;
+        const [rows] = await pool.execute(query);
+        res.status(200).json(rows);
+    } catch (error) {
+        console.error('Error fetching critical vital ranges:', error);
+        res.status(500).json({ message: 'Error fetching critical vital ranges', error: error.message });
+    }
+});
+
+/**
  * @route GET /api/triage/:id
  * @description Get a single triage record
  */
@@ -416,50 +435,152 @@ router.put('/:id', async (req, res) => {
 });
 
 /**
- * @route DELETE /api/triage/:id
- * @description Delete a triage record
+ * @route GET /api/triage/critical-vital-ranges
+ * @description Get all critical vital sign range configurations
  */
-router.delete('/:id', async (req, res) => {
-    const connection = await pool.getConnection();
+router.get('/critical-vital-ranges', async (req, res) => {
     try {
-        await connection.beginTransaction();
+        const query = `
+            SELECT * FROM critical_vital_ranges
+            WHERE isActive = 1
+            ORDER BY vitalParameter
+        `;
+        const [rows] = await pool.execute(query);
+        res.status(200).json(rows);
+    } catch (error) {
+        console.error('Error fetching critical vital ranges:', error);
+        res.status(500).json({ message: 'Error fetching critical vital ranges', error: error.message });
+    }
+});
 
+/**
+ * @route POST /api/triage/critical-vital-ranges
+ * @description Add a new critical vital sign range
+ */
+router.post('/critical-vital-ranges', async (req, res) => {
+    try {
+        const { vitalParameter, unit, criticalLowValue, criticalHighValue, description } = req.body;
+        
+        if (!vitalParameter) {
+            return res.status(400).json({ message: 'vitalParameter is required' });
+        }
+
+        if (criticalLowValue === null && criticalHighValue === null) {
+            return res.status(400).json({ message: 'At least one of criticalLowValue or criticalHighValue must be provided' });
+        }
+
+        // Check if already exists
+        const [existing] = await pool.execute(
+            'SELECT criticalVitalId FROM critical_vital_ranges WHERE vitalParameter = ?',
+            [vitalParameter]
+        );
+
+        if (existing.length > 0) {
+            return res.status(400).json({ message: 'Critical range for this vital parameter already exists' });
+        }
+
+        // Insert new critical vital range
+        const [result] = await pool.execute(
+            'INSERT INTO critical_vital_ranges (vitalParameter, unit, criticalLowValue, criticalHighValue, description, isActive) VALUES (?, ?, ?, ?, ?, 1)',
+            [vitalParameter, unit || null, criticalLowValue || null, criticalHighValue || null, description || null]
+        );
+
+        // Fetch the created record
+        const [newRange] = await pool.execute(
+            'SELECT * FROM critical_vital_ranges WHERE criticalVitalId = ?',
+            [result.insertId]
+        );
+
+        res.status(201).json(newRange[0]);
+    } catch (error) {
+        console.error('Error creating critical vital range:', error);
+        res.status(500).json({ message: 'Error creating critical vital range', error: error.message });
+    }
+});
+
+/**
+ * @route PUT /api/triage/critical-vital-ranges/:id
+ * @description Update a critical vital sign range
+ */
+router.put('/critical-vital-ranges/:id', async (req, res) => {
+    try {
         const { id } = req.params;
+        const { vitalParameter, unit, criticalLowValue, criticalHighValue, description, isActive } = req.body;
 
-        // Check if triage exists
-        const [existing] = await connection.query(
-            'SELECT * FROM triage_assessments WHERE triageId = ?',
+        // Check if exists
+        const [existing] = await pool.execute(
+            'SELECT criticalVitalId FROM critical_vital_ranges WHERE criticalVitalId = ?',
             [id]
         );
 
         if (existing.length === 0) {
-            await connection.rollback();
-            return res.status(404).json({ message: 'Triage record not found' });
+            return res.status(404).json({ message: 'Critical vital range not found' });
         }
 
-        // Delete associated vital signs first
-        await connection.query(
-            'DELETE FROM vital_signs WHERE triageId = ?',
+        // Build update query
+        const updates = [];
+        const values = [];
+
+        if (vitalParameter !== undefined) { updates.push('vitalParameter = ?'); values.push(vitalParameter); }
+        if (unit !== undefined) { updates.push('unit = ?'); values.push(unit || null); }
+        if (criticalLowValue !== undefined) { updates.push('criticalLowValue = ?'); values.push(criticalLowValue || null); }
+        if (criticalHighValue !== undefined) { updates.push('criticalHighValue = ?'); values.push(criticalHighValue || null); }
+        if (description !== undefined) { updates.push('description = ?'); values.push(description || null); }
+        if (isActive !== undefined) { updates.push('isActive = ?'); values.push(isActive); }
+
+        if (updates.length === 0) {
+            return res.status(400).json({ message: 'No fields to update' });
+        }
+
+        values.push(id);
+
+        await pool.execute(
+            `UPDATE critical_vital_ranges SET ${updates.join(', ')}, updatedAt = NOW() WHERE criticalVitalId = ?`,
+            values
+        );
+
+        // Fetch updated record
+        const [updated] = await pool.execute(
+            'SELECT * FROM critical_vital_ranges WHERE criticalVitalId = ?',
             [id]
         );
 
-        // Delete triage assessment
-        await connection.query(
-            'DELETE FROM triage_assessments WHERE triageId = ?',
-            [id]
-        );
-
-        await connection.commit();
-
-        res.status(200).json({ message: 'Triage record deleted successfully' });
+        res.status(200).json(updated[0]);
     } catch (error) {
-        await connection.rollback();
-        console.error('Error deleting triage record:', error);
-        res.status(500).json({ message: 'Error deleting triage record', error: error.message });
-    } finally {
-        connection.release();
+        console.error('Error updating critical vital range:', error);
+        res.status(500).json({ message: 'Error updating critical vital range', error: error.message });
     }
 });
 
-module.exports = router;
+/**
+ * @route DELETE /api/triage/critical-vital-ranges/:id
+ * @description Delete a critical vital sign range
+ */
+router.delete('/critical-vital-ranges/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // Check if exists
+        const [existing] = await pool.execute(
+            'SELECT criticalVitalId FROM critical_vital_ranges WHERE criticalVitalId = ?',
+            [id]
+        );
+
+        if (existing.length === 0) {
+            return res.status(404).json({ message: 'Critical vital range not found' });
+        }
+
+        // Delete
+        await pool.execute(
+            'DELETE FROM critical_vital_ranges WHERE criticalVitalId = ?',
+            [id]
+        );
+
+        res.status(200).json({ message: 'Critical vital range deleted successfully', criticalVitalId: id });
+    } catch (error) {
+        console.error('Error deleting critical vital range:', error);
+        res.status(500).json({ message: 'Error deleting critical vital range', error: error.message });
+    }
+});
+
 
