@@ -1002,6 +1002,32 @@ export const cashApi = {
     apiRequest<any>('/api/cash/stats/summary'),
 };
 
+// Asset Management API
+export const assetApi = {
+  getAll: (status?: string, category?: string, search?: string) => {
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    if (category) params.append('category', category);
+    if (search) params.append('search', search);
+    return apiRequest<any[]>(`/api/assets?${params.toString()}`);
+  },
+  
+  getById: (id: string) =>
+    apiRequest<any>(`/api/assets/${id}`),
+  
+  create: (data: any) =>
+    apiRequest<any>('/api/assets', { method: 'POST', body: data }),
+  
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/assets/${id}`, { method: 'PUT', body: data }),
+  
+  delete: (id: string) =>
+    apiRequest<any>(`/api/assets/${id}`, { method: 'DELETE' }),
+  
+  getStats: () =>
+    apiRequest<any>('/api/assets/stats/summary'),
+};
+
 // User API
 export const userApi = {
   getAll: () =>

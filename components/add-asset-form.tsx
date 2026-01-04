@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useForm } from "react-hook-form"
 import * as z from "zod"
@@ -22,147 +22,183 @@ import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { assetApi } from "@/lib/api"
 import { toast } from "@/components/ui/use-toast"
 
 const assetSchema = z.object({
-  name: z.string().min(1, {
+  assetName: z.string().min(1, {
     message: "Asset name is required.",
   }),
-  category: z.string({
-    required_error: "Category is required.",
+  category: z.string().optional(),
+  assetType: z.string().optional(),
+  purchaseDate: z.date().optional(),
+  purchaseCost: z.string().min(1, {
+    message: "Purchase cost is required.",
   }),
-  serialNumber: z.string().optional(),
-  assetTag: z.string().optional(),
-  location: z.string({
-    required_error: "Location is required.",
-  }),
-  purchaseDate: z.date({
-    required_error: "Purchase date is required.",
-  }),
-  purchaseValue: z.string().min(1, {
-    message: "Purchase value is required.",
-  }),
-  supplier: z.string().optional(),
-  warrantyEnd: z.date().optional(),
-  lifespan: z.string().optional(),
+  currentValue: z.string().optional(),
   depreciationMethod: z.string().optional(),
   depreciationRate: z.string().optional(),
-  condition: z.string({
-    required_error: "Condition is required.",
-  }),
-  status: z.string({
-    required_error: "Status is required.",
-  }),
+  location: z.string().optional(),
+  serialNumber: z.string().optional(),
+  manufacturer: z.string().optional(),
+  model: z.string().optional(),
+  status: z.string().optional(),
   notes: z.string().optional(),
 })
 
 type AssetFormValues = z.infer<typeof assetSchema>
 
-const defaultValues: Partial<AssetFormValues> = {
-  name: "",
-  category: "",
-  serialNumber: "",
-  assetTag: "",
-  location: "",
-  purchaseValue: "",
-  supplier: "",
-  lifespan: "",
-  depreciationMethod: "Straight Line",
-  depreciationRate: "",
-  condition: "Excellent",
-  status: "In Use",
-  notes: "",
+interface AddAssetFormProps {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onSuccess?: () => void
+  editData?: any
 }
 
-export function AddAssetForm({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+export function AddAssetForm({ open, onOpenChange, onSuccess, editData }: AddAssetFormProps) {
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   const form = useForm<AssetFormValues>({
     resolver: zodResolver(assetSchema),
-    defaultValues,
+    defaultValues: {
+      assetName: "",
+      category: "",
+      assetType: "",
+      purchaseCost: "",
+      currentValue: "",
+      depreciationMethod: "Straight-line",
+      depreciationRate: "",
+      location: "",
+      serialNumber: "",
+      manufacturer: "",
+      model: "",
+      status: "active",
+      notes: "",
+    },
   })
 
-  function onSubmit(data: AssetFormValues) {
-    setIsSubmitting(true)
-    // Simulate API call
-    setTimeout(() => {
-      console.log(data)
-      toast({
-        title: "Asset created",
-        description: `Asset "${data.name}" has been added to the registry.`,
-      })
-      setIsSubmitting(false)
+  useEffect(() => {
+    if (open) {
+      if (editData) {
+        // Populate form with edit data
+        form.reset({
+          assetName: editData.assetName || "",
+          category: editData.category || "",
+          assetType: editData.assetType || "",
+          purchaseDate: editData.purchaseDate ? new Date(editData.purchaseDate) : undefined,
+          purchaseCost: editData.purchaseCost?.toString() || "",
+          currentValue: editData.currentValue?.toString() || "",
+          depreciationMethod: editData.depreciationMethod || "Straight-line",
+          depreciationRate: editData.depreciationRate?.toString() || "",
+          location: editData.location || "",
+          serialNumber: editData.serialNumber || "",
+          manufacturer: editData.manufacturer || "",
+          model: editData.model || "",
+          status: editData.status || "active",
+          notes: editData.notes || "",
+        })
+      } else {
+        form.reset({
+          assetName: "",
+          category: "",
+          assetType: "",
+          purchaseDate: undefined,
+          purchaseCost: "",
+          currentValue: "",
+          depreciationMethod: "Straight-line",
+          depreciationRate: "",
+          location: "",
+          serialNumber: "",
+          manufacturer: "",
+          model: "",
+          status: "active",
+          notes: "",
+        })
+      }
+    }
+  }, [open, editData, form])
+
+  async function onSubmit(data: AssetFormValues) {
+    try {
+      setIsSubmitting(true)
+
+      const payload: any = {
+        assetName: data.assetName,
+        category: data.category || undefined,
+        assetType: data.assetType || undefined,
+        purchaseDate: data.purchaseDate ? format(data.purchaseDate, "yyyy-MM-dd") : undefined,
+        purchaseCost: parseFloat(data.purchaseCost),
+        currentValue: data.currentValue ? parseFloat(data.currentValue) : undefined,
+        depreciationMethod: data.depreciationMethod || undefined,
+        depreciationRate: data.depreciationRate ? parseFloat(data.depreciationRate) : undefined,
+        location: data.location || undefined,
+        serialNumber: data.serialNumber || undefined,
+        manufacturer: data.manufacturer || undefined,
+        model: data.model || undefined,
+        status: data.status || "active",
+        notes: data.notes || undefined,
+      }
+
+      if (editData) {
+        await assetApi.update(editData.assetId.toString(), payload)
+        toast({
+          title: "Success",
+          description: "Asset updated successfully",
+        })
+      } else {
+        await assetApi.create(payload)
+        toast({
+          title: "Success",
+          description: "Asset created successfully",
+        })
+      }
+
       onOpenChange(false)
       form.reset()
-    }, 1000)
+      if (onSuccess) {
+        onSuccess()
+      }
+    } catch (error: any) {
+      console.error("Error saving asset:", error)
+      toast({
+        title: "Error",
+        description: error.message || "Failed to save asset",
+        variant: "destructive",
+      })
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
-  // Mock data for categories, locations, suppliers, conditions, and statuses
-  const categories = [
-    { id: "CAT-1001", name: "Medical Equipment" },
-    { id: "CAT-1002", name: "Furniture" },
-    { id: "CAT-1003", name: "Vehicles" },
-    { id: "CAT-1004", name: "IT Equipment" },
-    { id: "CAT-1005", name: "Buildings" },
-  ]
-
-  const locations = [
-    { id: "LOC-1001", name: "Medical Ward" },
-    { id: "LOC-1002", name: "Surgical Ward" },
-    { id: "LOC-1003", name: "Radiology Department" },
-    { id: "LOC-1004", name: "Laboratory" },
-    { id: "LOC-1005", name: "Pharmacy" },
-    { id: "LOC-1006", name: "Administration" },
-    { id: "LOC-1007", name: "Reception" },
-    { id: "LOC-1008", name: "Emergency Department" },
-  ]
-
-  const suppliers = [
-    { id: "SUP-1001", name: "Medical Supplies Ltd" },
-    { id: "SUP-1002", name: "Laboratory Equipment Co." },
-    { id: "SUP-1003", name: "Office Solutions" },
-    { id: "SUP-1004", name: "Vehicle Dealership" },
-    { id: "SUP-1005", name: "IT Systems Inc." },
-  ]
-
-  const conditions = [
-    { id: "COND-1001", name: "Excellent" },
-    { id: "COND-1002", name: "Good" },
-    { id: "COND-1003", name: "Fair" },
-    { id: "COND-1004", name: "Poor" },
-    { id: "COND-1005", name: "Non-functional" },
-  ]
+  // Categories for assets
+  const categories = ["Equipment", "Furniture", "Vehicle", "Building", "IT Equipment"]
 
   const statuses = [
-    { id: "STAT-1001", name: "In Use" },
-    { id: "STAT-1002", name: "In Storage" },
-    { id: "STAT-1003", name: "Under Maintenance" },
-    { id: "STAT-1004", name: "Retired" },
-    { id: "STAT-1005", name: "Disposed" },
+    { value: "active", label: "Active" },
+    { value: "disposed", label: "Disposed" },
+    { value: "maintenance", label: "Maintenance" },
+    { value: "retired", label: "Retired" },
   ]
 
-  const depreciationMethods = [
-    { id: "DEP-1001", name: "Straight Line" },
-    { id: "DEP-1002", name: "Declining Balance" },
-    { id: "DEP-1003", name: "Sum of Years Digits" },
-    { id: "DEP-1004", name: "Units of Production" },
-  ]
+  const depreciationMethods = ["Straight-line", "Declining balance", "Sum of years digits", "Units of production"]
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>New Asset</DialogTitle>
-          <DialogDescription>Add a new asset to the registry.</DialogDescription>
+          <DialogTitle>{editData ? "Edit Asset" : "Add New Asset"}</DialogTitle>
+          <DialogDescription>
+            {editData ? "Update asset information" : "Add a new asset to the registry"}
+          </DialogDescription>
         </DialogHeader>
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
             <FormField
               control={form.control}
-              name="name"
+              name="assetName"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Asset Name</FormLabel>
+                  <FormLabel>Asset Name *</FormLabel>
                   <FormControl>
                     <Input placeholder="e.g. MRI Machine" {...field} />
                   </FormControl>
@@ -178,16 +214,16 @@ export function AddAssetForm({ open, onOpenChange }: { open: boolean; onOpenChan
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Category</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value || ""}>
+                    <Select onValueChange={field.onChange} value={field.value || ""}>
                       <FormControl>
                         <SelectTrigger>
                           <SelectValue placeholder="Select category" />
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        {categories.map((category) => (
-                          <SelectItem key={category.id} value={category.id}>
-                            {category.name}
+                        {categories.map((cat) => (
+                          <SelectItem key={cat} value={cat}>
+                            {cat}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -198,53 +234,12 @@ export function AddAssetForm({ open, onOpenChange }: { open: boolean; onOpenChan
               />
               <FormField
                 control={form.control}
-                name="location"
+                name="assetType"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Location</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value || ""}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select location" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {locations.map((location) => (
-                          <SelectItem key={location.id} value={location.id}>
-                            {location.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <FormField
-                control={form.control}
-                name="serialNumber"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Serial Number</FormLabel>
+                    <FormLabel>Asset Type</FormLabel>
                     <FormControl>
-                      <Input placeholder="Manufacturer's serial number" {...field} />
-                    </FormControl>
-                    <FormDescription>Optional</FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="assetTag"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Asset Tag</FormLabel>
-                    <FormControl>
-                      <Input placeholder="Internal asset ID" {...field} />
+                      <Input placeholder="e.g. Medical Imaging" {...field} />
                     </FormControl>
                     <FormDescription>Optional</FormDescription>
                     <FormMessage />
@@ -265,11 +260,9 @@ export function AddAssetForm({ open, onOpenChange }: { open: boolean; onOpenChan
                         <FormControl>
                           <Button
                             variant={"outline"}
-                            className={`w-full pl-3 text-left font-normal ${
-                              !field.value ? "text-muted-foreground" : ""
-                            }`}
+                            className={`w-full pl-3 text-left font-normal ${!field.value ? "text-muted-foreground" : ""}`}
                           >
-                            {field.value ? format(field.value, "PPP") : <span>Select date</span>}
+                            {field.value ? format(field.value, "PPP") : <span>Pick a date</span>}
                             <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
                           </Button>
                         </FormControl>
@@ -278,19 +271,31 @@ export function AddAssetForm({ open, onOpenChange }: { open: boolean; onOpenChan
                         <Calendar mode="single" selected={field.value} onSelect={field.onChange} initialFocus />
                       </PopoverContent>
                     </Popover>
+                    <FormDescription>Optional</FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}
               />
               <FormField
                 control={form.control}
-                name="purchaseValue"
+                name="status"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Purchase Value</FormLabel>
-                    <FormControl>
-                      <Input type="number" min="0" step="0.01" placeholder="0.00" {...field} />
-                    </FormControl>
+                    <FormLabel>Status</FormLabel>
+                    <Select onValueChange={field.onChange} value={field.value || "active"}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select status" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {statuses.map((status) => (
+                          <SelectItem key={status.value} value={status.value}>
+                            {status.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -300,82 +305,41 @@ export function AddAssetForm({ open, onOpenChange }: { open: boolean; onOpenChan
             <div className="grid grid-cols-2 gap-4">
               <FormField
                 control={form.control}
-                name="supplier"
+                name="purchaseCost"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Supplier</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value || ""}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select supplier" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {suppliers.map((supplier) => (
-                          <SelectItem key={supplier.id} value={supplier.id}>
-                            {supplier.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormDescription>Optional</FormDescription>
+                    <FormLabel>Purchase Cost (KES) *</FormLabel>
+                    <FormControl>
+                      <Input type="number" step="0.01" min="0" placeholder="0.00" {...field} />
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
               <FormField
                 control={form.control}
-                name="warrantyEnd"
+                name="currentValue"
                 render={({ field }) => (
-                  <FormItem className="flex flex-col">
-                    <FormLabel>Warranty End Date</FormLabel>
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <FormControl>
-                          <Button
-                            variant={"outline"}
-                            className={`w-full pl-3 text-left font-normal ${
-                              !field.value ? "text-muted-foreground" : ""
-                            }`}
-                          >
-                            {field.value ? format(field.value, "PPP") : <span>Select date</span>}
-                            <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-                          </Button>
-                        </FormControl>
-                      </PopoverTrigger>
-                      <PopoverContent className="w-auto p-0" align="start">
-                        <Calendar mode="single" selected={field.value} onSelect={field.onChange} initialFocus />
-                      </PopoverContent>
-                    </Popover>
-                    <FormDescription>Optional</FormDescription>
+                  <FormItem>
+                    <FormLabel>Current Value (KES)</FormLabel>
+                    <FormControl>
+                      <Input type="number" step="0.01" min="0" placeholder="0.00" {...field} />
+                    </FormControl>
+                    <FormDescription>Optional - defaults to purchase cost</FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}
               />
             </div>
 
-            <div className="grid grid-cols-3 gap-4">
-              <FormField
-                control={form.control}
-                name="lifespan"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Lifespan (Years)</FormLabel>
-                    <FormControl>
-                      <Input type="number" min="1" step="1" placeholder="5" {...field} />
-                    </FormControl>
-                    <FormDescription>Optional</FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+            <div className="grid grid-cols-2 gap-4">
               <FormField
                 control={form.control}
                 name="depreciationMethod"
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Depreciation Method</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value || ""}>
+                    <Select onValueChange={field.onChange} value={field.value || "Straight-line"}>
                       <FormControl>
                         <SelectTrigger>
                           <SelectValue placeholder="Select method" />
@@ -383,8 +347,8 @@ export function AddAssetForm({ open, onOpenChange }: { open: boolean; onOpenChan
                       </FormControl>
                       <SelectContent>
                         {depreciationMethods.map((method) => (
-                          <SelectItem key={method.id} value={method.id}>
-                            {method.name}
+                          <SelectItem key={method} value={method}>
+                            {method}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -401,7 +365,7 @@ export function AddAssetForm({ open, onOpenChange }: { open: boolean; onOpenChan
                   <FormItem>
                     <FormLabel>Depreciation Rate (%)</FormLabel>
                     <FormControl>
-                      <Input type="number" min="0" max="100" step="0.1" placeholder="10" {...field} />
+                      <Input type="number" step="0.01" min="0" max="100" placeholder="0.00" {...field} />
                     </FormControl>
                     <FormDescription>Optional</FormDescription>
                     <FormMessage />
@@ -410,51 +374,46 @@ export function AddAssetForm({ open, onOpenChange }: { open: boolean; onOpenChan
               />
             </div>
 
+            <FormField
+              control={form.control}
+              name="location"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Location</FormLabel>
+                  <FormControl>
+                    <Input placeholder="e.g. Radiology Department" {...field} />
+                  </FormControl>
+                  <FormDescription>Optional</FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
             <div className="grid grid-cols-2 gap-4">
               <FormField
                 control={form.control}
-                name="condition"
+                name="serialNumber"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Condition</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value || ""}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select condition" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {conditions.map((condition) => (
-                          <SelectItem key={condition.id} value={condition.id}>
-                            {condition.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <FormLabel>Serial Number</FormLabel>
+                    <FormControl>
+                      <Input placeholder="e.g. XR-2023-001" {...field} />
+                    </FormControl>
+                    <FormDescription>Optional</FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}
               />
               <FormField
                 control={form.control}
-                name="status"
+                name="manufacturer"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Status</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value || ""}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select status" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {statuses.map((status) => (
-                          <SelectItem key={status.id} value={status.id}>
-                            {status.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <FormLabel>Manufacturer</FormLabel>
+                    <FormControl>
+                      <Input placeholder="e.g. Siemens Healthcare" {...field} />
+                    </FormControl>
+                    <FormDescription>Optional</FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -463,16 +422,27 @@ export function AddAssetForm({ open, onOpenChange }: { open: boolean; onOpenChan
 
             <FormField
               control={form.control}
+              name="model"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Model</FormLabel>
+                  <FormControl>
+                    <Input placeholder="e.g. Multix Fusion Max" {...field} />
+                  </FormControl>
+                  <FormDescription>Optional</FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
               name="notes"
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Notes</FormLabel>
                   <FormControl>
-                    <Textarea
-                      placeholder="Additional information about the asset"
-                      className="min-h-[80px]"
-                      {...field}
-                    />
+                    <Textarea placeholder="Additional notes about the asset" className="min-h-[80px]" {...field} />
                   </FormControl>
                   <FormDescription>Optional</FormDescription>
                   <FormMessage />
@@ -481,12 +451,12 @@ export function AddAssetForm({ open, onOpenChange }: { open: boolean; onOpenChan
             />
 
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={isSubmitting}>
                 Cancel
               </Button>
               <Button type="submit" disabled={isSubmitting}>
                 {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Save Asset
+                {editData ? "Update Asset" : "Create Asset"}
               </Button>
             </DialogFooter>
           </form>
