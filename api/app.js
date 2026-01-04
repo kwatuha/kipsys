@@ -45,6 +45,7 @@ const receivableRoutes = require('./routes/receivableRoutes');
 const budgetRoutes = require('./routes/budgetRoutes');
 const cashRoutes = require('./routes/cashRoutes');
 const assetRoutes = require('./routes/assetRoutes');
+const insuranceRoutes = require('./routes/insuranceRoutes');
 
 const authenticate = require('./middleware/authenticate');
 

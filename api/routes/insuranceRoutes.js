@@ -408,21 +408,7 @@ router.post('/policies', async (req, res) => {
 router.put('/policies/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        const {
-            providerId,
-            policyNumber,
-            policyHolderName,
-            relationshipToPatient,
-            coverageType,
-            startDate,
-            endDate,
-            isActive,
-            coverageLimit,
-            deductible,
-            coPayment,
-            notes
-        } = req.body;
-
+        
         // Check if policy exists
         const [existing] = await pool.execute('SELECT patientInsuranceId FROM patient_insurance WHERE patientInsuranceId = ?', [id]);
         if (existing.length === 0) {
