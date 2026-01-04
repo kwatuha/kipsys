@@ -941,6 +941,33 @@ export const privilegeApi = {
     apiRequest<any>(`/api/privileges/${id}`, { method: 'DELETE' }),
 };
 
+// Budget API
+export const budgetApi = {
+  getAll: (status?: string, departmentId?: string, budgetPeriod?: string, search?: string) => {
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    if (departmentId) params.append('departmentId', departmentId);
+    if (budgetPeriod) params.append('budgetPeriod', budgetPeriod);
+    if (search) params.append('search', search);
+    return apiRequest<any[]>(`/api/budgets?${params.toString()}`);
+  },
+  
+  getById: (id: string) =>
+    apiRequest<any>(`/api/budgets/${id}`),
+  
+  create: (data: any) =>
+    apiRequest<any>('/api/budgets', { method: 'POST', body: data }),
+  
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/budgets/${id}`, { method: 'PUT', body: data }),
+  
+  delete: (id: string) =>
+    apiRequest<any>(`/api/budgets/${id}`, { method: 'DELETE' }),
+  
+  getStats: () =>
+    apiRequest<any>('/api/budgets/stats/summary'),
+};
+
 // User API
 export const userApi = {
   getAll: () =>

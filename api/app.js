@@ -42,6 +42,7 @@ const roleRoutes = require('./routes/roleRoutes');
 const privilegeRoutes = require('./routes/privilegeRoutes');
 const payableRoutes = require('./routes/payableRoutes');
 const receivableRoutes = require('./routes/receivableRoutes');
+const budgetRoutes = require('./routes/budgetRoutes');
 
 const authenticate = require('./middleware/authenticate');
 
@@ -99,6 +100,7 @@ app.use('/api/queue', queueRoutes);
 app.use('/api/billing', billingRoutes);
 app.use('/api/payables', payableRoutes);
 app.use('/api/receivables', receivableRoutes);
+app.use('/api/budgets', budgetRoutes);
 // IMPORTANT: More specific routes must come before generic routes
 app.use('/api/inventory/transactions', inventoryTransactionRoutes);
 app.use('/api/inventory', inventoryRoutes);

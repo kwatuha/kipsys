@@ -1,8 +1,10 @@
 "use client"
+
+import { useState, useEffect } from "react"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useForm } from "react-hook-form"
 import { z } from "zod"
-import { CalendarIcon } from "lucide-react"
+import { CalendarIcon, Loader2 } from "lucide-react"
 import { format } from "date-fns"
 
 import { Button } from "@/components/ui/button"
@@ -14,21 +16,26 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form"
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { budgetApi, departmentApi } from "@/lib/api"
+import { toast } from "@/components/ui/use-toast"
 
 const formSchema = z.object({
-  department: z.string({
-    required_error: "Please select a department",
+  budgetName: z.string().min(1, {
+    message: "Budget name is required",
   }),
-  fiscalYear: z.string({
-    required_error: "Please select a fiscal year",
+  departmentId: z.string().min(1, {
+    message: "Department is required",
   }),
-  amount: z.string().min(1, {
+  budgetPeriod: z.string().min(1, {
+    message: "Budget period is required",
+  }),
+  allocatedAmount: z.string().min(1, {
     message: "Amount is required",
   }),
   startDate: z.date({
@@ -37,9 +44,8 @@ const formSchema = z.object({
   endDate: z.date({
     required_error: "End date is required",
   }),
-  description: z.string().min(1, {
-    message: "Description is required",
-  }),
+  notes: z.string().optional(),
+  status: z.string().optional(),
 })
 
 type BudgetFormValues = z.infer<typeof formSchema>
@@ -47,50 +53,162 @@ type BudgetFormValues = z.infer<typeof formSchema>
 interface AddBudgetFormProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  onSuccess?: () => void
+  editData?: any
 }
 
-export function AddBudgetForm({ open, onOpenChange }: AddBudgetFormProps) {
+export function AddBudgetForm({ open, onOpenChange, onSuccess, editData }: AddBudgetFormProps) {
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [departments, setDepartments] = useState<any[]>([])
+  const [loadingDepartments, setLoadingDepartments] = useState(true)
+
   const form = useForm<BudgetFormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
-      description: "",
+      budgetName: "",
+      departmentId: "",
+      budgetPeriod: new Date().getFullYear().toString(),
+      allocatedAmount: "",
+      notes: "",
+      status: "draft",
     },
   })
 
-  function onSubmit(data: BudgetFormValues) {
-    console.log(data)
-    onOpenChange(false)
-    form.reset()
+  useEffect(() => {
+    if (open) {
+      loadDepartments()
+      if (editData) {
+        // Populate form with edit data
+        form.reset({
+          budgetName: editData.budgetName || "",
+          departmentId: editData.departmentId?.toString() || "",
+          budgetPeriod: editData.budgetPeriod || new Date().getFullYear().toString(),
+          allocatedAmount: editData.allocatedAmount?.toString() || "",
+          startDate: editData.startDate ? new Date(editData.startDate) : new Date(),
+          endDate: editData.endDate ? new Date(editData.endDate) : new Date(),
+          notes: editData.notes || "",
+          status: editData.status || "draft",
+        })
+      } else {
+        form.reset({
+          budgetName: "",
+          departmentId: "",
+          budgetPeriod: new Date().getFullYear().toString(),
+          allocatedAmount: "",
+          startDate: new Date(),
+          endDate: new Date(new Date().setFullYear(new Date().getFullYear(), 11, 31)),
+          notes: "",
+          status: "draft",
+        })
+      }
+    }
+  }, [open, editData, form])
+
+  const loadDepartments = async () => {
+    try {
+      setLoadingDepartments(true)
+      const data = await departmentApi.getAll()
+      setDepartments(data || [])
+    } catch (error: any) {
+      console.error("Error loading departments:", error)
+      toast({
+        title: "Error",
+        description: "Failed to load departments",
+        variant: "destructive",
+      })
+    } finally {
+      setLoadingDepartments(false)
+    }
+  }
+
+  async function onSubmit(data: BudgetFormValues) {
+    try {
+      setIsSubmitting(true)
+
+      const payload = {
+        budgetName: data.budgetName,
+        departmentId: parseInt(data.departmentId),
+        budgetPeriod: data.budgetPeriod,
+        startDate: format(data.startDate, "yyyy-MM-dd"),
+        endDate: format(data.endDate, "yyyy-MM-dd"),
+        allocatedAmount: parseFloat(data.allocatedAmount),
+        notes: data.notes || undefined,
+        status: data.status || "draft",
+      }
+
+      if (editData) {
+        await budgetApi.update(editData.budgetId.toString(), payload)
+        toast({
+          title: "Success",
+          description: "Budget updated successfully",
+        })
+      } else {
+        await budgetApi.create(payload)
+        toast({
+          title: "Success",
+          description: "Budget created successfully",
+        })
+      }
+
+      onOpenChange(false)
+      form.reset()
+      if (onSuccess) {
+        onSuccess()
+      }
+    } catch (error: any) {
+      console.error("Error saving budget:", error)
+      toast({
+        title: "Error",
+        description: error.message || "Failed to save budget",
+        variant: "destructive",
+      })
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[600px]">
+      <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Create New Budget</DialogTitle>
+          <DialogTitle>{editData ? "Edit Budget" : "Create New Budget"}</DialogTitle>
           <DialogDescription>Add a new departmental budget for the fiscal year.</DialogDescription>
         </DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+            <FormField
+              control={form.control}
+              name="budgetName"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Budget Name *</FormLabel>
+                  <FormControl>
+                    <Input placeholder="e.g., Medical Department Annual Budget" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
             <div className="grid grid-cols-2 gap-4">
               <FormField
                 control={form.control}
-                name="department"
+                name="departmentId"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Department</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value}>
+                    <FormLabel>Department *</FormLabel>
+                    <Select onValueChange={field.onChange} value={field.value || ""} disabled={loadingDepartments}>
                       <FormControl>
                         <SelectTrigger>
-                          <SelectValue placeholder="Select department" />
+                          <SelectValue placeholder={loadingDepartments ? "Loading..." : "Select department"} />
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        <SelectItem value="medical">Medical</SelectItem>
-                        <SelectItem value="laboratory">Laboratory</SelectItem>
-                        <SelectItem value="pharmacy">Pharmacy</SelectItem>
-                        <SelectItem value="administration">Administration</SelectItem>
-                        <SelectItem value="maintenance">Maintenance</SelectItem>
+                        {departments.map((dept) => (
+                          <SelectItem key={dept.departmentId} value={dept.departmentId.toString()}>
+                            {dept.departmentName}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                     <FormMessage />
@@ -99,20 +217,22 @@ export function AddBudgetForm({ open, onOpenChange }: AddBudgetFormProps) {
               />
               <FormField
                 control={form.control}
-                name="fiscalYear"
+                name="budgetPeriod"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Fiscal Year</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value}>
+                    <FormLabel>Budget Period *</FormLabel>
+                    <Select onValueChange={field.onChange} value={field.value || new Date().getFullYear().toString()}>
                       <FormControl>
                         <SelectTrigger>
                           <SelectValue placeholder="Select fiscal year" />
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        <SelectItem value="2023">2023</SelectItem>
-                        <SelectItem value="2024">2024</SelectItem>
-                        <SelectItem value="2025">2025</SelectItem>
+                        {[new Date().getFullYear() - 1, new Date().getFullYear(), new Date().getFullYear() + 1].map((year) => (
+                          <SelectItem key={year} value={year.toString()}>
+                            {year}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                     <FormMessage />
@@ -120,34 +240,36 @@ export function AddBudgetForm({ open, onOpenChange }: AddBudgetFormProps) {
                 )}
               />
             </div>
+
             <FormField
               control={form.control}
-              name="amount"
+              name="allocatedAmount"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Budget Amount (KES)</FormLabel>
+                  <FormLabel>Allocated Amount (KES) *</FormLabel>
                   <FormControl>
-                    <Input type="number" placeholder="0.00" {...field} />
+                    <Input type="number" step="0.01" min="0" placeholder="0.00" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
               )}
             />
+
             <div className="grid grid-cols-2 gap-4">
               <FormField
                 control={form.control}
                 name="startDate"
                 render={({ field }) => (
                   <FormItem className="flex flex-col">
-                    <FormLabel>Start Date</FormLabel>
+                    <FormLabel>Start Date *</FormLabel>
                     <Popover>
                       <PopoverTrigger asChild>
                         <FormControl>
                           <Button
                             variant={"outline"}
-                            className={`w-full pl-3 text-left font-normal ${!field.value && "text-muted-foreground"}`}
+                            className={`w-full pl-3 text-left font-normal ${!field.value ? "text-muted-foreground" : ""}`}
                           >
-                            {field.value ? format(field.value, "PPP") : <span>Pick a date</span>}
+                            {field.value ? format(field.value, "PPP") : <span>Select date</span>}
                             <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
                           </Button>
                         </FormControl>
@@ -165,15 +287,15 @@ export function AddBudgetForm({ open, onOpenChange }: AddBudgetFormProps) {
                 name="endDate"
                 render={({ field }) => (
                   <FormItem className="flex flex-col">
-                    <FormLabel>End Date</FormLabel>
+                    <FormLabel>End Date *</FormLabel>
                     <Popover>
                       <PopoverTrigger asChild>
                         <FormControl>
                           <Button
                             variant={"outline"}
-                            className={`w-full pl-3 text-left font-normal ${!field.value && "text-muted-foreground"}`}
+                            className={`w-full pl-3 text-left font-normal ${!field.value ? "text-muted-foreground" : ""}`}
                           >
-                            {field.value ? format(field.value, "PPP") : <span>Pick a date</span>}
+                            {field.value ? format(field.value, "PPP") : <span>Select date</span>}
                             <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
                           </Button>
                         </FormControl>
@@ -187,24 +309,56 @@ export function AddBudgetForm({ open, onOpenChange }: AddBudgetFormProps) {
                 )}
               />
             </div>
+
+            {editData && (
+              <FormField
+                control={form.control}
+                name="status"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Status</FormLabel>
+                    <Select onValueChange={field.onChange} value={field.value || "draft"}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select status" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="draft">Draft</SelectItem>
+                        <SelectItem value="approved">Approved</SelectItem>
+                        <SelectItem value="active">Active</SelectItem>
+                        <SelectItem value="closed">Closed</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
+
             <FormField
               control={form.control}
-              name="description"
+              name="notes"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Description</FormLabel>
+                  <FormLabel>Notes</FormLabel>
                   <FormControl>
-                    <Textarea placeholder="Enter budget description and purpose" className="resize-none" {...field} />
+                    <Textarea placeholder="Additional notes about this budget" className="min-h-[80px]" {...field} />
                   </FormControl>
+                  <FormDescription>Optional</FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
             />
+
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={isSubmitting}>
                 Cancel
               </Button>
-              <Button type="submit">Create Budget</Button>
+              <Button type="submit" disabled={isSubmitting}>
+                {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                {editData ? "Update Budget" : "Create Budget"}
+              </Button>
             </DialogFooter>
           </form>
         </Form>
