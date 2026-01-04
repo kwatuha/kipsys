@@ -886,6 +886,28 @@ export const specialistChargeApi = {
     apiRequest<any>(`/api/billing/specialist-charges/${id}`, { method: 'DELETE' }),
 };
 
+// Consumables Charges API
+export const consumablesChargeApi = {
+  getAll: (chargeId?: string, search?: string) => {
+    const params = new URLSearchParams();
+    if (chargeId) params.append('chargeId', chargeId);
+    if (search) params.append('search', search);
+    return apiRequest<any[]>(`/api/billing/consumables-charges?${params.toString()}`);
+  },
+  
+  getById: (id: string) =>
+    apiRequest<any>(`/api/billing/consumables-charges/${id}`),
+  
+  create: (data: any) =>
+    apiRequest<any>('/api/billing/consumables-charges', { method: 'POST', body: data }),
+  
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/billing/consumables-charges/${id}`, { method: 'PUT', body: data }),
+  
+  delete: (id: string) =>
+    apiRequest<any>(`/api/billing/consumables-charges/${id}`, { method: 'DELETE' }),
+};
+
 // Billing/Invoice API
 export const billingApi = {
   getInvoices: (patientId?: string, status?: string) => {

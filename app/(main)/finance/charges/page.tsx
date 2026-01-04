@@ -10,7 +10,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { AddServiceChargeForm } from "@/components/add-service-charge-form"
 import { AddSpecialistChargeForm } from "@/components/add-specialist-charge-form"
-import { serviceChargeApi, specialistChargeApi } from "@/lib/api"
+import { AddConsumablesChargeForm } from "@/components/add-consumables-charge-form"
+import { serviceChargeApi, specialistChargeApi, consumablesChargeApi } from "@/lib/api"
 import { toast } from "@/components/ui/use-toast"
 import {
   AlertDialog,
@@ -50,21 +51,38 @@ interface SpecialistCharge {
   doctorLastName?: string
 }
 
+interface ConsumablesCharge {
+  consumableChargeId: number
+  chargeId: number
+  amount: number
+  effectiveFrom: string
+  effectiveTo: string | null
+  chargeCode?: string
+  chargeName?: string
+}
+
 export default function HospitalChargesPage() {
   const [serviceCharges, setServiceCharges] = useState<ServiceCharge[]>([])
   const [specialistCharges, setSpecialistCharges] = useState<SpecialistCharge[]>([])
+  const [consumablesCharges, setConsumablesCharges] = useState<ConsumablesCharge[]>([])
   const [loading, setLoading] = useState(true)
   const [loadingSpecialist, setLoadingSpecialist] = useState(false)
+  const [loadingConsumables, setLoadingConsumables] = useState(false)
   const [showAddForm, setShowAddForm] = useState(false)
   const [showSpecialistForm, setShowSpecialistForm] = useState(false)
+  const [showConsumablesForm, setShowConsumablesForm] = useState(false)
   const [editingCharge, setEditingCharge] = useState<ServiceCharge | null>(null)
   const [editingSpecialistCharge, setEditingSpecialistCharge] = useState<SpecialistCharge | null>(null)
+  const [editingConsumablesCharge, setEditingConsumablesCharge] = useState<ConsumablesCharge | null>(null)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [chargeToDelete, setChargeToDelete] = useState<ServiceCharge | null>(null)
   const [specialistDeleteDialogOpen, setSpecialistDeleteDialogOpen] = useState(false)
   const [specialistChargeToDelete, setSpecialistChargeToDelete] = useState<SpecialistCharge | null>(null)
+  const [consumablesDeleteDialogOpen, setConsumablesDeleteDialogOpen] = useState(false)
+  const [consumablesChargeToDelete, setConsumablesChargeToDelete] = useState<ConsumablesCharge | null>(null)
   const [searchTerm, setSearchTerm] = useState("")
   const [specialistSearchTerm, setSpecialistSearchTerm] = useState("")
+  const [consumablesSearchTerm, setConsumablesSearchTerm] = useState("")
   const [categoryFilter, setCategoryFilter] = useState<string>("all")
   const [departmentFilter, setDepartmentFilter] = useState<string>("all")
   const [statusFilter, setStatusFilter] = useState<string>("all")
@@ -76,6 +94,10 @@ export default function HospitalChargesPage() {
   useEffect(() => {
     loadSpecialistCharges()
   }, [specialistSearchTerm])
+
+  useEffect(() => {
+    loadConsumablesCharges()
+  }, [consumablesSearchTerm])
 
   const loadCharges = async () => {
     try {
@@ -116,6 +138,23 @@ export default function HospitalChargesPage() {
     }
   }
 
+  const loadConsumablesCharges = async () => {
+    try {
+      setLoadingConsumables(true)
+      const data = await consumablesChargeApi.getAll(undefined, consumablesSearchTerm || undefined)
+      setConsumablesCharges(Array.isArray(data) ? data : [])
+    } catch (error: any) {
+      console.error("Error loading consumables charges:", error)
+      toast({
+        title: "Error",
+        description: "Failed to load consumables charges.",
+        variant: "destructive",
+      })
+    } finally {
+      setLoadingConsumables(false)
+    }
+  }
+
   const handleAdd = () => {
     setEditingCharge(null)
     setShowAddForm(true)
@@ -124,6 +163,11 @@ export default function HospitalChargesPage() {
   const handleAddSpecialist = () => {
     setEditingSpecialistCharge(null)
     setShowSpecialistForm(true)
+  }
+
+  const handleAddConsumables = () => {
+    setEditingConsumablesCharge(null)
+    setShowConsumablesForm(true)
   }
 
   const handleEdit = (charge: ServiceCharge) => {
@@ -144,6 +188,16 @@ export default function HospitalChargesPage() {
   const handleDeleteSpecialist = (charge: SpecialistCharge) => {
     setSpecialistChargeToDelete(charge)
     setSpecialistDeleteDialogOpen(true)
+  }
+
+  const handleEditConsumables = (charge: ConsumablesCharge) => {
+    setEditingConsumablesCharge(charge)
+    setShowConsumablesForm(true)
+  }
+
+  const handleDeleteConsumables = (charge: ConsumablesCharge) => {
+    setConsumablesChargeToDelete(charge)
+    setConsumablesDeleteDialogOpen(true)
   }
 
   const confirmDelete = async () => {
@@ -188,6 +242,27 @@ export default function HospitalChargesPage() {
     }
   }
 
+  const confirmDeleteConsumables = async () => {
+    if (!consumablesChargeToDelete) return
+
+    try {
+      await consumablesChargeApi.delete(consumablesChargeToDelete.consumableChargeId.toString())
+      toast({
+        title: "Success",
+        description: "Consumables charge deleted successfully.",
+      })
+      setConsumablesDeleteDialogOpen(false)
+      setConsumablesChargeToDelete(null)
+      loadConsumablesCharges()
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to delete consumables charge.",
+        variant: "destructive",
+      })
+    }
+  }
+
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat("en-KE", { style: "currency", currency: "KES", minimumFractionDigits: 0 }).format(amount)
   }
@@ -216,6 +291,7 @@ export default function HospitalChargesPage() {
         <TabsList>
           <TabsTrigger value="service-charges">Service Charges</TabsTrigger>
           <TabsTrigger value="specialist-charges">Specialist Charges</TabsTrigger>
+          <TabsTrigger value="consumables-charges">Consumables Charges</TabsTrigger>
         </TabsList>
 
         <TabsContent value="service-charges" className="space-y-4">
@@ -492,6 +568,91 @@ export default function HospitalChargesPage() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        <TabsContent value="consumables-charges" className="space-y-4">
+          <div className="flex items-center justify-end">
+            <Button onClick={handleAddConsumables}>
+              <Plus className="mr-2 h-4 w-4" />
+              New Consumables Charge
+            </Button>
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Consumables Charges</CardTitle>
+              <CardDescription>Manage charges for consumable items with effective dates</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-col gap-4">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-end">
+                  <div className="relative w-full sm:w-64">
+                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      type="search"
+                      placeholder="Search by charge..."
+                      className="w-full pl-8"
+                      value={consumablesSearchTerm}
+                      onChange={(e) => setConsumablesSearchTerm(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                {loadingConsumables ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                  </div>
+                ) : consumablesCharges.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <p>No consumables charges found.</p>
+                  </div>
+                ) : (
+                  <div className="rounded-md border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Charge</TableHead>
+                          <TableHead>Amount</TableHead>
+                          <TableHead>Effective From</TableHead>
+                          <TableHead>Effective To</TableHead>
+                          <TableHead>Actions</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {consumablesCharges.map((charge) => (
+                          <TableRow key={charge.consumableChargeId}>
+                            <TableCell className="font-medium">
+                              {charge.chargeCode && `${charge.chargeCode} - `}
+                              {charge.chargeName || `Charge #${charge.chargeId}`}
+                            </TableCell>
+                            <TableCell>{formatCurrency(parseFloat(charge.amount.toString()))}</TableCell>
+                            <TableCell>{formatDate(charge.effectiveFrom)}</TableCell>
+                            <TableCell>{charge.effectiveTo ? formatDate(charge.effectiveTo) : "Ongoing"}</TableCell>
+                            <TableCell>
+                              <div className="flex gap-2">
+                                <Button variant="outline" size="icon" onClick={() => handleEditConsumables(charge)} title="Edit">
+                                  <Edit className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="icon"
+                                  onClick={() => handleDeleteConsumables(charge)}
+                                  title="Delete"
+                                  className="text-destructive hover:text-destructive"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
       </Tabs>
 
       <AddServiceChargeForm
@@ -522,6 +683,21 @@ export default function HospitalChargesPage() {
           setEditingSpecialistCharge(null)
         }}
         editData={editingSpecialistCharge}
+      />
+
+      <AddConsumablesChargeForm
+        open={showConsumablesForm}
+        onOpenChange={(open) => {
+          setShowConsumablesForm(open)
+          if (!open) {
+            setEditingConsumablesCharge(null)
+          }
+        }}
+        onSuccess={() => {
+          loadConsumablesCharges()
+          setEditingConsumablesCharge(null)
+        }}
+        editData={editingConsumablesCharge}
       />
 
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
@@ -567,6 +743,31 @@ export default function HospitalChargesPage() {
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={confirmDeleteSpecialist}
+              className="bg-destructive text-destructive-foreground"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={consumablesDeleteDialogOpen} onOpenChange={setConsumablesDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Consumables Charge</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this consumables charge?
+              {consumablesChargeToDelete && (
+                <span className="block mt-2 text-sm">
+                  This will permanently delete the consumables charge for {consumablesChargeToDelete.chargeName || `Charge #${consumablesChargeToDelete.chargeId}`}.
+                </span>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDeleteConsumables}
               className="bg-destructive text-destructive-foreground"
             >
               Delete

@@ -1163,5 +1163,185 @@ router.delete('/specialist-charges/:id', async (req, res) => {
     }
 });
 
+// Consumables Charges Routes
+/**
+ * @route GET /api/billing/consumables-charges
+ * @description Get all consumables charges (optionally filtered)
+ */
+router.get('/consumables-charges', async (req, res) => {
+    try {
+        const { chargeId, search } = req.query;
+        let query = `
+            SELECT cc.*,
+                   ch.chargeCode, ch.name as chargeName
+            FROM consumables_charges cc
+            LEFT JOIN service_charges ch ON cc.chargeId = ch.chargeId
+            WHERE 1=1
+        `;
+        const params = [];
+
+        if (chargeId) {
+            query += ' AND cc.chargeId = ?';
+            params.push(chargeId);
+        }
+
+        if (search) {
+            query += ' AND (ch.name LIKE ? OR ch.chargeCode LIKE ?)';
+            const searchTerm = `%${search}%`;
+            params.push(searchTerm, searchTerm);
+        }
+
+        query += ' ORDER BY cc.effectiveFrom DESC, cc.createdAt DESC';
+        
+        const [rows] = await pool.query(query, params);
+        res.status(200).json(rows);
+    } catch (error) {
+        console.error('Error fetching consumables charges:', error);
+        res.status(500).json({ message: 'Error fetching consumables charges', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/billing/consumables-charges/:id
+ * @description Get a single consumables charge by ID
+ */
+router.get('/consumables-charges/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const [rows] = await pool.query(`
+            SELECT cc.*,
+                   ch.chargeCode, ch.name as chargeName
+            FROM consumables_charges cc
+            LEFT JOIN service_charges ch ON cc.chargeId = ch.chargeId
+            WHERE cc.consumableChargeId = ?
+        `, [id]);
+        
+        if (rows.length === 0) {
+            return res.status(404).json({ message: 'Consumables charge not found' });
+        }
+        
+        res.status(200).json(rows[0]);
+    } catch (error) {
+        console.error('Error fetching consumables charge:', error);
+        res.status(500).json({ message: 'Error fetching consumables charge', error: error.message });
+    }
+});
+
+/**
+ * @route POST /api/billing/consumables-charges
+ * @description Create a new consumables charge
+ */
+router.post('/consumables-charges', async (req, res) => {
+    try {
+        const { chargeId, amount, effectiveFrom, effectiveTo } = req.body;
+        
+        if (!chargeId || !amount || !effectiveFrom) {
+            return res.status(400).json({ error: 'Charge, amount, and effectiveFrom date are required' });
+        }
+
+        // Check if charge exists
+        const [chargeCheck] = await pool.query('SELECT chargeId FROM service_charges WHERE chargeId = ?', [chargeId]);
+        if (chargeCheck.length === 0) {
+            return res.status(400).json({ error: 'Service charge not found' });
+        }
+
+        const [result] = await pool.query(
+            'INSERT INTO consumables_charges (chargeId, amount, effectiveFrom, effectiveTo) VALUES (?, ?, ?, ?)',
+            [chargeId, amount, effectiveFrom, effectiveTo || null]
+        );
+        
+        const [newCharge] = await pool.query(`
+            SELECT cc.*,
+                   ch.chargeCode, ch.name as chargeName
+            FROM consumables_charges cc
+            LEFT JOIN service_charges ch ON cc.chargeId = ch.chargeId
+            WHERE cc.consumableChargeId = ?
+        `, [result.insertId]);
+        
+        res.status(201).json(newCharge[0]);
+    } catch (error) {
+        console.error('Error creating consumables charge:', error);
+        res.status(500).json({ message: 'Error creating consumables charge', error: error.message });
+    }
+});
+
+/**
+ * @route PUT /api/billing/consumables-charges/:id
+ * @description Update a consumables charge
+ */
+router.put('/consumables-charges/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { chargeId, amount, effectiveFrom, effectiveTo } = req.body;
+
+        // Check if consumables charge exists
+        const [existing] = await pool.query('SELECT consumableChargeId FROM consumables_charges WHERE consumableChargeId = ?', [id]);
+        if (existing.length === 0) {
+            return res.status(404).json({ message: 'Consumables charge not found' });
+        }
+
+        // Check if charge exists (if being updated)
+        if (chargeId) {
+            const [chargeCheck] = await pool.query('SELECT chargeId FROM service_charges WHERE chargeId = ?', [chargeId]);
+            if (chargeCheck.length === 0) {
+                return res.status(400).json({ error: 'Service charge not found' });
+            }
+        }
+
+        // Build update query dynamically
+        const updates = [];
+        const values = [];
+
+        if (chargeId !== undefined) { updates.push('chargeId = ?'); values.push(chargeId); }
+        if (amount !== undefined) { updates.push('amount = ?'); values.push(amount); }
+        if (effectiveFrom !== undefined) { updates.push('effectiveFrom = ?'); values.push(effectiveFrom); }
+        if (effectiveTo !== undefined) { updates.push('effectiveTo = ?'); values.push(effectiveTo || null); }
+
+        if (updates.length === 0) {
+            return res.status(400).json({ error: 'No fields to update' });
+        }
+
+        values.push(id);
+        await pool.query(
+            `UPDATE consumables_charges SET ${updates.join(', ')}, updatedAt = NOW() WHERE consumableChargeId = ?`,
+            values
+        );
+
+        const [updated] = await pool.query(`
+            SELECT cc.*,
+                   ch.chargeCode, ch.name as chargeName
+            FROM consumables_charges cc
+            LEFT JOIN service_charges ch ON cc.chargeId = ch.chargeId
+            WHERE cc.consumableChargeId = ?
+        `, [id]);
+        
+        res.status(200).json(updated[0]);
+    } catch (error) {
+        console.error('Error updating consumables charge:', error);
+        res.status(500).json({ message: 'Error updating consumables charge', error: error.message });
+    }
+});
+
+/**
+ * @route DELETE /api/billing/consumables-charges/:id
+ * @description Delete a consumables charge
+ */
+router.delete('/consumables-charges/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const [result] = await pool.query('DELETE FROM consumables_charges WHERE consumableChargeId = ?', [id]);
+        
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: 'Consumables charge not found' });
+        }
+
+        res.status(200).json({ message: 'Consumables charge deleted successfully' });
+    } catch (error) {
+        console.error('Error deleting consumables charge:', error);
+        res.status(500).json({ message: 'Error deleting consumables charge', error: error.message });
+    }
+});
+
 module.exports = router;
 
