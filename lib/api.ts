@@ -836,6 +836,37 @@ export const billingApi = {
     apiRequest<any[]>(`/api/billing/invoices/patient/${patientId}/pending`),
 };
 
+// Receivables API
+export const receivableApi = {
+  getAll: (status?: string, patientId?: string, search?: string, startDate?: string, endDate?: string) => {
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    if (patientId) params.append('patientId', patientId);
+    if (search) params.append('search', search);
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    return apiRequest<any[]>(`/api/receivables?${params.toString()}`);
+  },
+  
+  getById: (id: string) =>
+    apiRequest<any>(`/api/receivables/${id}`),
+  
+  create: (data: any) =>
+    apiRequest<any>('/api/receivables', { method: 'POST', body: data }),
+  
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/receivables/${id}`, { method: 'PUT', body: data }),
+  
+  delete: (id: string) =>
+    apiRequest<any>(`/api/receivables/${id}`, { method: 'DELETE' }),
+  
+  recordPayment: (id: string, data: any) =>
+    apiRequest<any>(`/api/receivables/${id}/payment`, { method: 'POST', body: data }),
+  
+  getStats: () =>
+    apiRequest<any>('/api/receivables/stats/summary'),
+};
+
 // Payables API
 export const payableApi = {
   getAll: (status?: string, vendorId?: string, search?: string, startDate?: string, endDate?: string) => {
