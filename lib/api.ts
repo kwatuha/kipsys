@@ -1078,6 +1078,57 @@ export const insuranceApi = {
     apiRequest<any>('/api/insurance/stats/summary'),
 };
 
+// Revenue Share Management API
+export const revenueShareApi = {
+  // Rules
+  getRules: (ruleType?: string, departmentId?: string, status?: string, search?: string) => {
+    const params = new URLSearchParams();
+    if (ruleType) params.append('ruleType', ruleType);
+    if (departmentId) params.append('departmentId', departmentId);
+    if (status) params.append('status', status);
+    if (search) params.append('search', search);
+    return apiRequest<any[]>(`/api/revenue-share/rules?${params.toString()}`);
+  },
+  
+  getRuleById: (id: string) =>
+    apiRequest<any>(`/api/revenue-share/rules/${id}`),
+  
+  createRule: (data: any) =>
+    apiRequest<any>('/api/revenue-share/rules', { method: 'POST', body: data }),
+  
+  updateRule: (id: string, data: any) =>
+    apiRequest<any>(`/api/revenue-share/rules/${id}`, { method: 'PUT', body: data }),
+  
+  deleteRule: (id: string) =>
+    apiRequest<any>(`/api/revenue-share/rules/${id}`, { method: 'DELETE' }),
+  
+  // Distributions
+  getDistributions: (status?: string, startDate?: string, endDate?: string, search?: string) => {
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    if (search) params.append('search', search);
+    return apiRequest<any[]>(`/api/revenue-share/distributions?${params.toString()}`);
+  },
+  
+  getDistributionById: (id: string) =>
+    apiRequest<any>(`/api/revenue-share/distributions/${id}`),
+  
+  createDistribution: (data: any) =>
+    apiRequest<any>('/api/revenue-share/distributions', { method: 'POST', body: data }),
+  
+  updateDistribution: (id: string, data: any) =>
+    apiRequest<any>(`/api/revenue-share/distributions/${id}`, { method: 'PUT', body: data }),
+  
+  deleteDistribution: (id: string) =>
+    apiRequest<any>(`/api/revenue-share/distributions/${id}`, { method: 'DELETE' }),
+  
+  // Statistics
+  getStats: () =>
+    apiRequest<any>('/api/revenue-share/stats/summary'),
+};
+
 // User API
 export const userApi = {
   getAll: () =>

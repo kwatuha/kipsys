@@ -1,198 +1,282 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
-import { Download, Search, ArrowUpDown, CheckCircle2, AlertCircle } from "lucide-react"
-import { DoctorRevenueAnalytics } from "@/components/doctor-revenue-analytics"
-import { DoctorPaymentForm } from "@/components/doctor-payment-form"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Search, Plus, Download, Loader2, MoreVertical, Eye, Edit, Trash2 } from "lucide-react"
+import { revenueShareApi, departmentApi } from "@/lib/api"
+import { toast } from "@/components/ui/use-toast"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import { AddRevenueShareRuleForm } from "@/components/add-revenue-share-rule-form"
+import { format } from "date-fns"
 
-export default function DoctorRevenueSharePage() {
-  const [openPaymentForm, setOpenPaymentForm] = useState(false)
-  const [selectedDoctor, setSelectedDoctor] = useState<string | null>(null)
-  const [timeframe, setTimeframe] = useState("month")
+export default function RevenueSharePage() {
+  const [isMounted, setIsMounted] = useState(false)
+  const [rules, setRules] = useState<any[]>([])
+  const [distributions, setDistributions] = useState<any[]>([])
+  const [rulesLoading, setRulesLoading] = useState(true)
+  const [distributionsLoading, setDistributionsLoading] = useState(true)
+  const [searchQuery, setSearchQuery] = useState("")
+  const [rulesStatusFilter, setRulesStatusFilter] = useState<string | null>(null)
+  const [distributionsStatusFilter, setDistributionsStatusFilter] = useState<string | null>(null)
+  const [selectedRule, setSelectedRule] = useState<any>(null)
+  const [selectedDistribution, setSelectedDistribution] = useState<any>(null)
+  const [viewRuleDialogOpen, setViewRuleDialogOpen] = useState(false)
+  const [viewDistributionDialogOpen, setViewDistributionDialogOpen] = useState(false)
+  const [deleteRuleDialogOpen, setDeleteRuleDialogOpen] = useState(false)
+  const [deleteDistributionDialogOpen, setDeleteDistributionDialogOpen] = useState(false)
+  const [deletingRule, setDeletingRule] = useState<any>(null)
+  const [deletingDistribution, setDeletingDistribution] = useState<any>(null)
+  const [deleteLoading, setDeleteLoading] = useState(false)
+  const [openAddRuleForm, setOpenAddRuleForm] = useState(false)
+  const [editingRule, setEditingRule] = useState<any>(null)
+  const [stats, setStats] = useState<any>(null)
+  const [statsLoading, setStatsLoading] = useState(true)
 
-  // Mock data for doctors revenue
-  const doctorsRevenue = [
-    {
-      id: "D-1001",
-      name: "Dr. James Ndiwa",
-      specialty: "Cardiology",
-      totalRevenue: 1250000,
-      hospitalShare: 375000, // 30%
-      kraShare: 62500, // 5%
-      doctorShare: 875000, // 70%
-      paidAmount: 750000,
-      pendingAmount: 125000,
-      patientCount: 78,
-      completedTreatments: 65,
-      lastPaymentDate: "2023-06-15",
-      status: "Partially Paid",
-    },
-    {
-      id: "D-1002",
-      name: "Dr. Sarah Wangui",
-      specialty: "Pediatrics",
-      totalRevenue: 980000,
-      hospitalShare: 294000,
-      kraShare: 49000,
-      doctorShare: 686000,
-      paidAmount: 686000,
-      pendingAmount: 0,
-      patientCount: 120,
-      completedTreatments: 110,
-      lastPaymentDate: "2023-06-20",
-      status: "Fully Paid",
-    },
-    {
-      id: "D-1003",
-      name: "Dr. Michael Omondi",
-      specialty: "Orthopedics",
-      totalRevenue: 1450000,
-      hospitalShare: 435000,
-      kraShare: 72500,
-      doctorShare: 1015000,
-      paidAmount: 800000,
-      pendingAmount: 215000,
-      patientCount: 65,
-      completedTreatments: 58,
-      lastPaymentDate: "2023-06-10",
-      status: "Partially Paid",
-    },
-    {
-      id: "D-1004",
-      name: "Dr. Emily Achieng",
-      specialty: "Gynecology",
-      totalRevenue: 1120000,
-      hospitalShare: 336000,
-      kraShare: 56000,
-      doctorShare: 784000,
-      paidAmount: 0,
-      pendingAmount: 784000,
-      patientCount: 92,
-      completedTreatments: 85,
-      lastPaymentDate: "-",
-      status: "Pending",
-    },
-    {
-      id: "D-1005",
-      name: "Dr. David Kiprop",
-      specialty: "Neurology",
-      totalRevenue: 1680000,
-      hospitalShare: 504000,
-      kraShare: 84000,
-      doctorShare: 1176000,
-      paidAmount: 1176000,
-      pendingAmount: 0,
-      patientCount: 45,
-      completedTreatments: 42,
-      lastPaymentDate: "2023-06-18",
-      status: "Fully Paid",
-    },
-  ]
+  useEffect(() => {
+    setIsMounted(true)
+  }, [])
 
-  // Mock data for recent payments
-  const recentPayments = [
-    {
-      id: "PAY-1001",
-      doctorId: "D-1001",
-      doctorName: "Dr. James Ndiwa",
-      amount: 350000,
-      date: "2023-06-15",
-      method: "Bank Transfer",
-      reference: "BT-20230615-001",
-      status: "Completed",
-    },
-    {
-      id: "PAY-1002",
-      doctorId: "D-1002",
-      doctorName: "Dr. Sarah Wangui",
-      amount: 686000,
-      date: "2023-06-20",
-      method: "Bank Transfer",
-      reference: "BT-20230620-001",
-      status: "Completed",
-    },
-    {
-      id: "PAY-1003",
-      doctorId: "D-1003",
-      doctorName: "Dr. Michael Omondi",
-      amount: 500000,
-      date: "2023-06-05",
-      method: "Bank Transfer",
-      reference: "BT-20230605-001",
-      status: "Completed",
-    },
-    {
-      id: "PAY-1004",
-      doctorId: "D-1003",
-      doctorName: "Dr. Michael Omondi",
-      amount: 300000,
-      date: "2023-06-10",
-      method: "Bank Transfer",
-      reference: "BT-20230610-001",
-      status: "Completed",
-    },
-    {
-      id: "PAY-1005",
-      doctorId: "D-1005",
-      doctorName: "Dr. David Kiprop",
-      amount: 1176000,
-      date: "2023-06-18",
-      method: "Bank Transfer",
-      reference: "BT-20230618-001",
-      status: "Completed",
-    },
-  ]
+  useEffect(() => {
+    if (isMounted) {
+      loadRules()
+      loadDistributions()
+      loadStats()
+    }
+  }, [isMounted, rulesStatusFilter, distributionsStatusFilter])
 
-  // Calculate totals
-  const totalRevenue = doctorsRevenue.reduce((sum, doctor) => sum + doctor.totalRevenue, 0)
-  const totalHospitalShare = doctorsRevenue.reduce((sum, doctor) => sum + doctor.hospitalShare, 0)
-  const totalKraShare = doctorsRevenue.reduce((sum, doctor) => sum + doctor.kraShare, 0)
-  const totalDoctorShare = doctorsRevenue.reduce((sum, doctor) => sum + doctor.doctorShare, 0)
-  const totalPaid = doctorsRevenue.reduce((sum, doctor) => sum + doctor.paidAmount, 0)
-  const totalPending = doctorsRevenue.reduce((sum, doctor) => sum + doctor.pendingAmount, 0)
-
-  // Format currency
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat("en-KE", {
-      style: "currency",
-      currency: "KES",
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    }).format(amount)
+  const loadRules = async () => {
+    try {
+      setRulesLoading(true)
+      const status = rulesStatusFilter === "active" ? "active" : rulesStatusFilter === "inactive" ? "inactive" : undefined
+      const data = await revenueShareApi.getRules(undefined, undefined, status)
+      setRules(data || [])
+    } catch (error: any) {
+      console.error("Error loading rules:", error)
+      toast({
+        title: "Error loading rules",
+        description: error.message || "Failed to load revenue share rules",
+        variant: "destructive",
+      })
+    } finally {
+      setRulesLoading(false)
+    }
   }
 
-  // Handle payment button click
-  const handlePaymentClick = (doctorId: string) => {
-    setSelectedDoctor(doctorId)
-    setOpenPaymentForm(true)
+  const loadDistributions = async () => {
+    try {
+      setDistributionsLoading(true)
+      const data = await revenueShareApi.getDistributions(distributionsStatusFilter || undefined)
+      setDistributions(data || [])
+    } catch (error: any) {
+      console.error("Error loading distributions:", error)
+      toast({
+        title: "Error loading distributions",
+        description: error.message || "Failed to load revenue share distributions",
+        variant: "destructive",
+      })
+    } finally {
+      setDistributionsLoading(false)
+    }
+  }
+
+  const loadStats = async () => {
+    try {
+      setStatsLoading(true)
+      const data = await revenueShareApi.getStats()
+      setStats(data)
+    } catch (error: any) {
+      console.error("Error loading stats:", error)
+    } finally {
+      setStatsLoading(false)
+    }
+  }
+
+  const handleViewRule = async (rule: any) => {
+    try {
+      const details = await revenueShareApi.getRuleById(rule.ruleId.toString())
+      setSelectedRule(details)
+      setViewRuleDialogOpen(true)
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to load rule details",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleViewDistribution = async (distribution: any) => {
+    try {
+      const details = await revenueShareApi.getDistributionById(distribution.distributionId.toString())
+      setSelectedDistribution(details)
+      setViewDistributionDialogOpen(true)
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to load distribution details",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleEditRule = (rule: any) => {
+    setEditingRule(rule)
+    setOpenAddRuleForm(true)
+  }
+
+  const handleDeleteRuleClick = (rule: any) => {
+    setDeletingRule(rule)
+    setDeleteRuleDialogOpen(true)
+  }
+
+  const handleDeleteRuleConfirm = async () => {
+    if (!deletingRule) return
+
+    try {
+      setDeleteLoading(true)
+      await revenueShareApi.deleteRule(deletingRule.ruleId.toString())
+      toast({
+        title: "Success",
+        description: "Revenue share rule deleted successfully",
+      })
+      setDeleteRuleDialogOpen(false)
+      setDeletingRule(null)
+      loadRules()
+      loadStats()
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to delete rule",
+        variant: "destructive",
+      })
+    } finally {
+      setDeleteLoading(false)
+    }
+  }
+
+  const handleDeleteDistributionClick = (distribution: any) => {
+    setDeletingDistribution(distribution)
+    setDeleteDistributionDialogOpen(true)
+  }
+
+  const handleDeleteDistributionConfirm = async () => {
+    if (!deletingDistribution) return
+
+    try {
+      setDeleteLoading(true)
+      await revenueShareApi.deleteDistribution(deletingDistribution.distributionId.toString())
+      toast({
+        title: "Success",
+        description: "Revenue share distribution deleted successfully",
+      })
+      setDeleteDistributionDialogOpen(false)
+      setDeletingDistribution(null)
+      loadDistributions()
+      loadStats()
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to delete distribution",
+        variant: "destructive",
+      })
+    } finally {
+      setDeleteLoading(false)
+    }
+  }
+
+  const handleRuleSaved = () => {
+    loadRules()
+    loadStats()
+    setEditingRule(null)
+  }
+
+  const formatCurrency = (amount: number | string) => {
+    const num = typeof amount === "string" ? parseFloat(amount) : amount
+    return new Intl.NumberFormat("en-KE", { style: "currency", currency: "KES" }).format(num)
+  }
+
+  const formatDate = (date: string) => {
+    if (!date) return "-"
+    return format(new Date(date), "MMM dd, yyyy")
+  }
+
+  const getStatusBadge = (status: string) => {
+    switch (status?.toLowerCase()) {
+      case "distributed":
+        return "default"
+      case "approved":
+        return "secondary"
+      case "pending":
+        return "outline"
+      case "draft":
+        return "outline"
+      default:
+        return "outline"
+    }
+  }
+
+  const filteredRules = rules.filter((rule) => {
+    if (!searchQuery) return true
+    const query = searchQuery.toLowerCase()
+    return rule.ruleName?.toLowerCase().includes(query) || rule.description?.toLowerCase().includes(query)
+  })
+
+  const filteredDistributions = distributions.filter((distribution) => {
+    if (!searchQuery) return true
+    const query = searchQuery.toLowerCase()
+    return distribution.distributionNumber?.toLowerCase().includes(query) || distribution.notes?.toLowerCase().includes(query)
+  })
+
+  if (!isMounted) {
+    return (
+      <div className="flex flex-col gap-6">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Revenue Share</h1>
+          <p className="text-muted-foreground">Manage revenue allocation rules and distributions</p>
+        </div>
+        <div className="flex items-center justify-center py-8">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      </div>
+    )
   }
 
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Doctors Revenue Share</h1>
-          <p className="text-muted-foreground">Manage revenue allocation and payments to doctors</p>
+          <h1 className="text-2xl font-bold tracking-tight">Revenue Share</h1>
+          <p className="text-muted-foreground">Manage revenue allocation rules and distributions</p>
         </div>
         <div className="flex gap-2">
-          <Select value={timeframe} onValueChange={setTimeframe}>
-            <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder="Select timeframe" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="month">This Month</SelectItem>
-              <SelectItem value="quarter">This Quarter</SelectItem>
-              <SelectItem value="year">This Year</SelectItem>
-              <SelectItem value="all">All Time</SelectItem>
-            </SelectContent>
-          </Select>
           <Button variant="outline">
             <Download className="mr-2 h-4 w-4" />
             Export
@@ -200,182 +284,107 @@ export default function DoctorRevenueSharePage() {
         </div>
       </div>
 
+      {/* Summary Cards */}
       <div className="grid gap-4 md:grid-cols-4">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Active Rules</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{statsLoading ? "..." : stats?.activeRules || 0}</div>
+            <p className="text-xs text-muted-foreground">Currently active allocation rules</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Draft Distributions</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{statsLoading ? "..." : stats?.draftDistributions || 0}</div>
+            <p className="text-xs text-muted-foreground">Distributions in draft status</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Approved Distributions</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{statsLoading ? "..." : stats?.approvedDistributions || 0}</div>
+            <p className="text-xs text-muted-foreground">Approved but not distributed</p>
+          </CardContent>
+        </Card>
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium">Total Revenue</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{formatCurrency(totalRevenue)}</div>
-            <p className="text-xs text-muted-foreground">From all doctors</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Hospital Share (30%)</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{formatCurrency(totalHospitalShare)}</div>
-            <p className="text-xs text-muted-foreground">KRA Share: {formatCurrency(totalKraShare)}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Doctors Share (70%)</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{formatCurrency(totalDoctorShare)}</div>
-            <p className="text-xs text-muted-foreground">Across all doctors</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Payment Status</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{formatCurrency(totalPaid)}</div>
-            <div className="flex items-center text-xs text-amber-500 mt-1">
-              <AlertCircle className="h-3 w-3 mr-1" />
-              {formatCurrency(totalPending)} pending
+            <div className="text-2xl font-bold">
+              {statsLoading ? "..." : formatCurrency(parseFloat(stats?.totalRevenue || 0))}
             </div>
+            <p className="text-xs text-muted-foreground">Total revenue distributed</p>
           </CardContent>
         </Card>
       </div>
 
-      <Tabs defaultValue="overview" className="w-full">
-        <TabsList className="grid w-full grid-cols-4">
-          <TabsTrigger value="overview">Revenue Overview</TabsTrigger>
-          <TabsTrigger value="doctors">Doctors Revenue</TabsTrigger>
-          <TabsTrigger value="payments">Payment History</TabsTrigger>
-          <TabsTrigger value="analytics">Analytics</TabsTrigger>
+      <Tabs defaultValue="rules" className="w-full">
+        <TabsList>
+          <TabsTrigger value="rules">Revenue Share Rules</TabsTrigger>
+          <TabsTrigger value="distributions">Distributions</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="overview" className="space-y-4 mt-4">
+        <TabsContent value="rules" className="space-y-4 mt-4">
           <Card>
             <CardHeader>
-              <CardTitle>Revenue Distribution</CardTitle>
-              <CardDescription>Overview of revenue allocation between hospital, KRA, and doctors</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-8">
-                <div className="space-y-2">
-                  <div className="flex justify-between items-center">
-                    <div className="font-medium">Hospital Share (30%)</div>
-                    <div>{formatCurrency(totalHospitalShare)}</div>
-                  </div>
-                  <div className="h-2 bg-muted rounded-full overflow-hidden">
-                    <div className="h-full bg-primary rounded-full" style={{ width: "30%" }}></div>
-                  </div>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Revenue Share Rules</CardTitle>
+                  <CardDescription>Define how revenue is allocated to departments or categories</CardDescription>
                 </div>
-
-                <div className="space-y-2">
-                  <div className="flex justify-between items-center">
-                    <div className="font-medium">KRA Share (5%)</div>
-                    <div>{formatCurrency(totalKraShare)}</div>
-                  </div>
-                  <div className="h-2 bg-muted rounded-full overflow-hidden">
-                    <div className="h-full bg-amber-500 rounded-full" style={{ width: "5%" }}></div>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <div className="flex justify-between items-center">
-                    <div className="font-medium">Doctors Share (70%)</div>
-                    <div>{formatCurrency(totalDoctorShare)}</div>
-                  </div>
-                  <div className="h-2 bg-muted rounded-full overflow-hidden">
-                    <div className="h-full bg-green-500 rounded-full" style={{ width: "70%" }}></div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <Card>
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm font-medium">Payment Status</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-2">
-                        <div className="flex justify-between items-center">
-                          <div className="flex items-center">
-                            <CheckCircle2 className="h-4 w-4 mr-2 text-green-500" />
-                            <span>Paid</span>
-                          </div>
-                          <div>{formatCurrency(totalPaid)}</div>
-                        </div>
-                        <div className="flex justify-between items-center">
-                          <div className="flex items-center">
-                            <AlertCircle className="h-4 w-4 mr-2 text-amber-500" />
-                            <span>Pending</span>
-                          </div>
-                          <div>{formatCurrency(totalPending)}</div>
-                        </div>
-                        <div className="h-2 bg-muted rounded-full overflow-hidden mt-2">
-                          <div
-                            className="h-full bg-green-500 rounded-full"
-                            style={{ width: `${(totalPaid / totalDoctorShare) * 100}%` }}
-                          ></div>
-                        </div>
-                        <div className="text-xs text-muted-foreground text-right mt-1">
-                          {Math.round((totalPaid / totalDoctorShare) * 100)}% paid
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-
-                  <Card>
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm font-medium">Top Performing Doctors</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-2">
-                        {doctorsRevenue
-                          .sort((a, b) => b.totalRevenue - a.totalRevenue)
-                          .slice(0, 3)
-                          .map((doctor, index) => (
-                            <div key={doctor.id} className="flex justify-between items-center">
-                              <div className="flex items-center">
-                                <div className="bg-primary text-primary-foreground w-5 h-5 rounded-full flex items-center justify-center text-xs mr-2">
-                                  {index + 1}
-                                </div>
-                                <span>{doctor.name}</span>
-                              </div>
-                              <div>{formatCurrency(doctor.totalRevenue)}</div>
-                            </div>
-                          ))}
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
+                <Button
+                  onClick={() => {
+                    setEditingRule(null)
+                    setOpenAddRuleForm(true)
+                  }}
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  New Rule
+                </Button>
               </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="doctors" className="space-y-4 mt-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Doctors Revenue</CardTitle>
-              <CardDescription>Revenue generated and payment status for each doctor</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="flex items-center justify-between mb-4">
-                <div className="flex gap-2">
-                  <Button variant="outline" size="sm">
+                <div className="flex gap-2 flex-wrap">
+                  <Button
+                    variant={rulesStatusFilter === null ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setRulesStatusFilter(null)}
+                  >
                     All
                   </Button>
-                  <Button variant="outline" size="sm">
-                    Fully Paid
+                  <Button
+                    variant={rulesStatusFilter === "active" ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setRulesStatusFilter("active")}
+                  >
+                    Active
                   </Button>
-                  <Button variant="outline" size="sm">
-                    Partially Paid
-                  </Button>
-                  <Button variant="outline" size="sm">
-                    Pending
+                  <Button
+                    variant={rulesStatusFilter === "inactive" ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setRulesStatusFilter("inactive")}
+                  >
+                    Inactive
                   </Button>
                 </div>
                 <div className="relative w-64">
                   <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input type="search" placeholder="Search doctors..." className="w-full pl-8" />
+                  <Input
+                    type="search"
+                    placeholder="Search rules..."
+                    className="w-full pl-8"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                  />
                 </div>
               </div>
 
@@ -383,67 +392,73 @@ export default function DoctorRevenueSharePage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Doctor</TableHead>
-                      <TableHead>Specialty</TableHead>
-                      <TableHead>
-                        <div className="flex items-center">
-                          Total Revenue
-                          <ArrowUpDown className="ml-1 h-3 w-3" />
-                        </div>
-                      </TableHead>
-                      <TableHead>Hospital Share</TableHead>
-                      <TableHead>KRA Share</TableHead>
-                      <TableHead>Doctor Share</TableHead>
-                      <TableHead>Paid Amount</TableHead>
-                      <TableHead>Pending</TableHead>
+                      <TableHead>Rule Name</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Department</TableHead>
+                      <TableHead>Percentage</TableHead>
+                      <TableHead>Effective From</TableHead>
+                      <TableHead>Effective To</TableHead>
                       <TableHead>Status</TableHead>
-                      <TableHead>Actions</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {doctorsRevenue.map((doctor) => (
-                      <TableRow key={doctor.id}>
-                        <TableCell>
-                          <div className="font-medium">{doctor.name}</div>
-                          <div className="text-xs text-muted-foreground">{doctor.id}</div>
-                        </TableCell>
-                        <TableCell>{doctor.specialty}</TableCell>
-                        <TableCell>{formatCurrency(doctor.totalRevenue)}</TableCell>
-                        <TableCell>{formatCurrency(doctor.hospitalShare)}</TableCell>
-                        <TableCell>{formatCurrency(doctor.kraShare)}</TableCell>
-                        <TableCell>{formatCurrency(doctor.doctorShare)}</TableCell>
-                        <TableCell>{formatCurrency(doctor.paidAmount)}</TableCell>
-                        <TableCell>{formatCurrency(doctor.pendingAmount)}</TableCell>
-                        <TableCell>
-                          <Badge
-                            variant={
-                              doctor.status === "Fully Paid"
-                                ? "default"
-                                : doctor.status === "Pending"
-                                  ? "secondary"
-                                  : "outline"
-                            }
-                          >
-                            {doctor.status}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex gap-2">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => handlePaymentClick(doctor.id)}
-                              disabled={doctor.pendingAmount === 0}
-                            >
-                              {doctor.pendingAmount > 0 ? "Pay" : "Paid"}
-                            </Button>
-                            <Button variant="outline" size="sm">
-                              Details
-                            </Button>
-                          </div>
+                    {rulesLoading ? (
+                      <TableRow>
+                        <TableCell colSpan={8} className="text-center py-8">
+                          <Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" />
+                          <p className="text-sm text-muted-foreground mt-2">Loading rules...</p>
                         </TableCell>
                       </TableRow>
-                    ))}
+                    ) : filteredRules.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                          No rules found
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      filteredRules.map((rule) => (
+                        <TableRow key={rule.ruleId}>
+                          <TableCell className="font-medium">{rule.ruleName}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline">{rule.ruleType}</Badge>
+                          </TableCell>
+                          <TableCell>{rule.departmentName || "-"}</TableCell>
+                          <TableCell>{rule.allocationPercentage}%</TableCell>
+                          <TableCell>{formatDate(rule.effectiveFrom)}</TableCell>
+                          <TableCell>{rule.effectiveTo ? formatDate(rule.effectiveTo) : "Ongoing"}</TableCell>
+                          <TableCell>
+                            <Badge variant={rule.isActive ? "default" : "secondary"}>
+                              {rule.isActive ? "Active" : "Inactive"}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon">
+                                  <MoreVertical className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem onClick={() => handleViewRule(rule)}>
+                                  <Eye className="mr-2 h-4 w-4" />
+                                  View Details
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => handleEditRule(rule)}>
+                                  <Edit className="mr-2 h-4 w-4" />
+                                  Edit
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem onClick={() => handleDeleteRuleClick(rule)} className="text-destructive">
+                                  <Trash2 className="mr-2 h-4 w-4" />
+                                  Delete
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
                   </TableBody>
                 </Table>
               </div>
@@ -451,28 +466,53 @@ export default function DoctorRevenueSharePage() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="payments" className="space-y-4 mt-4">
+        <TabsContent value="distributions" className="space-y-4 mt-4">
           <Card>
             <CardHeader>
-              <CardTitle>Payment History</CardTitle>
-              <CardDescription>Record of payments made to doctors</CardDescription>
+              <CardTitle>Revenue Share Distributions</CardTitle>
+              <CardDescription>View and manage revenue share distributions</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="flex items-center justify-between mb-4">
-                <div className="flex gap-2">
-                  <Button variant="outline" size="sm">
+                <div className="flex gap-2 flex-wrap">
+                  <Button
+                    variant={distributionsStatusFilter === null ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setDistributionsStatusFilter(null)}
+                  >
                     All
                   </Button>
-                  <Button variant="outline" size="sm">
-                    This Month
+                  <Button
+                    variant={distributionsStatusFilter === "draft" ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setDistributionsStatusFilter("draft")}
+                  >
+                    Draft
                   </Button>
-                  <Button variant="outline" size="sm">
-                    Last Month
+                  <Button
+                    variant={distributionsStatusFilter === "approved" ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setDistributionsStatusFilter("approved")}
+                  >
+                    Approved
+                  </Button>
+                  <Button
+                    variant={distributionsStatusFilter === "distributed" ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setDistributionsStatusFilter("distributed")}
+                  >
+                    Distributed
                   </Button>
                 </div>
                 <div className="relative w-64">
                   <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input type="search" placeholder="Search payments..." className="w-full pl-8" />
+                  <Input
+                    type="search"
+                    placeholder="Search distributions..."
+                    className="w-full pl-8"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                  />
                 </div>
               </div>
 
@@ -480,60 +520,288 @@ export default function DoctorRevenueSharePage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Payment ID</TableHead>
-                      <TableHead>Doctor</TableHead>
-                      <TableHead>Amount</TableHead>
-                      <TableHead>
-                        <div className="flex items-center">
-                          Date
-                          <ArrowUpDown className="ml-1 h-3 w-3" />
-                        </div>
-                      </TableHead>
-                      <TableHead>Method</TableHead>
-                      <TableHead>Reference</TableHead>
+                      <TableHead>Distribution Number</TableHead>
+                      <TableHead>Distribution Date</TableHead>
+                      <TableHead>Period</TableHead>
+                      <TableHead>Total Revenue</TableHead>
+                      <TableHead>Total Distributed</TableHead>
                       <TableHead>Status</TableHead>
-                      <TableHead>Actions</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {recentPayments.map((payment) => (
-                      <TableRow key={payment.id}>
-                        <TableCell className="font-medium">{payment.id}</TableCell>
-                        <TableCell>
-                          <div>{payment.doctorName}</div>
-                          <div className="text-xs text-muted-foreground">{payment.doctorId}</div>
-                        </TableCell>
-                        <TableCell>{formatCurrency(payment.amount)}</TableCell>
-                        <TableCell>{payment.date}</TableCell>
-                        <TableCell>{payment.method}</TableCell>
-                        <TableCell>{payment.reference}</TableCell>
-                        <TableCell>
-                          <Badge variant="default">{payment.status}</Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Button variant="outline" size="sm">
-                            View
-                          </Button>
+                    {distributionsLoading ? (
+                      <TableRow>
+                        <TableCell colSpan={7} className="text-center py-8">
+                          <Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" />
+                          <p className="text-sm text-muted-foreground mt-2">Loading distributions...</p>
                         </TableCell>
                       </TableRow>
-                    ))}
+                    ) : filteredDistributions.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                          No distributions found
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      filteredDistributions.map((distribution) => (
+                        <TableRow key={distribution.distributionId}>
+                          <TableCell className="font-medium">{distribution.distributionNumber}</TableCell>
+                          <TableCell>{formatDate(distribution.distributionDate)}</TableCell>
+                          <TableCell>
+                            {formatDate(distribution.periodStart)} - {formatDate(distribution.periodEnd)}
+                          </TableCell>
+                          <TableCell>{formatCurrency(distribution.totalRevenue)}</TableCell>
+                          <TableCell>{formatCurrency(distribution.totalDistributed)}</TableCell>
+                          <TableCell>
+                            <Badge variant={getStatusBadge(distribution.status)}>
+                              {distribution.status?.charAt(0).toUpperCase() + distribution.status?.slice(1)}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon">
+                                  <MoreVertical className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem onClick={() => handleViewDistribution(distribution)}>
+                                  <Eye className="mr-2 h-4 w-4" />
+                                  View Details
+                                </DropdownMenuItem>
+                                {distribution.status === "draft" && (
+                                  <>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem
+                                      onClick={() => handleDeleteDistributionClick(distribution)}
+                                      className="text-destructive"
+                                    >
+                                      <Trash2 className="mr-2 h-4 w-4" />
+                                      Delete
+                                    </DropdownMenuItem>
+                                  </>
+                                )}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
                   </TableBody>
                 </Table>
               </div>
             </CardContent>
           </Card>
-        </TabsContent>
-
-        <TabsContent value="analytics" className="space-y-4 mt-4">
-          <DoctorRevenueAnalytics />
         </TabsContent>
       </Tabs>
 
-      <DoctorPaymentForm
-        open={openPaymentForm}
-        onOpenChange={setOpenPaymentForm}
-        doctorId={selectedDoctor}
-        doctors={doctorsRevenue}
+      {/* View Rule Dialog */}
+      {selectedRule && (
+        <Dialog open={viewRuleDialogOpen} onOpenChange={setViewRuleDialogOpen}>
+          <DialogContent className="sm:max-w-[600px]">
+            <DialogHeader>
+              <DialogTitle>Revenue Share Rule Details</DialogTitle>
+              <DialogDescription>View complete rule information</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Rule Name</p>
+                  <p className="text-sm font-semibold">{selectedRule.ruleName || "—"}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Rule Type</p>
+                  <p className="text-sm font-semibold">{selectedRule.ruleType || "—"}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Department</p>
+                  <p className="text-sm font-semibold">{selectedRule.departmentName || "—"}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Allocation Percentage</p>
+                  <p className="text-sm font-semibold">{selectedRule.allocationPercentage}%</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Effective From</p>
+                  <p className="text-sm">{formatDate(selectedRule.effectiveFrom)}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Effective To</p>
+                  <p className="text-sm">{selectedRule.effectiveTo ? formatDate(selectedRule.effectiveTo) : "Ongoing"}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Status</p>
+                  <Badge variant={selectedRule.isActive ? "default" : "secondary"}>
+                    {selectedRule.isActive ? "Active" : "Inactive"}
+                  </Badge>
+                </div>
+              </div>
+              {selectedRule.description && (
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Description</p>
+                  <p className="text-sm">{selectedRule.description}</p>
+                </div>
+              )}
+              {selectedRule.notes && (
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Notes</p>
+                  <p className="text-sm">{selectedRule.notes}</p>
+                </div>
+              )}
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* View Distribution Dialog */}
+      {selectedDistribution && (
+        <Dialog open={viewDistributionDialogOpen} onOpenChange={setViewDistributionDialogOpen}>
+          <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Revenue Share Distribution Details</DialogTitle>
+              <DialogDescription>View complete distribution information</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Distribution Number</p>
+                  <p className="text-sm font-semibold">{selectedDistribution.distributionNumber || "—"}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Distribution Date</p>
+                  <p className="text-sm">{formatDate(selectedDistribution.distributionDate)}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Period Start</p>
+                  <p className="text-sm">{formatDate(selectedDistribution.periodStart)}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Period End</p>
+                  <p className="text-sm">{formatDate(selectedDistribution.periodEnd)}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Total Revenue</p>
+                  <p className="text-sm font-semibold">{formatCurrency(selectedDistribution.totalRevenue)}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Total Distributed</p>
+                  <p className="text-sm font-semibold">{formatCurrency(selectedDistribution.totalDistributed)}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Status</p>
+                  <Badge variant={getStatusBadge(selectedDistribution.status)}>
+                    {selectedDistribution.status?.charAt(0).toUpperCase() + selectedDistribution.status?.slice(1)}
+                  </Badge>
+                </div>
+              </div>
+              {selectedDistribution.items && selectedDistribution.items.length > 0 && (
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground mb-2">Distribution Items</p>
+                  <div className="rounded-md border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Department</TableHead>
+                          <TableHead>Revenue Amount</TableHead>
+                          <TableHead>Percentage</TableHead>
+                          <TableHead>Distributed Amount</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {selectedDistribution.items.map((item: any, index: number) => (
+                          <TableRow key={index}>
+                            <TableCell>{item.departmentName || "-"}</TableCell>
+                            <TableCell>{formatCurrency(item.revenueAmount)}</TableCell>
+                            <TableCell>{item.allocationPercentage}%</TableCell>
+                            <TableCell>{formatCurrency(item.distributedAmount)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+              )}
+              {selectedDistribution.notes && (
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Notes</p>
+                  <p className="text-sm">{selectedDistribution.notes}</p>
+                </div>
+              )}
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* Delete Rule Dialog */}
+      <AlertDialog open={deleteRuleDialogOpen} onOpenChange={setDeleteRuleDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Revenue Share Rule?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this revenue share rule? This action cannot be undone.
+              {deletingRule && (
+                <div className="mt-2 p-2 bg-muted rounded">
+                  <p className="font-medium">Rule: {deletingRule.ruleName}</p>
+                  <p className="text-sm">Type: {deletingRule.ruleType}</p>
+                  <p className="text-sm">Percentage: {deletingRule.allocationPercentage}%</p>
+                </div>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteLoading}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteRuleConfirm}
+              disabled={deleteLoading}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {deleteLoading ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Delete Distribution Dialog */}
+      <AlertDialog open={deleteDistributionDialogOpen} onOpenChange={setDeleteDistributionDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Revenue Share Distribution?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this revenue share distribution? This action can only be performed on draft
+              distributions and cannot be undone.
+              {deletingDistribution && (
+                <div className="mt-2 p-2 bg-muted rounded">
+                  <p className="font-medium">Distribution: {deletingDistribution.distributionNumber}</p>
+                  <p className="text-sm">Total Revenue: {formatCurrency(deletingDistribution.totalRevenue)}</p>
+                  <p className="text-sm">Status: {deletingDistribution.status}</p>
+                </div>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteLoading}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteDistributionConfirm}
+              disabled={deleteLoading}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {deleteLoading ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AddRevenueShareRuleForm
+        open={openAddRuleForm}
+        onOpenChange={(open) => {
+          setOpenAddRuleForm(open)
+          if (!open) {
+            setEditingRule(null)
+          }
+        }}
+        onSuccess={handleRuleSaved}
+        editData={editingRule}
       />
     </div>
   )

@@ -46,6 +46,7 @@ const budgetRoutes = require('./routes/budgetRoutes');
 const cashRoutes = require('./routes/cashRoutes');
 const assetRoutes = require('./routes/assetRoutes');
 const insuranceRoutes = require('./routes/insuranceRoutes');
+const revenueShareRoutes = require('./routes/revenueShareRoutes');
 
 const authenticate = require('./middleware/authenticate');
 
@@ -107,6 +108,7 @@ app.use('/api/budgets', budgetRoutes);
 app.use('/api/cash', cashRoutes);
 app.use('/api/assets', assetRoutes);
 app.use('/api/insurance', insuranceRoutes);
+app.use('/api/revenue-share', revenueShareRoutes);
 // IMPORTANT: More specific routes must come before generic routes
 app.use('/api/inventory/transactions', inventoryTransactionRoutes);
 app.use('/api/inventory', inventoryRoutes);
