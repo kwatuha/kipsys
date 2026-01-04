@@ -7,8 +7,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge"
 import { Search, Plus, Download, Edit, Trash2, Filter, Loader2 } from "lucide-react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { AddServiceChargeForm } from "@/components/add-service-charge-form"
-import { serviceChargeApi } from "@/lib/api"
+import { AddSpecialistChargeForm } from "@/components/add-specialist-charge-form"
+import { serviceChargeApi, specialistChargeApi } from "@/lib/api"
 import { toast } from "@/components/ui/use-toast"
 import {
   AlertDialog,
@@ -35,14 +37,34 @@ interface ServiceCharge {
   updatedAt: string
 }
 
+interface SpecialistCharge {
+  specialistChargeId: number
+  chargeId: number
+  doctorId: number
+  amount: number
+  effectiveFrom: string
+  effectiveTo: string | null
+  chargeCode?: string
+  chargeName?: string
+  doctorFirstName?: string
+  doctorLastName?: string
+}
+
 export default function HospitalChargesPage() {
   const [serviceCharges, setServiceCharges] = useState<ServiceCharge[]>([])
+  const [specialistCharges, setSpecialistCharges] = useState<SpecialistCharge[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadingSpecialist, setLoadingSpecialist] = useState(false)
   const [showAddForm, setShowAddForm] = useState(false)
+  const [showSpecialistForm, setShowSpecialistForm] = useState(false)
   const [editingCharge, setEditingCharge] = useState<ServiceCharge | null>(null)
+  const [editingSpecialistCharge, setEditingSpecialistCharge] = useState<SpecialistCharge | null>(null)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [chargeToDelete, setChargeToDelete] = useState<ServiceCharge | null>(null)
+  const [specialistDeleteDialogOpen, setSpecialistDeleteDialogOpen] = useState(false)
+  const [specialistChargeToDelete, setSpecialistChargeToDelete] = useState<SpecialistCharge | null>(null)
   const [searchTerm, setSearchTerm] = useState("")
+  const [specialistSearchTerm, setSpecialistSearchTerm] = useState("")
   const [categoryFilter, setCategoryFilter] = useState<string>("all")
   const [departmentFilter, setDepartmentFilter] = useState<string>("all")
   const [statusFilter, setStatusFilter] = useState<string>("all")
@@ -50,6 +72,10 @@ export default function HospitalChargesPage() {
   useEffect(() => {
     loadCharges()
   }, [categoryFilter, departmentFilter, statusFilter, searchTerm])
+
+  useEffect(() => {
+    loadSpecialistCharges()
+  }, [specialistSearchTerm])
 
   const loadCharges = async () => {
     try {
@@ -73,9 +99,31 @@ export default function HospitalChargesPage() {
     }
   }
 
+  const loadSpecialistCharges = async () => {
+    try {
+      setLoadingSpecialist(true)
+      const data = await specialistChargeApi.getAll(undefined, undefined, specialistSearchTerm || undefined)
+      setSpecialistCharges(Array.isArray(data) ? data : [])
+    } catch (error: any) {
+      console.error("Error loading specialist charges:", error)
+      toast({
+        title: "Error",
+        description: "Failed to load specialist charges.",
+        variant: "destructive",
+      })
+    } finally {
+      setLoadingSpecialist(false)
+    }
+  }
+
   const handleAdd = () => {
     setEditingCharge(null)
     setShowAddForm(true)
+  }
+
+  const handleAddSpecialist = () => {
+    setEditingSpecialistCharge(null)
+    setShowSpecialistForm(true)
   }
 
   const handleEdit = (charge: ServiceCharge) => {
@@ -83,9 +131,19 @@ export default function HospitalChargesPage() {
     setShowAddForm(true)
   }
 
+  const handleEditSpecialist = (charge: SpecialistCharge) => {
+    setEditingSpecialistCharge(charge)
+    setShowSpecialistForm(true)
+  }
+
   const handleDelete = (charge: ServiceCharge) => {
     setChargeToDelete(charge)
     setDeleteDialogOpen(true)
+  }
+
+  const handleDeleteSpecialist = (charge: SpecialistCharge) => {
+    setSpecialistChargeToDelete(charge)
+    setSpecialistDeleteDialogOpen(true)
   }
 
   const confirmDelete = async () => {
@@ -109,6 +167,27 @@ export default function HospitalChargesPage() {
     }
   }
 
+  const confirmDeleteSpecialist = async () => {
+    if (!specialistChargeToDelete) return
+
+    try {
+      await specialistChargeApi.delete(specialistChargeToDelete.specialistChargeId.toString())
+      toast({
+        title: "Success",
+        description: "Specialist charge deleted successfully.",
+      })
+      setSpecialistDeleteDialogOpen(false)
+      setSpecialistChargeToDelete(null)
+      loadSpecialistCharges()
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to delete specialist charge.",
+        variant: "destructive",
+      })
+    }
+  }
+
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat("en-KE", { style: "currency", currency: "KES", minimumFractionDigits: 0 }).format(amount)
   }
@@ -118,205 +197,302 @@ export default function HospitalChargesPage() {
 
   const filteredCharges = serviceCharges // Already filtered by API
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    )
-  }
-
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Hospital Charges</h1>
-          <p className="text-muted-foreground">Configure and manage service charges across all departments</p>
+          <p className="text-muted-foreground">Configure and manage service charges and specialist charges</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline">
             <Download className="mr-2 h-4 w-4" />
             Export
           </Button>
-          <Button onClick={handleAdd}>
-            <Plus className="mr-2 h-4 w-4" />
-            New Service Charge
-          </Button>
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Total Services</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{serviceCharges.length}</div>
-            <p className="text-xs text-muted-foreground">Across {categories.length} categories</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Average Charge</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {serviceCharges.length > 0
-                ? formatCurrency(serviceCharges.reduce((sum, charge) => sum + parseFloat(charge.cost.toString()), 0) / serviceCharges.length)
-                : formatCurrency(0)}
-            </div>
-            <p className="text-xs text-muted-foreground">Per service</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Highest Charge</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {serviceCharges.length > 0
-                ? formatCurrency(Math.max(...serviceCharges.map((charge) => parseFloat(charge.cost.toString()))))
-                : formatCurrency(0)}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {serviceCharges.length > 0
-                ? serviceCharges.reduce((max, charge) => (parseFloat(charge.cost.toString()) > parseFloat(max.cost.toString()) ? charge : max), serviceCharges[0]).name
-                : "—"}
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Departments</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{departments.length}</div>
-            <p className="text-xs text-muted-foreground">With configured charges</p>
-          </CardContent>
-        </Card>
-      </div>
+      <Tabs defaultValue="service-charges" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="service-charges">Service Charges</TabsTrigger>
+          <TabsTrigger value="specialist-charges">Specialist Charges</TabsTrigger>
+        </TabsList>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Service Charges</CardTitle>
-          <CardDescription>View and manage all hospital service charges</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-col gap-4">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-                  <SelectTrigger className="w-[180px]">
-                    <SelectValue placeholder="All Categories" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Categories</SelectItem>
-                    {categories.map((category) => (
-                      <SelectItem key={category} value={category || ""}>
-                        {category}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Select value={departmentFilter} onValueChange={setDepartmentFilter}>
-                  <SelectTrigger className="w-[180px]">
-                    <SelectValue placeholder="All Departments" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Departments</SelectItem>
-                    {departments.map((department) => (
-                      <SelectItem key={department} value={department || ""}>
-                        {department}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Select value={statusFilter} onValueChange={setStatusFilter}>
-                  <SelectTrigger className="w-[180px]">
-                    <SelectValue placeholder="All Status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Status</SelectItem>
-                    <SelectItem value="Active">Active</SelectItem>
-                    <SelectItem value="Inactive">Inactive</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="relative w-full sm:w-64">
-                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input
-                  type="search"
-                  placeholder="Search services..."
-                  className="w-full pl-8"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                />
-              </div>
-            </div>
-
-            {filteredCharges.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                <p>No service charges found.</p>
-              </div>
-            ) : (
-              <div className="rounded-md border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Charge Code</TableHead>
-                      <TableHead>Service Name</TableHead>
-                      <TableHead>Category</TableHead>
-                      <TableHead>Department</TableHead>
-                      <TableHead>Cost</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Last Updated</TableHead>
-                      <TableHead>Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredCharges.map((charge) => (
-                      <TableRow key={charge.chargeId}>
-                        <TableCell className="font-medium">{charge.chargeCode || "—"}</TableCell>
-                        <TableCell>
-                          {charge.name}
-                          {charge.description && (
-                            <div className="text-xs text-muted-foreground">{charge.description}</div>
-                          )}
-                        </TableCell>
-                        <TableCell>{charge.category || "—"}</TableCell>
-                        <TableCell>{charge.department || "—"}</TableCell>
-                        <TableCell>{formatCurrency(parseFloat(charge.cost.toString()))}</TableCell>
-                        <TableCell>
-                          <Badge variant={charge.status === "Active" ? "default" : "secondary"}>
-                            {charge.status}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>{formatDate(charge.updatedAt)}</TableCell>
-                        <TableCell>
-                          <div className="flex gap-2">
-                            <Button variant="outline" size="icon" onClick={() => handleEdit(charge)} title="Edit">
-                              <Edit className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              variant="outline"
-                              size="icon"
-                              onClick={() => handleDelete(charge)}
-                              title="Delete"
-                              className="text-destructive hover:text-destructive"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
+        <TabsContent value="service-charges" className="space-y-4">
+          <div className="flex items-center justify-end">
+            <Button onClick={handleAdd}>
+              <Plus className="mr-2 h-4 w-4" />
+              New Service Charge
+            </Button>
           </div>
-        </CardContent>
-      </Card>
+
+          <div className="grid gap-4 md:grid-cols-4">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">Total Services</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{serviceCharges.length}</div>
+                <p className="text-xs text-muted-foreground">Across {categories.length} categories</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">Average Charge</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  {serviceCharges.length > 0
+                    ? formatCurrency(serviceCharges.reduce((sum, charge) => sum + parseFloat(charge.cost.toString()), 0) / serviceCharges.length)
+                    : formatCurrency(0)}
+                </div>
+                <p className="text-xs text-muted-foreground">Per service</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">Highest Charge</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  {serviceCharges.length > 0
+                    ? formatCurrency(Math.max(...serviceCharges.map((charge) => parseFloat(charge.cost.toString()))))
+                    : formatCurrency(0)}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {serviceCharges.length > 0
+                    ? serviceCharges.reduce((max, charge) => (parseFloat(charge.cost.toString()) > parseFloat(max.cost.toString()) ? charge : max), serviceCharges[0]).name
+                    : "—"}
+                </p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">Departments</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{departments.length}</div>
+                <p className="text-xs text-muted-foreground">With configured charges</p>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Service Charges</CardTitle>
+              <CardDescription>View and manage all hospital service charges</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-col gap-4">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                      <SelectTrigger className="w-[180px]">
+                        <SelectValue placeholder="All Categories" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Categories</SelectItem>
+                        {categories.map((category) => (
+                          <SelectItem key={category} value={category || ""}>
+                            {category}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select value={departmentFilter} onValueChange={setDepartmentFilter}>
+                      <SelectTrigger className="w-[180px]">
+                        <SelectValue placeholder="All Departments" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Departments</SelectItem>
+                        {departments.map((department) => (
+                          <SelectItem key={department} value={department || ""}>
+                            {department}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select value={statusFilter} onValueChange={setStatusFilter}>
+                      <SelectTrigger className="w-[180px]">
+                        <SelectValue placeholder="All Status" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Status</SelectItem>
+                        <SelectItem value="Active">Active</SelectItem>
+                        <SelectItem value="Inactive">Inactive</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="relative w-full sm:w-64">
+                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      type="search"
+                      placeholder="Search services..."
+                      className="w-full pl-8"
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                {loading ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                  </div>
+                ) : filteredCharges.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <p>No service charges found.</p>
+                  </div>
+                ) : (
+                  <div className="rounded-md border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Charge Code</TableHead>
+                          <TableHead>Service Name</TableHead>
+                          <TableHead>Category</TableHead>
+                          <TableHead>Department</TableHead>
+                          <TableHead>Cost</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Last Updated</TableHead>
+                          <TableHead>Actions</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {filteredCharges.map((charge) => (
+                          <TableRow key={charge.chargeId}>
+                            <TableCell className="font-medium">{charge.chargeCode || "—"}</TableCell>
+                            <TableCell>
+                              {charge.name}
+                              {charge.description && (
+                                <div className="text-xs text-muted-foreground">{charge.description}</div>
+                              )}
+                            </TableCell>
+                            <TableCell>{charge.category || "—"}</TableCell>
+                            <TableCell>{charge.department || "—"}</TableCell>
+                            <TableCell>{formatCurrency(parseFloat(charge.cost.toString()))}</TableCell>
+                            <TableCell>
+                              <Badge variant={charge.status === "Active" ? "default" : "secondary"}>
+                                {charge.status}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>{formatDate(charge.updatedAt)}</TableCell>
+                            <TableCell>
+                              <div className="flex gap-2">
+                                <Button variant="outline" size="icon" onClick={() => handleEdit(charge)} title="Edit">
+                                  <Edit className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="icon"
+                                  onClick={() => handleDelete(charge)}
+                                  title="Delete"
+                                  className="text-destructive hover:text-destructive"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="specialist-charges" className="space-y-4">
+          <div className="flex items-center justify-end">
+            <Button onClick={handleAddSpecialist}>
+              <Plus className="mr-2 h-4 w-4" />
+              New Specialist Charge
+            </Button>
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Specialist Charges</CardTitle>
+              <CardDescription>Manage additional charges or fee adjustments for specific doctors and charges</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-col gap-4">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-end">
+                  <div className="relative w-full sm:w-64">
+                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      type="search"
+                      placeholder="Search by charge or doctor..."
+                      className="w-full pl-8"
+                      value={specialistSearchTerm}
+                      onChange={(e) => setSpecialistSearchTerm(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                {loadingSpecialist ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                  </div>
+                ) : specialistCharges.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <p>No specialist charges found.</p>
+                  </div>
+                ) : (
+                  <div className="rounded-md border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Charge</TableHead>
+                          <TableHead>Doctor</TableHead>
+                          <TableHead>Amount</TableHead>
+                          <TableHead>Effective From</TableHead>
+                          <TableHead>Effective To</TableHead>
+                          <TableHead>Actions</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {specialistCharges.map((charge) => (
+                          <TableRow key={charge.specialistChargeId}>
+                            <TableCell className="font-medium">
+                              {charge.chargeCode && `${charge.chargeCode} - `}
+                              {charge.chargeName || `Charge #${charge.chargeId}`}
+                            </TableCell>
+                            <TableCell>
+                              {charge.doctorFirstName?.startsWith('Dr.') ? charge.doctorFirstName : `Dr. ${charge.doctorFirstName}`} {charge.doctorLastName}
+                            </TableCell>
+                            <TableCell>{formatCurrency(parseFloat(charge.amount.toString()))}</TableCell>
+                            <TableCell>{formatDate(charge.effectiveFrom)}</TableCell>
+                            <TableCell>{charge.effectiveTo ? formatDate(charge.effectiveTo) : "Ongoing"}</TableCell>
+                            <TableCell>
+                              <div className="flex gap-2">
+                                <Button variant="outline" size="icon" onClick={() => handleEditSpecialist(charge)} title="Edit">
+                                  <Edit className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="icon"
+                                  onClick={() => handleDeleteSpecialist(charge)}
+                                  title="Delete"
+                                  className="text-destructive hover:text-destructive"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
 
       <AddServiceChargeForm
         open={showAddForm}
@@ -331,6 +507,21 @@ export default function HospitalChargesPage() {
           setEditingCharge(null)
         }}
         editData={editingCharge}
+      />
+
+      <AddSpecialistChargeForm
+        open={showSpecialistForm}
+        onOpenChange={(open) => {
+          setShowSpecialistForm(open)
+          if (!open) {
+            setEditingSpecialistCharge(null)
+          }
+        }}
+        onSuccess={() => {
+          loadSpecialistCharges()
+          setEditingSpecialistCharge(null)
+        }}
+        editData={editingSpecialistCharge}
       />
 
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
@@ -350,6 +541,32 @@ export default function HospitalChargesPage() {
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={confirmDelete}
+              className="bg-destructive text-destructive-foreground"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={specialistDeleteDialogOpen} onOpenChange={setSpecialistDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Specialist Charge</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this specialist charge?
+              {specialistChargeToDelete && (
+                <span className="block mt-2 text-sm">
+                  This will permanently delete the specialist charge for {specialistChargeToDelete.chargeName || `Charge #${specialistChargeToDelete.chargeId}`} 
+                  {" "}with Dr. {specialistChargeToDelete.doctorFirstName} {specialistChargeToDelete.doctorLastName}.
+                </span>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDeleteSpecialist}
               className="bg-destructive text-destructive-foreground"
             >
               Delete

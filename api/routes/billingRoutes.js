@@ -955,5 +955,213 @@ router.delete('/mobile-payment-logs/:id', async (req, res) => {
     }
 });
 
+// Specialist Charges Routes
+/**
+ * @route GET /api/billing/specialist-charges
+ * @description Get all specialist charges (optionally filtered)
+ */
+router.get('/specialist-charges', async (req, res) => {
+    try {
+        const { chargeId, doctorId, search } = req.query;
+        let query = `
+            SELECT sc.*,
+                   ch.chargeCode, ch.name as chargeName,
+                   u.firstName as doctorFirstName, u.lastName as doctorLastName
+            FROM specialist_charges sc
+            LEFT JOIN service_charges ch ON sc.chargeId = ch.chargeId
+            LEFT JOIN users u ON sc.doctorId = u.userId
+            WHERE 1=1
+        `;
+        const params = [];
+
+        if (chargeId) {
+            query += ' AND sc.chargeId = ?';
+            params.push(chargeId);
+        }
+
+        if (doctorId) {
+            query += ' AND sc.doctorId = ?';
+            params.push(doctorId);
+        }
+
+        if (search) {
+            query += ' AND (ch.name LIKE ? OR u.firstName LIKE ? OR u.lastName LIKE ?)';
+            const searchTerm = `%${search}%`;
+            params.push(searchTerm, searchTerm, searchTerm);
+        }
+
+        query += ' ORDER BY sc.effectiveFrom DESC, sc.createdAt DESC';
+        
+        const [rows] = await pool.query(query, params);
+        res.status(200).json(rows);
+    } catch (error) {
+        console.error('Error fetching specialist charges:', error);
+        res.status(500).json({ message: 'Error fetching specialist charges', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/billing/specialist-charges/:id
+ * @description Get a single specialist charge by ID
+ */
+router.get('/specialist-charges/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const [rows] = await pool.query(`
+            SELECT sc.*,
+                   ch.chargeCode, ch.name as chargeName,
+                   u.firstName as doctorFirstName, u.lastName as doctorLastName
+            FROM specialist_charges sc
+            LEFT JOIN service_charges ch ON sc.chargeId = ch.chargeId
+            LEFT JOIN users u ON sc.doctorId = u.userId
+            WHERE sc.specialistChargeId = ?
+        `, [id]);
+        
+        if (rows.length === 0) {
+            return res.status(404).json({ message: 'Specialist charge not found' });
+        }
+        
+        res.status(200).json(rows[0]);
+    } catch (error) {
+        console.error('Error fetching specialist charge:', error);
+        res.status(500).json({ message: 'Error fetching specialist charge', error: error.message });
+    }
+});
+
+/**
+ * @route POST /api/billing/specialist-charges
+ * @description Create a new specialist charge
+ */
+router.post('/specialist-charges', async (req, res) => {
+    try {
+        const { chargeId, doctorId, amount, effectiveFrom, effectiveTo } = req.body;
+        
+        if (!chargeId || !doctorId || !amount || !effectiveFrom) {
+            return res.status(400).json({ error: 'Charge, doctor, amount, and effectiveFrom date are required' });
+        }
+
+        // Check if charge exists
+        const [chargeCheck] = await pool.query('SELECT chargeId FROM service_charges WHERE chargeId = ?', [chargeId]);
+        if (chargeCheck.length === 0) {
+            return res.status(400).json({ error: 'Service charge not found' });
+        }
+
+        // Check if doctor exists
+        const [doctorCheck] = await pool.query('SELECT userId FROM users WHERE userId = ?', [doctorId]);
+        if (doctorCheck.length === 0) {
+            return res.status(400).json({ error: 'Doctor not found' });
+        }
+
+        const [result] = await pool.query(
+            'INSERT INTO specialist_charges (chargeId, doctorId, amount, effectiveFrom, effectiveTo) VALUES (?, ?, ?, ?, ?)',
+            [chargeId, doctorId, amount, effectiveFrom, effectiveTo || null]
+        );
+        
+        const [newCharge] = await pool.query(`
+            SELECT sc.*,
+                   ch.chargeCode, ch.name as chargeName,
+                   u.firstName as doctorFirstName, u.lastName as doctorLastName
+            FROM specialist_charges sc
+            LEFT JOIN service_charges ch ON sc.chargeId = ch.chargeId
+            LEFT JOIN users u ON sc.doctorId = u.userId
+            WHERE sc.specialistChargeId = ?
+        `, [result.insertId]);
+        
+        res.status(201).json(newCharge[0]);
+    } catch (error) {
+        console.error('Error creating specialist charge:', error);
+        res.status(500).json({ message: 'Error creating specialist charge', error: error.message });
+    }
+});
+
+/**
+ * @route PUT /api/billing/specialist-charges/:id
+ * @description Update a specialist charge
+ */
+router.put('/specialist-charges/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { chargeId, doctorId, amount, effectiveFrom, effectiveTo } = req.body;
+
+        // Check if specialist charge exists
+        const [existing] = await pool.query('SELECT specialistChargeId FROM specialist_charges WHERE specialistChargeId = ?', [id]);
+        if (existing.length === 0) {
+            return res.status(404).json({ message: 'Specialist charge not found' });
+        }
+
+        // Check if charge exists (if being updated)
+        if (chargeId) {
+            const [chargeCheck] = await pool.query('SELECT chargeId FROM service_charges WHERE chargeId = ?', [chargeId]);
+            if (chargeCheck.length === 0) {
+                return res.status(400).json({ error: 'Service charge not found' });
+            }
+        }
+
+        // Check if doctor exists (if being updated)
+        if (doctorId) {
+            const [doctorCheck] = await pool.query('SELECT userId FROM users WHERE userId = ?', [doctorId]);
+            if (doctorCheck.length === 0) {
+                return res.status(400).json({ error: 'Doctor not found' });
+            }
+        }
+
+        // Build update query dynamically
+        const updates = [];
+        const values = [];
+
+        if (chargeId !== undefined) { updates.push('chargeId = ?'); values.push(chargeId); }
+        if (doctorId !== undefined) { updates.push('doctorId = ?'); values.push(doctorId); }
+        if (amount !== undefined) { updates.push('amount = ?'); values.push(amount); }
+        if (effectiveFrom !== undefined) { updates.push('effectiveFrom = ?'); values.push(effectiveFrom); }
+        if (effectiveTo !== undefined) { updates.push('effectiveTo = ?'); values.push(effectiveTo || null); }
+
+        if (updates.length === 0) {
+            return res.status(400).json({ error: 'No fields to update' });
+        }
+
+        values.push(id);
+        await pool.query(
+            `UPDATE specialist_charges SET ${updates.join(', ')}, updatedAt = NOW() WHERE specialistChargeId = ?`,
+            values
+        );
+
+        const [updated] = await pool.query(`
+            SELECT sc.*,
+                   ch.chargeCode, ch.name as chargeName,
+                   u.firstName as doctorFirstName, u.lastName as doctorLastName
+            FROM specialist_charges sc
+            LEFT JOIN service_charges ch ON sc.chargeId = ch.chargeId
+            LEFT JOIN users u ON sc.doctorId = u.userId
+            WHERE sc.specialistChargeId = ?
+        `, [id]);
+        
+        res.status(200).json(updated[0]);
+    } catch (error) {
+        console.error('Error updating specialist charge:', error);
+        res.status(500).json({ message: 'Error updating specialist charge', error: error.message });
+    }
+});
+
+/**
+ * @route DELETE /api/billing/specialist-charges/:id
+ * @description Delete a specialist charge
+ */
+router.delete('/specialist-charges/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const [result] = await pool.query('DELETE FROM specialist_charges WHERE specialistChargeId = ?', [id]);
+        
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: 'Specialist charge not found' });
+        }
+
+        res.status(200).json({ message: 'Specialist charge deleted successfully' });
+    } catch (error) {
+        console.error('Error deleting specialist charge:', error);
+        res.status(500).json({ message: 'Error deleting specialist charge', error: error.message });
+    }
+});
+
 module.exports = router;
 

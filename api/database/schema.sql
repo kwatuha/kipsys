@@ -178,6 +178,23 @@ CREATE TABLE IF NOT EXISTS service_charges (
     INDEX idx_category (category)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS specialist_charges (
+    specialistChargeId INT NOT NULL AUTO_INCREMENT,
+    chargeId INT NOT NULL,
+    doctorId INT NOT NULL,
+    amount DECIMAL(15, 2) NOT NULL,
+    effectiveFrom DATE NOT NULL,
+    effectiveTo DATE NULL,
+    createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (specialistChargeId),
+    FOREIGN KEY (chargeId) REFERENCES service_charges(chargeId) ON DELETE CASCADE,
+    FOREIGN KEY (doctorId) REFERENCES users(userId) ON DELETE CASCADE,
+    INDEX idx_charge (chargeId),
+    INDEX idx_doctor (doctorId),
+    INDEX idx_effective_dates (effectiveFrom, effectiveTo)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS invoices (
     invoiceId INT NOT NULL AUTO_INCREMENT,
     invoiceNumber VARCHAR(50) UNIQUE NOT NULL,
