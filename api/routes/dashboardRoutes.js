@@ -62,31 +62,38 @@ router.get('/stats', async (req, res) => {
         const [lowStock] = await pool.query(`
             SELECT COUNT(*) as total
             FROM inventory_items
-            WHERE quantityOnHand <= reorderLevel AND isActive = TRUE
+            WHERE quantity <= reorderLevel AND status = 'Active'
         `);
         const lowStockItems = lowStock[0]?.total || 0;
 
-        // Get inpatients
+        // Get inpatients (active admissions that are not ICU or maternity)
         const [inpatients] = await pool.query(`
             SELECT COUNT(*) as total
-            FROM inpatient_admissions
-            WHERE dischargeDate IS NULL
+            FROM admissions a
+            LEFT JOIN icu_admissions icu ON a.admissionId = icu.admissionId
+            LEFT JOIN maternity_admissions mat ON a.admissionId = mat.admissionId
+            WHERE a.dischargeDate IS NULL 
+            AND a.status = 'admitted'
+            AND icu.icuAdmissionId IS NULL
+            AND mat.maternityAdmissionId IS NULL
         `);
         const inpatientsCount = inpatients[0]?.total || 0;
 
-        // Get ICU patients
+        // Get ICU patients (active ICU admissions)
         const [icuPatients] = await pool.query(`
             SELECT COUNT(*) as total
-            FROM icu_admissions
-            WHERE dischargeDate IS NULL
+            FROM icu_admissions icu
+            INNER JOIN admissions a ON icu.admissionId = a.admissionId
+            WHERE a.dischargeDate IS NULL AND a.status = 'admitted'
         `);
         const icuPatientsCount = icuPatients[0]?.total || 0;
 
-        // Get maternity patients
+        // Get maternity patients (active maternity admissions)
         const [maternityPatients] = await pool.query(`
             SELECT COUNT(*) as total
-            FROM maternity_admissions
-            WHERE dischargeDate IS NULL
+            FROM maternity_admissions mat
+            INNER JOIN admissions a ON mat.admissionId = a.admissionId
+            WHERE a.dischargeDate IS NULL AND a.status = 'admitted'
         `);
         const maternityPatientsCount = maternityPatients[0]?.total || 0;
 
