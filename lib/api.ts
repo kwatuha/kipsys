@@ -834,6 +834,21 @@ export const billingApi = {
   
   getPendingInvoicesForPatient: (patientId: string) =>
     apiRequest<any[]>(`/api/billing/invoices/patient/${patientId}/pending`),
+  
+  createInvoice: (data: any) =>
+    apiRequest<any>('/api/billing/invoices', { method: 'POST', body: data }),
+  
+  updateInvoice: (id: string, data: any) =>
+    apiRequest<any>(`/api/billing/invoices/${id}`, { method: 'PUT', body: data }),
+  
+  deleteInvoice: (id: string) =>
+    apiRequest<any>(`/api/billing/invoices/${id}`, { method: 'DELETE' }),
+  
+  recordPayment: (id: string, data: any) =>
+    apiRequest<any>(`/api/billing/invoices/${id}/payment`, { method: 'POST', body: data }),
+  
+  getInvoiceStats: () =>
+    apiRequest<any>('/api/billing/invoices/stats/summary'),
 };
 
 // Receivables API

@@ -323,5 +323,357 @@ router.get('/invoices/patient/:patientId/pending', async (req, res) => {
     }
 });
 
+/**
+ * @route POST /api/billing/invoices
+ * @description Create a new invoice
+ */
+router.post('/invoices', async (req, res) => {
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
+
+        const { invoiceNumber, patientId, invoiceDate, dueDate, items, notes, status = 'pending' } = req.body;
+        const userId = req.user?.id;
+
+        if (!patientId || !items || items.length === 0) {
+            return res.status(400).json({ error: 'Patient and items are required' });
+        }
+
+        // Generate invoice number if not provided
+        let finalInvoiceNumber = invoiceNumber;
+        if (!finalInvoiceNumber) {
+            const [count] = await connection.execute('SELECT COUNT(*) as count FROM invoices WHERE DATE(createdAt) = CURDATE()');
+            const invoiceNum = count[0].count + 1;
+            finalInvoiceNumber = `INV-${new Date().toISOString().split('T')[0].replace(/-/g, '')}-${String(invoiceNum).padStart(4, '0')}`;
+        }
+
+        // Calculate total amount
+        const totalAmount = items.reduce((sum, item) => sum + (parseFloat(item.totalPrice) || 0), 0);
+
+        // Insert invoice
+        const [result] = await connection.execute(
+            `INSERT INTO invoices (invoiceNumber, patientId, invoiceDate, dueDate, totalAmount, balance, status, notes, createdBy)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                finalInvoiceNumber,
+                patientId,
+                invoiceDate || new Date().toISOString().split('T')[0],
+                dueDate || null,
+                totalAmount,
+                totalAmount, // balance = totalAmount initially
+                status,
+                notes || null,
+                userId || null
+            ]
+        );
+
+        const invoiceId = result.insertId;
+
+        // Insert invoice items
+        for (const item of items) {
+            await connection.execute(
+                `INSERT INTO invoice_items (invoiceId, chargeId, description, quantity, unitPrice, totalPrice)
+                 VALUES (?, ?, ?, ?, ?, ?)`,
+                [
+                    invoiceId,
+                    item.chargeId || null,
+                    item.description || '',
+                    item.quantity || 1,
+                    item.unitPrice || 0,
+                    item.totalPrice || 0
+                ]
+            );
+        }
+
+        await connection.commit();
+
+        // Get the created invoice with items
+        const [invoices] = await connection.execute(
+            `SELECT i.*, 
+                    p.firstName as patientFirstName, p.lastName as patientLastName,
+                    p.patientNumber, p.phone as patientPhone
+             FROM invoices i
+             LEFT JOIN patients p ON i.patientId = p.patientId
+             WHERE i.invoiceId = ?`,
+            [invoiceId]
+        );
+
+        const [itemsData] = await connection.execute(
+            `SELECT ii.*, sc.name as chargeName, sc.chargeCode
+             FROM invoice_items ii
+             LEFT JOIN service_charges sc ON ii.chargeId = sc.chargeId
+             WHERE ii.invoiceId = ?
+             ORDER BY ii.itemId`,
+            [invoiceId]
+        );
+
+        res.status(201).json({
+            ...invoices[0],
+            items: itemsData
+        });
+    } catch (error) {
+        await connection.rollback();
+        console.error('Error creating invoice:', error);
+        if (error.code === 'ER_DUP_ENTRY') {
+            return res.status(400).json({ error: 'Invoice number already exists' });
+        }
+        res.status(500).json({ message: 'Error creating invoice', error: error.message });
+    } finally {
+        connection.release();
+    }
+});
+
+/**
+ * @route PUT /api/billing/invoices/:id
+ * @description Update an invoice
+ */
+router.put('/invoices/:id', async (req, res) => {
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
+
+        const { id } = req.params;
+        const { invoiceDate, dueDate, items, notes, status } = req.body;
+
+        // Check if invoice exists
+        const [existing] = await connection.execute('SELECT invoiceId FROM invoices WHERE invoiceId = ?', [id]);
+        if (existing.length === 0) {
+            return res.status(404).json({ message: 'Invoice not found' });
+        }
+
+        // Build update query
+        const updates = [];
+        const values = [];
+
+        if (invoiceDate !== undefined) { updates.push('invoiceDate = ?'); values.push(invoiceDate); }
+        if (dueDate !== undefined) { updates.push('dueDate = ?'); values.push(dueDate); }
+        if (notes !== undefined) { updates.push('notes = ?'); values.push(notes); }
+        if (status !== undefined) { updates.push('status = ?'); values.push(status); }
+
+        // If items are provided, update them
+        if (items && items.length > 0) {
+            // Calculate new total
+            const totalAmount = items.reduce((sum, item) => sum + (parseFloat(item.totalPrice) || 0), 0);
+            
+            // Get current paid amount
+            const [current] = await connection.execute('SELECT paidAmount FROM invoices WHERE invoiceId = ?', [id]);
+            const paidAmount = parseFloat(current[0]?.paidAmount || 0);
+            const balance = totalAmount - paidAmount;
+
+            updates.push('totalAmount = ?');
+            values.push(totalAmount);
+            updates.push('balance = ?');
+            values.push(balance);
+
+            // Delete existing items
+            await connection.execute('DELETE FROM invoice_items WHERE invoiceId = ?', [id]);
+
+            // Insert new items
+            for (const item of items) {
+                await connection.execute(
+                    `INSERT INTO invoice_items (invoiceId, chargeId, description, quantity, unitPrice, totalPrice)
+                     VALUES (?, ?, ?, ?, ?, ?)`,
+                    [
+                        id,
+                        item.chargeId || null,
+                        item.description || '',
+                        item.quantity || 1,
+                        item.unitPrice || 0,
+                        item.totalPrice || 0
+                    ]
+                );
+            }
+        }
+
+        if (updates.length > 0) {
+            values.push(id);
+            await connection.execute(
+                `UPDATE invoices SET ${updates.join(', ')}, updatedAt = NOW() WHERE invoiceId = ?`,
+                values
+            );
+        }
+
+        await connection.commit();
+
+        // Get updated invoice
+        const [invoices] = await connection.execute(
+            `SELECT i.*, 
+                    p.firstName as patientFirstName, p.lastName as patientLastName,
+                    p.patientNumber, p.phone as patientPhone
+             FROM invoices i
+             LEFT JOIN patients p ON i.patientId = p.patientId
+             WHERE i.invoiceId = ?`,
+            [id]
+        );
+
+        const [itemsData] = await connection.execute(
+            `SELECT ii.*, sc.name as chargeName, sc.chargeCode
+             FROM invoice_items ii
+             LEFT JOIN service_charges sc ON ii.chargeId = sc.chargeId
+             WHERE ii.invoiceId = ?
+             ORDER BY ii.itemId`,
+            [id]
+        );
+
+        res.status(200).json({
+            ...invoices[0],
+            items: itemsData
+        });
+    } catch (error) {
+        await connection.rollback();
+        console.error('Error updating invoice:', error);
+        res.status(500).json({ message: 'Error updating invoice', error: error.message });
+    } finally {
+        connection.release();
+    }
+});
+
+/**
+ * @route DELETE /api/billing/invoices/:id
+ * @description Delete (cancel) an invoice
+ */
+router.delete('/invoices/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // Check if invoice exists
+        const [existing] = await pool.execute('SELECT invoiceId, status FROM invoices WHERE invoiceId = ?', [id]);
+        if (existing.length === 0) {
+            return res.status(404).json({ message: 'Invoice not found' });
+        }
+
+        // If invoice is paid, don't allow deletion - mark as cancelled instead
+        if (existing[0].status === 'paid') {
+            await pool.execute('UPDATE invoices SET status = "cancelled", updatedAt = NOW() WHERE invoiceId = ?', [id]);
+            return res.status(200).json({ message: 'Invoice cancelled (was already paid)' });
+        }
+
+        // Otherwise, delete it (items will be deleted via CASCADE)
+        await pool.execute('DELETE FROM invoices WHERE invoiceId = ?', [id]);
+        
+        res.status(200).json({ message: 'Invoice deleted successfully' });
+    } catch (error) {
+        console.error('Error deleting invoice:', error);
+        res.status(500).json({ message: 'Error deleting invoice', error: error.message });
+    }
+});
+
+/**
+ * @route POST /api/billing/invoices/:id/payment
+ * @description Record a payment against an invoice
+ */
+router.post('/invoices/:id/payment', async (req, res) => {
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
+
+        const { id } = req.params;
+        const { paymentAmount, paymentDate, paymentMethod, referenceNumber, notes } = req.body;
+        const userId = req.user?.id;
+
+        if (!paymentAmount || paymentAmount <= 0) {
+            return res.status(400).json({ error: 'Payment amount is required and must be greater than 0' });
+        }
+
+        // Get current invoice
+        const [invoices] = await connection.execute('SELECT * FROM invoices WHERE invoiceId = ?', [id]);
+        if (invoices.length === 0) {
+            return res.status(404).json({ message: 'Invoice not found' });
+        }
+
+        const invoice = invoices[0];
+        const currentPaid = parseFloat(invoice.paidAmount || 0);
+        const newPaid = currentPaid + parseFloat(paymentAmount);
+        const outstanding = parseFloat(invoice.totalAmount) - newPaid;
+
+        // Determine new status
+        let newStatus = invoice.status;
+        if (outstanding <= 0) {
+            newStatus = 'paid';
+        } else if (newPaid > 0 && newPaid < parseFloat(invoice.totalAmount)) {
+            newStatus = 'partial';
+        }
+
+        // Update invoice
+        await connection.execute(
+            `UPDATE invoices 
+            SET paidAmount = ?, balance = ?, status = ?, paymentMethod = ?, updatedAt = NOW()
+            WHERE invoiceId = ?`,
+            [newPaid, outstanding, newStatus, paymentMethod || invoice.paymentMethod, id]
+        );
+
+        await connection.commit();
+
+        // Get updated invoice
+        const [updated] = await connection.execute(
+            `SELECT i.*, 
+                    p.firstName as patientFirstName, p.lastName as patientLastName,
+                    p.patientNumber, p.phone as patientPhone
+             FROM invoices i
+             LEFT JOIN patients p ON i.patientId = p.patientId
+             WHERE i.invoiceId = ?`,
+            [id]
+        );
+
+        const [items] = await connection.execute(
+            `SELECT ii.*, sc.name as chargeName, sc.chargeCode
+             FROM invoice_items ii
+             LEFT JOIN service_charges sc ON ii.chargeId = sc.chargeId
+             WHERE ii.invoiceId = ?
+             ORDER BY ii.itemId`,
+            [id]
+        );
+
+        res.status(200).json({
+            ...updated[0],
+            items: items
+        });
+    } catch (error) {
+        await connection.rollback();
+        console.error('Error recording payment:', error);
+        res.status(500).json({ message: 'Error recording payment', error: error.message });
+    } finally {
+        connection.release();
+    }
+});
+
+/**
+ * @route GET /api/billing/invoices/stats/summary
+ * @description Get summary statistics for invoices
+ */
+router.get('/invoices/stats/summary', async (req, res) => {
+    try {
+        const [stats] = await pool.execute(`
+            SELECT 
+                COUNT(*) as totalInvoices,
+                SUM(CASE WHEN status = 'pending' THEN totalAmount ELSE 0 END) as pendingAmount,
+                SUM(CASE WHEN status = 'paid' THEN totalAmount ELSE 0 END) as paidAmount,
+                SUM(CASE WHEN status = 'partial' THEN balance ELSE 0 END) as partialAmount,
+                SUM(CASE WHEN status = 'pending' AND dueDate IS NOT NULL AND dueDate < CURDATE() THEN balance ELSE 0 END) as overdueAmount,
+                COUNT(CASE WHEN status = 'pending' THEN 1 END) as pendingCount,
+                COUNT(CASE WHEN status = 'paid' THEN 1 END) as paidCount,
+                SUM(CASE WHEN status = 'paid' AND MONTH(invoiceDate) = MONTH(CURDATE()) AND YEAR(invoiceDate) = YEAR(CURDATE()) THEN totalAmount ELSE 0 END) as paidThisMonthAmount,
+                COUNT(CASE WHEN status = 'paid' AND MONTH(invoiceDate) = MONTH(CURDATE()) AND YEAR(invoiceDate) = YEAR(CURDATE()) THEN 1 END) as paidThisMonthCount
+            FROM invoices
+            WHERE status != 'cancelled'
+        `);
+        
+        res.status(200).json(stats[0] || {
+            totalInvoices: 0,
+            pendingAmount: 0,
+            paidAmount: 0,
+            partialAmount: 0,
+            overdueAmount: 0,
+            pendingCount: 0,
+            paidCount: 0,
+            paidThisMonthAmount: 0,
+            paidThisMonthCount: 0,
+        });
+    } catch (error) {
+        console.error('Error fetching invoice stats:', error);
+        res.status(500).json({ message: 'Error fetching invoice stats', error: error.message });
+    }
+});
+
 module.exports = router;
 
