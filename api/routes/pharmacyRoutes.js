@@ -334,7 +334,34 @@ router.post('/prescriptions', async (req, res) => {
 
         const prescriptionId = result.insertId;
 
-        // Insert prescription items
+        // Get doctor and patient names for notifications
+        let doctorName = 'Unknown Doctor';
+        let patientName = 'Unknown Patient';
+        try {
+            const [doctorRows] = await connection.execute(
+                'SELECT firstName, lastName FROM users WHERE userId = ?',
+                [doctorId]
+            );
+            if (doctorRows.length > 0 && doctorRows[0].firstName) {
+                doctorName = `Dr. ${doctorRows[0].firstName} ${doctorRows[0].lastName || ''}`.trim();
+            }
+        } catch (error) {
+            console.error('Error fetching doctor name:', error);
+        }
+        
+        try {
+            const [patientRows] = await connection.execute(
+                'SELECT firstName, lastName FROM patients WHERE patientId = ?',
+                [patientId]
+            );
+            if (patientRows.length > 0 && patientRows[0].firstName) {
+                patientName = `${patientRows[0].firstName} ${patientRows[0].lastName || ''}`.trim();
+            }
+        } catch (error) {
+            console.error('Error fetching patient name:', error);
+        }
+
+        // Insert prescription items and check for missing drugs in inventory
         if (items && items.length > 0) {
             for (const item of items) {
                 // Get medication name for storage
@@ -368,11 +395,49 @@ router.post('/prescriptions', async (req, res) => {
                     item.instructions || null
                 ];
                 
-                await connection.execute(
+                const [itemResult] = await connection.execute(
                     `INSERT INTO prescription_items (prescriptionId, medicationId, medicationName, dosage, frequency, duration, quantity, instructions)
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
                     insertData
                 );
+                
+                const prescriptionItemId = itemResult.insertId;
+                
+                // Check if medication is in drug_inventory
+                if (medicationIdNum) {
+                    try {
+                        const [inventoryCheck] = await connection.execute(
+                            `SELECT COUNT(*) as count FROM drug_inventory 
+                             WHERE medicationId = ? AND quantity > 0`,
+                            [medicationIdNum]
+                        );
+                        
+                        // If medication is not in inventory, create a notification
+                        if (inventoryCheck.length > 0 && inventoryCheck[0].count === 0) {
+                            const message = `${medicationName} was prescribed by ${doctorName} for ${patientName} but is not available in drug inventory.`;
+                            
+                            await connection.execute(
+                                `INSERT INTO drug_notifications 
+                                 (medicationId, medicationName, prescriptionId, prescriptionItemId, doctorId, doctorName, patientId, patientName, status, priority, message)
+                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'medium', ?)`,
+                                [
+                                    medicationIdNum,
+                                    medicationName,
+                                    prescriptionId,
+                                    prescriptionItemId,
+                                    doctorId,
+                                    doctorName,
+                                    patientId,
+                                    patientName,
+                                    message
+                                ]
+                            );
+                        }
+                    } catch (notificationError) {
+                        console.error('Error checking inventory or creating notification:', notificationError);
+                        // Don't fail the prescription creation if notification creation fails
+                    }
+                }
             }
         }
 

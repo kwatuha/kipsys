@@ -47,6 +47,7 @@ const cashRoutes = require('./routes/cashRoutes');
 const assetRoutes = require('./routes/assetRoutes');
 const insuranceRoutes = require('./routes/insuranceRoutes');
 const revenueShareRoutes = require('./routes/revenueShareRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
 
 const authenticate = require('./middleware/authenticate');
 
@@ -113,6 +114,7 @@ app.use('/api/revenue-share', revenueShareRoutes);
 app.use('/api/inventory/transactions', inventoryTransactionRoutes);
 app.use('/api/inventory', inventoryRoutes);
 app.use('/api/pharmacy', pharmacyRoutes);
+app.use('/api/notifications', notificationRoutes);
 app.use('/api/laboratory', laboratoryRoutes);
 app.use('/api/radiology', radiologyRoutes);
 app.use('/api/inpatient', inpatientRoutes);

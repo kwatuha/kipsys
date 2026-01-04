@@ -166,6 +166,29 @@ export const pharmacyApi = {
     apiRequest<any>(`/api/pharmacy/drug-inventory/${id}`, { method: 'DELETE' }),
 };
 
+// Notification API
+export const notificationApi = {
+  getDrugNotifications: (status?: string, priority?: string, search?: string) => {
+    const params = new URLSearchParams();
+    if (status && status !== 'all') params.append('status', status);
+    if (priority && priority !== 'all') params.append('priority', priority);
+    if (search) params.append('search', search);
+    return apiRequest<any[]>(`/api/notifications/drug-notifications?${params.toString()}`);
+  },
+  
+  getDrugNotification: (id: string) =>
+    apiRequest<any>(`/api/notifications/drug-notifications/${id}`),
+  
+  acknowledgeDrugNotification: (id: string) =>
+    apiRequest<any>(`/api/notifications/drug-notifications/${id}/acknowledge`, { method: 'PUT' }),
+  
+  resolveDrugNotification: (id: string) =>
+    apiRequest<any>(`/api/notifications/drug-notifications/${id}/resolve`, { method: 'PUT' }),
+  
+  deleteDrugNotification: (id: string) =>
+    apiRequest<any>(`/api/notifications/drug-notifications/${id}`, { method: 'DELETE' }),
+};
+
 // Laboratory API
 export const laboratoryApi = {
   getTestTypes: (search?: string, category?: string, page = 1, limit = 50) =>

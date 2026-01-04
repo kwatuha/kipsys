@@ -30,6 +30,7 @@ import {
   UserPlus,
   MapPin,
   Shield,
+  Bell,
 } from "lucide-react"
 
 export interface NavigationItem {
@@ -245,6 +246,11 @@ export const navigationCategories: NavigationCategory[] = [
         title: "Inventory Analytics",
         icon: BarChart3,
         href: "/inventory/analytics",
+      },
+      {
+        title: "Drug Notifications",
+        icon: Bell,
+        href: "/procurement/notifications",
       },
     ],
   },
