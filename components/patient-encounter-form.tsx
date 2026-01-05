@@ -953,7 +953,7 @@ export function PatientEncounterForm({
   return (
     <>
       <Dialog open={open} onOpenChange={handleDialogClose}>
-        <DialogContent className="sm:max-w-[95vw] max-w-[95vw] h-[95vh] max-h-[95vh] overflow-hidden flex flex-col p-0 z-[50] left-[50%] top-[50%] translate-x-[-50%] translate-y-[-50%]">
+        <DialogContent className="sm:max-w-[95vw] max-w-[95vw] h-[95vh] max-h-[95vh] overflow-hidden flex flex-col p-0">
           <DialogHeader className="px-6 pt-6 pb-4 border-b flex-shrink-0">
             <DialogTitle className="text-2xl">Patient Encounter</DialogTitle>
             <DialogDescription>
@@ -1397,7 +1397,7 @@ export function PatientEncounterForm({
 
       {/* Lab Tests Sheet */}
       <Sheet open={labTestsSheetOpen} onOpenChange={setLabTestsSheetOpen}>
-        <SheetContent side="right" className="w-full sm:w-[90vw] sm:max-w-5xl p-0 flex flex-col overflow-hidden z-[60]">
+        <SheetContent side="right" className="w-full sm:w-[90vw] sm:max-w-5xl p-0 flex flex-col overflow-hidden">
           <Form {...form}>
             <SheetHeader className="px-6 pt-6 pb-4 border-b flex-shrink-0">
               <SheetTitle className="flex items-center gap-2">
@@ -1553,7 +1553,7 @@ export function PatientEncounterForm({
 
       {/* Symptoms Sheet */}
       <Sheet open={symptomsSheetOpen} onOpenChange={setSymptomsSheetOpen}>
-        <SheetContent side="right" className="w-full sm:w-[90vw] sm:max-w-5xl p-0 flex flex-col overflow-hidden z-[60]">
+        <SheetContent side="right" className="w-full sm:w-[90vw] sm:max-w-5xl p-0 flex flex-col overflow-hidden">
           <Form {...form}>
             <SheetHeader className="px-6 pt-6 pb-4 border-b flex-shrink-0">
               <SheetTitle className="flex items-center gap-2">
@@ -1688,7 +1688,7 @@ export function PatientEncounterForm({
 
       {/* Diagnosis Sheet */}
       <Sheet open={diagnosisSheetOpen} onOpenChange={setDiagnosisSheetOpen}>
-        <SheetContent side="right" className="w-full sm:w-[90vw] sm:max-w-5xl p-0 flex flex-col overflow-hidden z-[60]">
+        <SheetContent side="right" className="w-full sm:w-[90vw] sm:max-w-5xl p-0 flex flex-col overflow-hidden">
           <Form {...form}>
             <SheetHeader className="px-6 pt-6 pb-4 border-b flex-shrink-0">
               <SheetTitle className="flex items-center gap-2">
@@ -1802,7 +1802,7 @@ export function PatientEncounterForm({
 
       {/* Prescription Sheet */}
       <Sheet open={prescriptionSheetOpen} onOpenChange={setPrescriptionSheetOpen}>
-        <SheetContent side="right" className="w-full sm:w-[90vw] sm:max-w-5xl p-0 flex flex-col overflow-hidden z-[60]">
+        <SheetContent side="right" className="w-full sm:w-[90vw] sm:max-w-5xl p-0 flex flex-col overflow-hidden">
           <Form {...form}>
             <SheetHeader className="px-6 pt-6 pb-4 border-b flex-shrink-0">
               <SheetTitle className="flex items-center gap-2">
@@ -1995,7 +1995,7 @@ export function PatientEncounterForm({
 
       {/* History Sheet */}
       <Sheet open={historySheetOpen} onOpenChange={setHistorySheetOpen}>
-        <SheetContent side="right" className="w-full sm:w-[90vw] sm:max-w-5xl p-0 flex flex-col overflow-hidden z-[60]">
+        <SheetContent side="right" className="w-full sm:w-[90vw] sm:max-w-5xl p-0 flex flex-col overflow-hidden">
           <SheetHeader className="px-6 pt-6 pb-4 border-b flex-shrink-0">
             <SheetTitle className="flex items-center gap-2">
               <History className="h-5 w-5" />
