@@ -293,6 +293,78 @@ export function PatientEncounterForm({
     }
   }, [patientId, open])
 
+  // Populate form with today's orders when patient data is loaded
+  useEffect(() => {
+    if (!open || !patientId) return
+    
+    const encounterDate = form.getValues("encounterDate")
+    if (!encounterDate) return
+
+    const encounterDateStr = format(encounterDate, 'yyyy-MM-dd')
+    const currentLabTests = form.getValues("labTests") || []
+    const currentMedications = form.getValues("medications") || []
+
+    // Only populate if form arrays are empty (to avoid overwriting user input)
+    if (currentLabTests.length === 0 && patientLabResults.length > 0) {
+      // Get orders from encounter date and convert them to form format
+      const encounterLabOrders = patientLabResults.filter((order: any) => {
+        const orderDateStr = format(new Date(order.orderDate), 'yyyy-MM-dd')
+        return orderDateStr === encounterDateStr && order.items && order.items.length > 0
+      })
+
+      if (encounterLabOrders.length > 0) {
+        const labTestsToAdd: any[] = []
+        encounterLabOrders.forEach((order: any) => {
+          order.items.forEach((item: any) => {
+            labTestsToAdd.push({
+              testTypeId: item.testTypeId?.toString() || item.testType?.testTypeId?.toString() || "",
+              priority: order.priority || "routine",
+              clinicalIndication: item.notes || item.clinicalIndication || "",
+            })
+          })
+        })
+        
+        if (labTestsToAdd.length > 0) {
+          // Use setTimeout to avoid state updates during render
+          setTimeout(() => {
+            labTestsToAdd.forEach(test => appendLabTest(test))
+          }, 0)
+        }
+      }
+    }
+
+    if (currentMedications.length === 0 && patientMedications.length > 0) {
+      // Get prescriptions from encounter date and convert them to form format
+      const encounterPrescriptions = patientMedications.filter((prescription: any) => {
+        const prescriptionDateStr = format(new Date(prescription.prescriptionDate), 'yyyy-MM-dd')
+        return prescriptionDateStr === encounterDateStr && prescription.items && prescription.items.length > 0
+      })
+
+      if (encounterPrescriptions.length > 0) {
+        const medicationsToAdd: any[] = []
+        encounterPrescriptions.forEach((prescription: any) => {
+          prescription.items.forEach((item: any) => {
+            medicationsToAdd.push({
+              medicationId: item.medicationId?.toString() || "",
+              dosage: item.dosage || "",
+              frequency: item.frequency || "",
+              duration: item.duration || "",
+              quantity: item.quantity?.toString() || "",
+              instructions: item.instructions || "",
+            })
+          })
+        })
+        
+        if (medicationsToAdd.length > 0) {
+          // Use setTimeout to avoid state updates during render
+          setTimeout(() => {
+            medicationsToAdd.forEach(med => appendMedication(med))
+          }, 0)
+        }
+      }
+    }
+  }, [patientLabResults, patientMedications, open, patientId, appendLabTest, appendMedication, form])
+
   const loadData = async () => {
     try {
       setLoading(true)
@@ -326,10 +398,47 @@ export function PatientEncounterForm({
         patientApi.getVitals(id, true).catch(() => []),
       ])
       
+      // Fetch full order details with items for pending/in-progress orders to enable duplicate checking
+      const labOrdersWithItems = await Promise.all(
+        (labOrders || []).map(async (order: any) => {
+          // Only fetch details for pending/in-progress orders (where duplicate checking matters)
+          if ((order.status === 'pending' || order.status === 'sample_collected' || order.status === 'in_progress') && 
+              (!order.items || order.items.length === 0)) {
+            try {
+              const fullOrder = await laboratoryApi.getOrder(order.orderId.toString())
+              return fullOrder || order
+            } catch (err) {
+              console.error(`Error fetching order ${order.orderId} details:`, err)
+              return order
+            }
+          }
+          return order
+        })
+      )
+      
+      // Fetch full prescription details with items (especially for today's prescriptions to populate form)
+      const todayStr = format(new Date(), 'yyyy-MM-dd')
+      const prescriptionsWithItems = await Promise.all(
+        (prescriptions || []).map(async (prescription: any) => {
+          const prescriptionDateStr = format(new Date(prescription.prescriptionDate), 'yyyy-MM-dd')
+          // Fetch full prescription details to get items (especially for today's or pending prescriptions)
+          if ((!prescription.items || prescription.items.length === 0) || prescriptionDateStr === todayStr) {
+            try {
+              const fullPrescription = await pharmacyApi.getPrescription(prescription.prescriptionId.toString())
+              return fullPrescription || prescription
+            } catch (err) {
+              console.error(`Error fetching prescription ${prescription.prescriptionId} details:`, err)
+              return prescription
+            }
+          }
+          return prescription
+        })
+      )
+      
       setPatientData(patient)
       setPatientAllergies(allergies || [])
-      setPatientMedications(prescriptions || [])
-      setPatientLabResults(labOrders || [])
+      setPatientMedications(prescriptionsWithItems || [])
+      setPatientLabResults(labOrdersWithItems || [])
       setPatientHistory(records || [])
       setPatientVitals(vitals || [])
       // Get today's most recent vitals
@@ -533,6 +642,11 @@ export function PatientEncounterForm({
       clearDraftFromStorage()
       setHasUnsavedChanges(false)
       
+      // Reload patient data to reflect new lab tests and other changes
+      if (data.patientId) {
+        await loadPatientData(data.patientId)
+      }
+      
       if (onSuccess) {
         onSuccess()
       }
@@ -585,9 +699,11 @@ export function PatientEncounterForm({
   }
 
   const handleDialogClose = (newOpenState: boolean) => {
-    // If trying to close and there are unsaved changes, show confirmation
+    // If trying to close and there are unsaved changes, show confirmation but keep dialog open
     if (!newOpenState && hasUnsavedChanges) {
       setShowCloseConfirm(true)
+      // Don't call onOpenChange(false) - keep the dialog open until user confirms
+      return
     } else if (!newOpenState) {
       // Closing without unsaved changes - just close
       onOpenChange(false)
@@ -751,11 +867,38 @@ export function PatientEncounterForm({
 
   const isTestTypeAlreadyAdded = (testTypeId: string) => {
     if (!testTypeId) return false
+    
+    // Check if test is already in the current form
     const currentTests = form.watch("labTests") || []
-    return currentTests.some((test: any, index: number) => 
+    const isInCurrentForm = currentTests.some((test: any, index: number) => 
       test.testTypeId === testTypeId && 
       (editingLabTestIndex === null || index !== editingLabTestIndex)
     )
+    
+    if (isInCurrentForm) return true
+    
+    // Check if patient has a pending order for this test type
+    // Note: This checks patientLabResults which may not have items populated
+    // For more accurate checking, we'd need to enhance the API to include items in list responses
+    if (patientId && patientLabResults.length > 0) {
+      const hasPendingTest = patientLabResults.some((order: any) => {
+        // Check if order is pending/in-progress and contains this test type
+        const isPending = order.status === 'pending' || 
+                         order.status === 'sample_collected' || 
+                         order.status === 'in_progress'
+        
+        if (isPending && order.items && order.items.length > 0) {
+          return order.items.some((item: any) => 
+            item.testTypeId?.toString() === testTypeId || 
+            item.testType?.testTypeId?.toString() === testTypeId
+          )
+        }
+        return false
+      })
+      return hasPendingTest
+    }
+    
+    return false
   }
 
   // Context Panel Component (shows patient info on right side)
@@ -863,34 +1006,33 @@ export function PatientEncounterForm({
               <Pills className="h-4 w-4 text-primary" />
               Recent Medications
             </h3>
-            {patientMedications.length > 0 ? (
-              <div className="space-y-2">
-                {patientMedications.slice(0, 5).map((prescription: any) => (
-                  <Card key={prescription.prescriptionId} className="border-l-2 border-l-primary/30 bg-card">
-                    <CardContent className="pt-4">
-                      <div className="text-xs space-y-1.5">
-                        <div className="font-semibold text-foreground">
-                          {prescription.items?.[0]?.medicationName || 'Medication'}
+            {patientMedications.filter((p: any) => p.items && p.items.length > 0).length > 0 ? (
+              <div className="space-y-1.5">
+                {patientMedications
+                  .filter((prescription: any) => prescription.items && prescription.items.length > 0)
+                  .slice(0, 5)
+                  .map((prescription: any) => (
+                  <div key={prescription.prescriptionId} className="border-l-2 border-l-primary/30 bg-muted/30 rounded-md p-2.5 text-xs">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0 space-y-0.5">
+                        <div className="font-medium text-foreground truncate">
+                          {prescription.items[0]?.medicationName || prescription.items[0]?.medicationNameFromCatalog || 'Medication'}
                         </div>
-                        <div className="text-foreground/80">
-                          {prescription.items?.[0]?.dosage} • {prescription.items?.[0]?.frequency}
-                        </div>
-                        {prescription.items?.[0]?.duration && (
-                          <div className="text-foreground/80">
-                            Duration: {prescription.items?.[0]?.duration}
-                          </div>
-                        )}
-                        <div className="flex items-center gap-2 pt-1">
-                          <Badge variant={prescription.status === 'completed' ? 'default' : 'secondary'} className="text-xs">
-                            {prescription.status}
-                          </Badge>
-                          <span className="text-foreground/70 text-[10px]">
-                            {new Date(prescription.prescriptionDate).toLocaleDateString()}
-                          </span>
+                        <div className="text-foreground/70 text-[11px]">
+                          {prescription.items[0]?.dosage} • {prescription.items[0]?.frequency}
+                          {prescription.items[0]?.duration && ` • ${prescription.items[0]?.duration}`}
                         </div>
                       </div>
-                    </CardContent>
-                  </Card>
+                      <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                        <Badge variant={prescription.status === 'completed' || prescription.status === 'dispensed' ? 'default' : 'secondary'} className="text-[10px] px-1.5 py-0 h-4">
+                          {prescription.status}
+                        </Badge>
+                        <span className="text-foreground/60 text-[10px] whitespace-nowrap">
+                          {new Date(prescription.prescriptionDate).toLocaleDateString()}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
                 ))}
               </div>
             ) : (
@@ -902,6 +1044,40 @@ export function PatientEncounterForm({
             )}
           </div>
 
+          {/* Recent Diagnoses & Symptoms */}
+          {patientHistory.filter((r: any) => r.diagnosis).length > 0 && (
+            <div>
+              <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
+                <FileText className="h-4 w-4 text-purple-500" />
+                Recent Diagnoses
+              </h3>
+              <div className="space-y-1.5">
+                {patientHistory
+                  .filter((record: any) => record.diagnosis)
+                  .slice(0, 3)
+                  .map((record: any) => (
+                    <div key={record.recordId} className="border-l-2 border-l-purple-500/30 bg-muted/30 rounded-md p-2.5 text-xs">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1 min-w-0 space-y-0.5">
+                          <div className="font-medium text-foreground line-clamp-2">
+                            {record.diagnosis}
+                          </div>
+                          {record.chiefComplaint && (
+                            <div className="text-foreground/60 text-[10px] line-clamp-1">
+                              CC: {record.chiefComplaint}
+                            </div>
+                          )}
+                        </div>
+                        <span className="text-foreground/60 text-[10px] whitespace-nowrap flex-shrink-0">
+                          {new Date(record.visitDate).toLocaleDateString()}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
+
           {/* Recent Lab Results */}
           <div>
             <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
@@ -909,40 +1085,38 @@ export function PatientEncounterForm({
               Recent Lab Results
             </h3>
             {patientLabResults.length > 0 ? (
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 {patientLabResults.slice(0, 5).map((order: any) => (
-                  <Card key={order.orderId} className="border-l-2 border-l-blue-500/30 bg-card">
-                    <CardContent className="pt-4">
-                      <div className="text-xs space-y-1.5">
-                        <div className="font-semibold text-foreground">Order #{order.orderNumber || order.orderId}</div>
-                        <div className="text-foreground/80">
-                          {order.items?.length || 0} test(s) • Priority: <span className="font-medium">{order.priority}</span>
+                  <div key={order.orderId} className="border-l-2 border-l-blue-500/30 bg-muted/30 rounded-md p-2.5 text-xs">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0 space-y-0.5">
+                        <div className="font-medium text-foreground">
+                          Order #{order.orderNumber || order.orderId}
                         </div>
-                        {order.items && order.items.length > 0 && (
-                          <div className="text-foreground/80">
-                            Tests: {order.items.slice(0, 2).map((item: any) => item.testName || item.testTypeName).join(', ')}
-                            {order.items.length > 2 && ` +${order.items.length - 2} more`}
-                          </div>
-                        )}
-                        <div className="flex items-center gap-2 pt-1">
-                          <Badge variant={order.status === 'completed' ? 'default' : 'secondary'} className="text-xs">
-                            {order.status}
-                          </Badge>
-                          <span className="text-foreground/70 text-[10px]">
-                            {new Date(order.orderDate).toLocaleDateString()}
-                          </span>
+                        <div className="text-foreground/70 text-[11px]">
+                          {order.items?.length || 0} test(s) • Priority: <span className="font-medium">{order.priority}</span>
+                          {order.items && order.items.length > 0 && (
+                            <> • {order.items.slice(0, 2).map((item: any) => item.testName || item.testType?.testName || item.testTypeName).join(', ')}
+                            {order.items.length > 2 && ` +${order.items.length - 2} more`}</>
+                          )}
                         </div>
                       </div>
-                    </CardContent>
-                  </Card>
+                      <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                        <Badge variant={order.status === 'completed' ? 'default' : 'secondary'} className="text-[10px] px-1.5 py-0 h-4">
+                          {order.status}
+                        </Badge>
+                        <span className="text-foreground/60 text-[10px] whitespace-nowrap">
+                          {new Date(order.orderDate).toLocaleDateString()}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
                 ))}
               </div>
             ) : (
-              <Card className="bg-card">
-                <CardContent className="pt-4 text-xs text-foreground/60 text-center py-4">
-                  No recent lab results
-                </CardContent>
-              </Card>
+              <div className="text-xs text-foreground/60 bg-muted/30 rounded-md p-2.5 text-center">
+                No recent lab results
+              </div>
             )}
           </div>
         </div>
@@ -1136,21 +1310,24 @@ export function PatientEncounterForm({
                                     <Pills className="h-4 w-4 text-primary" />
                                     <span className="text-sm font-semibold">Recent Medications</span>
                                   </div>
-                                  {patientMedications.length > 0 ? (
+                                  {patientMedications.filter((p: any) => p.items && p.items.length > 0).length > 0 ? (
                                     <div className="space-y-1.5 bg-blue-50 dark:bg-blue-950/30 p-2 rounded-md border border-blue-200 dark:border-blue-800">
-                                      {patientMedications.slice(0, 3).map((prescription: any) => (
+                                      {patientMedications
+                                        .filter((prescription: any) => prescription.items && prescription.items.length > 0)
+                                        .slice(0, 3)
+                                        .map((prescription: any) => (
                                         <div key={prescription.prescriptionId} className="text-xs">
                                           <div className="font-medium truncate text-foreground">
-                                            {prescription.items?.[0]?.medicationName || 'Medication'}
+                                            {prescription.items[0]?.medicationName || prescription.items[0]?.medicationNameFromCatalog || 'Medication'}
                                           </div>
                                           <div className="text-foreground/70 text-[10px]">
                                             {prescription.status} • {new Date(prescription.prescriptionDate).toLocaleDateString()}
                                           </div>
                                         </div>
                                       ))}
-                                      {patientMedications.length > 3 && (
+                                      {patientMedications.filter((p: any) => p.items && p.items.length > 0).length > 3 && (
                                         <div className="text-xs text-foreground/70 pt-1">
-                                          +{patientMedications.length - 3} more
+                                          +{patientMedications.filter((p: any) => p.items && p.items.length > 0).length - 3} more
                                         </div>
                                       )}
                                     </div>
