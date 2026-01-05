@@ -153,11 +153,30 @@ router.post('/', async (req, res) => {
             priorityLevel = 4;
         }
 
-        // Generate triage number
-        const [count] = await connection.query(
-            'SELECT COUNT(*) as count FROM triage_assessments WHERE DATE(triageDate) = CURDATE()'
+        // Generate triage number - use MAX to avoid race conditions
+        const [maxResult] = await connection.query(
+            `SELECT MAX(CAST(SUBSTRING(triageNumber, 5) AS UNSIGNED)) as maxNum 
+             FROM triage_assessments 
+             WHERE DATE(triageDate) = CURDATE() AND triageNumber LIKE 'TRI-%'`
         );
-        const triageNumber = `TRI-${String(count[0].count + 1).padStart(6, '0')}`;
+        let nextNum = (maxResult[0].maxNum || 0) + 1;
+        let triageNumber = `TRI-${String(nextNum).padStart(6, '0')}`;
+        
+        // Double-check the number doesn't exist (handle edge cases and race conditions)
+        let attempts = 0;
+        while (attempts < 10) {
+            const [existing] = await connection.query(
+                'SELECT triageId FROM triage_assessments WHERE triageNumber = ?',
+                [triageNumber]
+            );
+            if (existing.length === 0) {
+                break; // Number is available
+            }
+            // Number exists, try next one
+            nextNum++;
+            triageNumber = `TRI-${String(nextNum).padStart(6, '0')}`;
+            attempts++;
+        }
 
         // Insert triage assessment
         const [result] = await connection.query(
@@ -203,6 +222,67 @@ router.post('/', async (req, res) => {
                     triagedByUserId
                 ]
             );
+        }
+
+        // Create invoice for consultation charges
+        try {
+            // Get consultation charge (General Consultation)
+            const [consultationCharges] = await connection.query(
+                `SELECT chargeId, cost, name 
+                 FROM service_charges 
+                 WHERE name LIKE '%Consultation%' AND status = 'Active' 
+                 ORDER BY chargeId ASC 
+                 LIMIT 1`
+            );
+
+            if (consultationCharges.length > 0) {
+                const consultationCharge = consultationCharges[0];
+                const consultationCost = parseFloat(consultationCharge.cost) || 0;
+
+                if (consultationCost > 0) {
+                    // Generate invoice number
+                    const [invoiceCount] = await connection.query(
+                        'SELECT COUNT(*) as count FROM invoices WHERE DATE(createdAt) = CURDATE()'
+                    );
+                    const invoiceNum = invoiceCount[0].count + 1;
+                    const invoiceNumber = `INV-${new Date().toISOString().split('T')[0].replace(/-/g, '')}-${String(invoiceNum).padStart(4, '0')}`;
+
+                    // Create invoice
+                    const [invoiceResult] = await connection.query(
+                        `INSERT INTO invoices (invoiceNumber, patientId, invoiceDate, totalAmount, balance, status, notes, createdBy)
+                         VALUES (?, ?, CURDATE(), ?, ?, 'pending', ?, ?)`,
+                        [
+                            invoiceNumber,
+                            patientId,
+                            consultationCost,
+                            consultationCost,
+                            `Consultation charge from triage ${triageNumber}`,
+                            triagedByUserId
+                        ]
+                    );
+
+                    const invoiceId = invoiceResult.insertId;
+
+                    // Add invoice item
+                    await connection.query(
+                        `INSERT INTO invoice_items (invoiceId, chargeId, description, quantity, unitPrice, totalPrice)
+                         VALUES (?, ?, ?, 1, ?, ?)`,
+                        [
+                            invoiceId,
+                            consultationCharge.chargeId,
+                            consultationCharge.name,
+                            consultationCost,
+                            consultationCost
+                        ]
+                    );
+                }
+            }
+        } catch (invoiceError) {
+            // Log error but don't fail the triage creation
+            console.error('Error creating consultation invoice:', invoiceError);
+            // Optionally, you could rollback here if invoice creation is critical
+            // await connection.rollback();
+            // return res.status(500).json({ message: 'Error creating invoice', error: invoiceError.message });
         }
 
         // After triage completion, create queue entry for cashier (consultation fees payment)

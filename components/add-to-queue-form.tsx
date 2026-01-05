@@ -16,7 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea"
 import { Input } from "@/components/ui/input"
 import { PatientCombobox } from "@/components/patient-combobox"
-import { queueApi } from "@/lib/api"
+import { queueApi, doctorsApi, triageApi } from "@/lib/api"
 import { toast } from "@/components/ui/use-toast"
 import { Loader2 } from "lucide-react"
 
@@ -32,11 +32,67 @@ export function AddToQueueForm({ open, onOpenChange, onSuccess, queueEntry }: Ad
   const [patientName, setPatientName] = useState<string>("")
   const [servicePoint, setServicePoint] = useState("consultation")
   const [priority, setPriority] = useState("normal")
+  const [doctorId, setDoctorId] = useState<string>("")
   const [estimatedWaitTime, setEstimatedWaitTime] = useState<string>("")
   const [notes, setNotes] = useState("")
   const [loading, setLoading] = useState(false)
+  const [loadingDoctors, setLoadingDoctors] = useState(false)
+  const [doctors, setDoctors] = useState<any[]>([])
   const [error, setError] = useState<string | null>(null)
   const isEditing = !!queueEntry
+
+  // Load doctors when form opens
+  useEffect(() => {
+    if (open) {
+      loadDoctors()
+    }
+  }, [open])
+
+  // Load latest triage record for patient when patient is selected and service point is consultation
+  useEffect(() => {
+    if (open && patientId && servicePoint === "consultation" && !isEditing) {
+      loadLatestTriageRecord()
+    }
+  }, [open, patientId, servicePoint, isEditing])
+
+  const loadDoctors = async () => {
+    try {
+      setLoadingDoctors(true)
+      const doctorsData = await doctorsApi.getAll()
+      setDoctors(doctorsData)
+    } catch (err) {
+      console.error("Error loading doctors:", err)
+    } finally {
+      setLoadingDoctors(false)
+    }
+  }
+
+  const loadLatestTriageRecord = async () => {
+    if (!patientId) return
+    
+    try {
+      // Fetch all triage records and filter for this patient's latest record
+      const triageRecords = await triageApi.getAll()
+      const patientTriageRecords = triageRecords
+        .filter((triage: any) => triage.patientId?.toString() === patientId.toString())
+        .sort((a: any, b: any) => {
+          const dateA = new Date(a.triageDate || a.createdAt).getTime()
+          const dateB = new Date(b.triageDate || b.createdAt).getTime()
+          return dateB - dateA // Sort descending to get latest first
+        })
+
+      if (patientTriageRecords.length > 0) {
+        const latestTriage = patientTriageRecords[0]
+        // If the latest triage record has an assigned doctor, pre-populate it
+        if (latestTriage.assignedToDoctorId && !doctorId) {
+          setDoctorId(latestTriage.assignedToDoctorId.toString())
+        }
+      }
+    } catch (err) {
+      // Silently fail - this is optional functionality
+      console.error("Error loading triage record:", err)
+    }
+  }
 
   // Set form values when editing
   useEffect(() => {
@@ -49,6 +105,7 @@ export function AddToQueueForm({ open, onOpenChange, onSuccess, queueEntry }: Ad
       )
       setServicePoint(queueEntry.servicePoint || "consultation")
       setPriority(queueEntry.priority || "normal")
+      setDoctorId(queueEntry.doctorId?.toString() || "")
       setEstimatedWaitTime(queueEntry.estimatedWaitTime?.toString() || "")
       setNotes(queueEntry.notes || "")
     } else if (!queueEntry && open) {
@@ -57,6 +114,7 @@ export function AddToQueueForm({ open, onOpenChange, onSuccess, queueEntry }: Ad
       setPatientName("")
       setServicePoint("consultation")
       setPriority("normal")
+      setDoctorId("")
       setEstimatedWaitTime("")
       setNotes("")
       setError(null)
@@ -80,6 +138,10 @@ export function AddToQueueForm({ open, onOpenChange, onSuccess, queueEntry }: Ad
         servicePoint,
         priority,
         notes: notes && notes.trim() !== "" ? notes.trim() : null,
+      }
+
+      if (doctorId && doctorId.trim() !== "") {
+        payload.doctorId = parseInt(doctorId)
       }
 
       if (estimatedWaitTime && estimatedWaitTime.trim() !== "") {
@@ -111,6 +173,7 @@ export function AddToQueueForm({ open, onOpenChange, onSuccess, queueEntry }: Ad
       setPatientName("")
       setServicePoint("consultation")
       setPriority("normal")
+      setDoctorId("")
       setEstimatedWaitTime("")
       setNotes("")
     } catch (err: any) {
@@ -191,6 +254,28 @@ export function AddToQueueForm({ open, onOpenChange, onSuccess, queueEntry }: Ad
                   <SelectItem value="normal">Normal</SelectItem>
                   <SelectItem value="urgent">Urgent</SelectItem>
                   <SelectItem value="emergency">Emergency</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="doctorId">Doctor (Optional)</Label>
+              <Select 
+                value={doctorId || undefined} 
+                onValueChange={(value) => setDoctorId(value || "")} 
+                disabled={loadingDoctors}
+              >
+                <SelectTrigger id="doctorId">
+                  <SelectValue placeholder={loadingDoctors ? "Loading doctors..." : "Select doctor (optional)"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {doctors.map((doctor) => (
+                    doctor.userId && (
+                      <SelectItem key={doctor.userId} value={doctor.userId.toString()}>
+                        Dr. {doctor.firstName} {doctor.lastName}{doctor.department ? ` - ${doctor.department}` : ""}
+                      </SelectItem>
+                    )
+                  ))}
                 </SelectContent>
               </Select>
             </div>

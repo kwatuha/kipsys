@@ -56,13 +56,17 @@ router.post('/', async (req, res) => {
         const notes = queueData.notes !== undefined && queueData.notes !== null && queueData.notes !== '' 
             ? queueData.notes 
             : null;
+        const doctorId = queueData.doctorId !== undefined && queueData.doctorId !== null && queueData.doctorId !== '' 
+            ? parseInt(queueData.doctorId) 
+            : null;
 
         const [result] = await pool.execute(
             `INSERT INTO queue_entries 
-            (patientId, ticketNumber, servicePoint, priority, status, estimatedWaitTime, notes, createdBy)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            (patientId, doctorId, ticketNumber, servicePoint, priority, status, estimatedWaitTime, notes, createdBy)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 queueData.patientId,
+                doctorId,
                 queueData.ticketNumber,
                 queueData.servicePoint,
                 queueData.priority || 'normal',
@@ -112,7 +116,7 @@ router.get('/:id', async (req, res) => {
 router.put('/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        const { patientId, servicePoint, priority, estimatedWaitTime, notes } = req.body;
+        const { patientId, servicePoint, priority, estimatedWaitTime, notes, doctorId } = req.body;
 
         const updates = [];
         const values = [];
@@ -128,6 +132,10 @@ router.put('/:id', async (req, res) => {
         if (priority !== undefined) {
             updates.push('priority = ?');
             values.push(priority);
+        }
+        if (doctorId !== undefined) {
+            updates.push('doctorId = ?');
+            values.push(doctorId !== null && doctorId !== '' ? parseInt(doctorId) : null);
         }
         if (estimatedWaitTime !== undefined) {
             updates.push('estimatedWaitTime = ?');
