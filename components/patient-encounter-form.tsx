@@ -2101,7 +2101,7 @@ export function PatientEncounterForm({
 
       {/* Add/Edit Medication Dialog */}
       <Dialog open={addMedicationDialogOpen} onOpenChange={setAddMedicationDialogOpen}>
-        <DialogContent className="sm:max-w-[600px]">
+        <DialogContent className="sm:max-w-[600px] z-[121]" overlayClassName="z-[120]">
           <DialogHeader>
             <DialogTitle>
               {editingMedicationIndex !== null ? "Edit Medication" : "Add Medication"}
@@ -2291,7 +2291,7 @@ export function PatientEncounterForm({
 
       {/* Add/Edit Lab Test Dialog */}
       <Dialog open={addTestDialogOpen} onOpenChange={setAddTestDialogOpen}>
-        <DialogContent className="sm:max-w-[500px]">
+        <DialogContent className="sm:max-w-[500px] z-[121]" overlayClassName="z-[120]">
           <DialogHeader>
             <DialogTitle>
               {editingLabTestIndex !== null ? "Edit Lab Test" : "Add Lab Test"}
