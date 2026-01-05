@@ -611,8 +611,8 @@ export const workflowApi = {
 
 // Queue API
 export const queueApi = {
-  getAll: (servicePoint?: string, status?: string, page = 1, limit = 50) =>
-    apiRequest<any[]>(`/api/queue?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(servicePoint && { servicePoint }), ...(status && { status }) })}`),
+  getAll: (servicePoint?: string, status?: string, page = 1, limit = 50, includeCompleted?: boolean) =>
+    apiRequest<any[]>(`/api/queue?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(servicePoint && { servicePoint }), ...(status && { status }), ...(includeCompleted && { includeCompleted: 'true' }) })}`),
   
   getById: (id: string) =>
     apiRequest<any>(`/api/queue/${id}`),
@@ -625,6 +625,24 @@ export const queueApi = {
   
   updateStatus: (id: string, status: string) =>
     apiRequest<any>(`/api/queue/${id}/status`, { method: 'PUT', body: { status } }),
+  
+  archive: (id: string) =>
+    apiRequest<any>(`/api/queue/${id}/archive`, { method: 'POST' }),
+  
+  archiveCompleted: () =>
+    apiRequest<any>('/api/queue/archive-completed', { method: 'POST' }),
+  
+  getHistory: (params?: { servicePoint?: string; status?: string; patientId?: string; startDate?: string; endDate?: string; page?: number; limit?: number }) => {
+    const queryParams = new URLSearchParams();
+    if (params?.servicePoint) queryParams.append('servicePoint', params.servicePoint);
+    if (params?.status) queryParams.append('status', params.status);
+    if (params?.patientId) queryParams.append('patientId', params.patientId);
+    if (params?.startDate) queryParams.append('startDate', params.startDate);
+    if (params?.endDate) queryParams.append('endDate', params.endDate);
+    if (params?.page) queryParams.append('page', params.page.toString());
+    if (params?.limit) queryParams.append('limit', params.limit.toString());
+    return apiRequest<any[]>(`/api/queue/history?${queryParams.toString()}`);
+  },
   
   delete: (id: string) =>
     apiRequest<any>(`/api/queue/${id}`, { method: 'DELETE' }),

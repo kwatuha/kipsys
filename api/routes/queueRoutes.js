@@ -5,7 +5,7 @@ const pool = require('../config/db');
 
 router.get('/', async (req, res) => {
     try {
-        const { servicePoint, status } = req.query;
+        const { servicePoint, status, includeCompleted } = req.query;
         let query = `
             SELECT q.*, 
                    p.firstName as patientFirstName, p.lastName as patientLastName,
@@ -15,6 +15,12 @@ router.get('/', async (req, res) => {
             WHERE 1=1
         `;
         const params = [];
+
+        // By default, exclude completed and cancelled entries for active queue
+        // Set includeCompleted=true to see all entries including completed ones
+        if (includeCompleted !== 'true') {
+            query += ` AND q.status NOT IN ('completed', 'cancelled')`;
+        }
 
         if (servicePoint) {
             query += ` AND q.servicePoint = ?`;
@@ -215,6 +221,248 @@ router.put('/:id/status', async (req, res) => {
     }
 });
 
+/**
+ * @route POST /api/queue/:id/archive
+ * @description Archive a completed queue entry to history table
+ */
+router.post('/:id/archive', async (req, res) => {
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
+
+        const { id } = req.params;
+
+        // Get the queue entry
+        const [queueEntries] = await connection.execute(
+            'SELECT * FROM queue_entries WHERE queueId = ?',
+            [id]
+        );
+
+        if (queueEntries.length === 0) {
+            await connection.rollback();
+            return res.status(404).json({ message: 'Queue entry not found' });
+        }
+
+        const queue = queueEntries[0];
+
+        // Calculate service metrics
+        let waitTimeMinutes = null;
+        let serviceTimeMinutes = null;
+        let totalTimeMinutes = null;
+
+        if (queue.arrivalTime) {
+            const arrival = new Date(queue.arrivalTime);
+            
+            if (queue.calledTime) {
+                const called = new Date(queue.calledTime);
+                waitTimeMinutes = Math.floor((called - arrival) / 60000);
+            }
+            
+            if (queue.startTime && queue.endTime) {
+                const start = new Date(queue.startTime);
+                const end = new Date(queue.endTime);
+                serviceTimeMinutes = Math.floor((end - start) / 60000);
+            }
+            
+            if (queue.endTime) {
+                const end = new Date(queue.endTime);
+                totalTimeMinutes = Math.floor((end - arrival) / 60000);
+            }
+        }
+
+        // Insert into history table
+        await connection.execute(
+            `INSERT INTO queue_history 
+            (queueId, patientId, ticketNumber, servicePoint, priority, status, 
+             estimatedWaitTime, arrivalTime, calledTime, startTime, endTime, notes, createdBy,
+             waitTimeMinutes, serviceTimeMinutes, totalTimeMinutes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                queue.queueId,
+                queue.patientId,
+                queue.ticketNumber,
+                queue.servicePoint,
+                queue.priority,
+                queue.status || 'completed',
+                queue.estimatedWaitTime,
+                queue.arrivalTime,
+                queue.calledTime,
+                queue.startTime,
+                queue.endTime,
+                queue.notes,
+                queue.createdBy,
+                waitTimeMinutes,
+                serviceTimeMinutes,
+                totalTimeMinutes
+            ]
+        );
+
+        // Delete from active queue
+        await connection.execute(
+            'DELETE FROM queue_entries WHERE queueId = ?',
+            [id]
+        );
+
+        await connection.commit();
+        res.status(200).json({ 
+            message: 'Queue entry archived successfully',
+            waitTimeMinutes,
+            serviceTimeMinutes,
+            totalTimeMinutes
+        });
+    } catch (error) {
+        await connection.rollback();
+        console.error('Error archiving queue entry:', error);
+        res.status(500).json({ message: 'Error archiving queue entry', error: error.message });
+    } finally {
+        connection.release();
+    }
+});
+
+/**
+ * @route GET /api/queue/history
+ * @description Get archived queue entries (history)
+ */
+router.get('/history', async (req, res) => {
+    try {
+        const { servicePoint, status, patientId, startDate, endDate, page = 1, limit = 50 } = req.query;
+        const offset = (page - 1) * limit;
+
+        let query = `
+            SELECT qh.*, 
+                   p.firstName as patientFirstName, p.lastName as patientLastName,
+                   p.phone as patientPhone, p.patientNumber
+            FROM queue_history qh
+            LEFT JOIN patients p ON qh.patientId = p.patientId
+            WHERE 1=1
+        `;
+        const params = [];
+
+        if (servicePoint) {
+            query += ` AND qh.servicePoint = ?`;
+            params.push(servicePoint);
+        }
+        if (status) {
+            query += ` AND qh.status = ?`;
+            params.push(status);
+        }
+        if (patientId) {
+            query += ` AND qh.patientId = ?`;
+            params.push(patientId);
+        }
+        if (startDate) {
+            query += ` AND DATE(qh.endTime) >= ?`;
+            params.push(startDate);
+        }
+        if (endDate) {
+            query += ` AND DATE(qh.endTime) <= ?`;
+            params.push(endDate);
+        }
+
+        query += ` ORDER BY qh.endTime DESC, qh.archivedAt DESC LIMIT ? OFFSET ?`;
+        params.push(parseInt(limit), parseInt(offset));
+
+        const [rows] = await pool.execute(query, params);
+        res.status(200).json(rows);
+    } catch (error) {
+        console.error('Error fetching queue history:', error);
+        res.status(500).json({ message: 'Error fetching queue history', error: error.message });
+    }
+});
+
+/**
+ * @route POST /api/queue/archive-completed
+ * @description Archive all completed queue entries (batch operation)
+ */
+router.post('/archive-completed', async (req, res) => {
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
+
+        // Get all completed entries
+        const [completedEntries] = await connection.execute(
+            `SELECT * FROM queue_entries 
+             WHERE status IN ('completed', 'cancelled')`
+        );
+
+        let archivedCount = 0;
+
+        for (const queue of completedEntries) {
+            // Calculate service metrics
+            let waitTimeMinutes = null;
+            let serviceTimeMinutes = null;
+            let totalTimeMinutes = null;
+
+            if (queue.arrivalTime) {
+                const arrival = new Date(queue.arrivalTime);
+                
+                if (queue.calledTime) {
+                    const called = new Date(queue.calledTime);
+                    waitTimeMinutes = Math.floor((called - arrival) / 60000);
+                }
+                
+                if (queue.startTime && queue.endTime) {
+                    const start = new Date(queue.startTime);
+                    const end = new Date(queue.endTime);
+                    serviceTimeMinutes = Math.floor((end - start) / 60000);
+                }
+                
+                if (queue.endTime) {
+                    const end = new Date(queue.endTime);
+                    totalTimeMinutes = Math.floor((end - arrival) / 60000);
+                }
+            }
+
+            // Insert into history
+            await connection.execute(
+                `INSERT INTO queue_history 
+                (queueId, patientId, ticketNumber, servicePoint, priority, status, 
+                 estimatedWaitTime, arrivalTime, calledTime, startTime, endTime, notes, createdBy,
+                 waitTimeMinutes, serviceTimeMinutes, totalTimeMinutes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                    queue.queueId,
+                    queue.patientId,
+                    queue.ticketNumber,
+                    queue.servicePoint,
+                    queue.priority,
+                    queue.status,
+                    queue.estimatedWaitTime,
+                    queue.arrivalTime,
+                    queue.calledTime,
+                    queue.startTime,
+                    queue.endTime,
+                    queue.notes,
+                    queue.createdBy,
+                    waitTimeMinutes,
+                    serviceTimeMinutes,
+                    totalTimeMinutes
+                ]
+            );
+
+            // Delete from active queue
+            await connection.execute(
+                'DELETE FROM queue_entries WHERE queueId = ?',
+                [queue.queueId]
+            );
+
+            archivedCount++;
+        }
+
+        await connection.commit();
+        res.status(200).json({ 
+            message: `Successfully archived ${archivedCount} queue entries`,
+            archivedCount
+        });
+    } catch (error) {
+        await connection.rollback();
+        console.error('Error archiving completed entries:', error);
+        res.status(500).json({ message: 'Error archiving completed entries', error: error.message });
+    } finally {
+        connection.release();
+    }
+});
+
 router.delete('/:id', async (req, res) => {
     try {
         const { id } = req.params;
@@ -227,6 +475,14 @@ router.delete('/:id', async (req, res) => {
 
         if (existing.length === 0) {
             return res.status(404).json({ message: 'Queue entry not found' });
+        }
+
+        // For safety, only allow deletion of non-completed entries
+        // Completed entries should be archived instead
+        if (existing[0].status === 'completed' || existing[0].status === 'cancelled') {
+            return res.status(400).json({ 
+                message: 'Cannot delete completed entries. Use archive endpoint instead.' 
+            });
         }
 
         // Delete the queue entry

@@ -284,13 +284,49 @@ export default function QueueManagement() {
   const memoizedFilteredQueues = useMemo(() => {
     if (!isMounted) return []
     return queues.filter((queue) => {
-      const matchesSearch =
-        !searchQuery ||
-        (queue.patientFirstName &&
-          queue.patientFirstName.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        (queue.patientLastName && queue.patientLastName.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        (queue.patientNumber && queue.patientNumber.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        (queue.ticketNumber && queue.ticketNumber.toLowerCase().includes(searchQuery.toLowerCase()))
+      // Global search across all queue-related fields
+      const matchesSearch = !searchQuery || (() => {
+        const query = searchQuery.toLowerCase().trim()
+        if (!query) return true
+
+        // Search in patient name fields
+        const fullName = `${queue.patientFirstName || ''} ${queue.patientLastName || ''}`.toLowerCase().trim()
+        if (fullName.includes(query)) return true
+        if (queue.patientFirstName?.toLowerCase().includes(query)) return true
+        if (queue.patientLastName?.toLowerCase().includes(query)) return true
+        
+        // Search in patient number
+        if (queue.patientNumber?.toLowerCase().includes(query)) return true
+        
+        // Search in patient phone
+        if (queue.patientPhone?.toLowerCase().includes(query)) return true
+        
+        // Search in ticket number
+        if (queue.ticketNumber?.toLowerCase().includes(query)) return true
+        
+        // Search in service point (both value and label)
+        const servicePointLabel = servicePoints.find((sp) => sp.value === queue.servicePoint)?.label.toLowerCase() || ''
+        if (queue.servicePoint?.toLowerCase().includes(query)) return true
+        if (servicePointLabel.includes(query)) return true
+        
+        // Search in status (both value and formatted label)
+        const statusLabel = queue.status ? queue.status.charAt(0).toUpperCase() + queue.status.slice(1).toLowerCase() : ''
+        if (queue.status?.toLowerCase().includes(query)) return true
+        if (statusLabel.includes(query)) return true
+        
+        // Search in priority (both value and formatted label)
+        const priorityLabel = queue.priority ? queue.priority.charAt(0).toUpperCase() + queue.priority.slice(1).toLowerCase() : ''
+        if (queue.priority?.toLowerCase().includes(query)) return true
+        if (priorityLabel.includes(query)) return true
+        
+        // Search in notes
+        if (queue.notes?.toLowerCase().includes(query)) return true
+        
+        // Search in queue ID
+        if (queue.queueId?.toString().includes(query)) return true
+        
+        return false
+      })()
 
       const matchesServicePoint = !servicePointFilter || queue.servicePoint === servicePointFilter
       const matchesStatus = !statusFilter || queue.status === statusFilter
@@ -403,7 +439,7 @@ export default function QueueManagement() {
                     <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                     <Input
                       type="search"
-                      placeholder="Search patients or ticket numbers..."
+                      placeholder="Search anything (name, ticket, service point, status, priority, notes...)"
                       className="w-full pl-8"
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
@@ -662,7 +698,14 @@ export default function QueueManagement() {
           open={!!viewingBill}
           onOpenChange={(open) => !open && setViewingBill(null)}
           patientId={viewingBill.patientId}
+          queueId={viewingBill.queueId}
           queueNotes={viewingBill.notes}
+          onQueueCompleted={() => {
+            // Refresh queue data when queue entry is completed
+            loadAllQueues()
+            loadQueues()
+            setViewingBill(null)
+          }}
         />
       )}
 
