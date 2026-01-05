@@ -1,11 +1,12 @@
 "use client"
 
-import { useState, useMemo, Suspense } from "react"
+import { useState, useMemo, Suspense, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
-import { MoreHorizontal } from "lucide-react"
+import { MoreHorizontal, FileText, PlayCircle } from "lucide-react"
+import { Button } from "@/components/ui/button"
 import {
   getQueueByServicePoint,
   getServicePointName,
@@ -16,6 +17,10 @@ import {
 import { QueueTabsIndicator } from "@/components/queue-tabs-indicator"
 import { useScreenSize } from "@/hooks/use-screen-size"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { queueApi, medicalRecordsApi } from "@/lib/api"
+import { PatientEncounterForm } from "@/components/patient-encounter-form"
+import { useAuth } from "@/lib/auth/auth-context"
+import { format } from "date-fns"
 
 interface QueueDisplayProps {
   initialServicePoint?: ServicePoint
@@ -180,48 +185,259 @@ export function QueueDisplay({ initialServicePoint = "triage" }: QueueDisplayPro
 
 // Separate the content to allow for better code splitting
 function QueueContent({ servicePoint }: { servicePoint: ServicePoint }) {
-  const queueData = getQueueByServicePoint(servicePoint)
+  const [queueData, setQueueData] = useState<any[]>([])
+  const [loading, setLoading] = useState(false)
+  const [encounterFormOpen, setEncounterFormOpen] = useState(false)
+  const [selectedPatient, setSelectedPatient] = useState<{ patientId: string; patientName: string } | null>(null)
+  const [encountersToday, setEncountersToday] = useState<Record<string, boolean>>({})
+  const [currentDoctorId, setCurrentDoctorId] = useState<string | undefined>()
+  const { user } = useAuth()
+
+  // Get current doctor ID
+  useEffect(() => {
+    if (user?.id) {
+      setCurrentDoctorId(user.id)
+    } else {
+      try {
+        const token = localStorage.getItem('token') || localStorage.getItem('jwt_token')
+        if (token) {
+          const payload = JSON.parse(atob(token.split('.')[1]))
+          if (payload?.user?.id) {
+            setCurrentDoctorId(payload.user.id.toString())
+          }
+        }
+      } catch (e) {
+        console.error('Error getting doctor ID:', e)
+      }
+    }
+  }, [user])
+
+  // Fetch queue data from API
+  useEffect(() => {
+    const loadQueueData = async () => {
+      try {
+        setLoading(true)
+        const data = await queueApi.getAll(servicePoint, undefined)
+        
+        // Map API response to display format
+        const mappedData = data.map((entry: any) => ({
+          id: entry.queueId?.toString() || entry.id?.toString() || "",
+          patientId: entry.patientId?.toString() || "",
+          patientName: entry.patientFirstName && entry.patientLastName
+            ? `${entry.patientFirstName} ${entry.patientLastName}`
+            : entry.patientName || "Unknown Patient",
+          servicePoint: entry.servicePoint || servicePoint,
+          ticketNumber: entry.ticketNumber || "",
+          status: entry.status || "waiting",
+          priority: entry.priority || "normal",
+          estimatedWaitTime: entry.estimatedWaitTime,
+          arrivalTime: entry.arrivalTime || new Date().toISOString(),
+        }))
+        
+        setQueueData(mappedData)
+
+        // Check for encounters today for each patient
+        if (servicePoint === "consultation") {
+          const today = format(new Date(), 'yyyy-MM-dd')
+          const encounterChecks: Record<string, boolean> = {}
+          
+          await Promise.all(
+            mappedData.map(async (entry: any) => {
+              try {
+                const records = await medicalRecordsApi.getAll(
+                  undefined,
+                  entry.patientId,
+                  undefined,
+                  undefined,
+                  undefined,
+                  1,
+                  10
+                )
+                const hasEncounterToday = records.some((record: any) => {
+                  const recordDate = record.visitDate ? format(new Date(record.visitDate), 'yyyy-MM-dd') : null
+                  return recordDate === today
+                })
+                encounterChecks[entry.patientId] = hasEncounterToday
+              } catch (error) {
+                console.error(`Error checking encounters for patient ${entry.patientId}:`, error)
+                encounterChecks[entry.patientId] = false
+              }
+            })
+          )
+          
+          setEncountersToday(encounterChecks)
+        }
+      } catch (error) {
+        console.error('Error loading queue data:', error)
+        // Fallback to mock data
+        const mockData = getQueueByServicePoint(servicePoint)
+        setQueueData(mockData)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    loadQueueData()
+  }, [servicePoint])
+
+  const handleStartConsultation = (patientId: string, patientName: string) => {
+    console.log('handleStartConsultation called:', { patientId, patientName, currentDoctorId })
+    setSelectedPatient({ patientId, patientName })
+    setEncounterFormOpen(true)
+    console.log('Encounter form state set to open')
+  }
+
+  const isConsultation = servicePoint === "consultation"
 
   return (
-    <div className="rounded-md border">
-      <div className="grid grid-cols-12 bg-muted/50 p-3 text-sm font-medium">
-        <div className="col-span-1">#</div>
-        <div className="col-span-4">Patient</div>
-        <div className="col-span-2">Priority</div>
-        <div className="col-span-2">Status</div>
-        <div className="col-span-3">Wait Time</div>
+    <>
+      <div className="rounded-md border">
+        {isConsultation ? (
+          <>
+            <div className="grid grid-cols-12 bg-muted/50 p-3 text-sm font-medium">
+              <div className="col-span-1">#</div>
+              <div className="col-span-3">Patient</div>
+              <div className="col-span-2">Priority</div>
+              <div className="col-span-2">Status</div>
+              <div className="col-span-2">Wait Time</div>
+              <div className="col-span-2">Action</div>
+            </div>
+            {loading ? (
+              <div className="p-6 text-center text-muted-foreground">Loading queue data...</div>
+            ) : queueData.length > 0 ? (
+              <div className="divide-y">
+                {queueData.map((entry) => {
+                  const hasEncounterToday = encountersToday[entry.patientId] || false
+                  return (
+                    <div key={entry.id} className="grid grid-cols-12 p-3 text-sm items-center">
+                      <div className="col-span-1">{entry.ticketNumber || entry.queueNumber}</div>
+                      <div className="col-span-3 font-medium">{entry.patientName}</div>
+                      <div className="col-span-2">
+                        <Badge variant="outline" className={`${getPriorityColor(entry.priority)}`}>
+                          {entry.priority}
+                        </Badge>
+                      </div>
+                      <div className="col-span-2">
+                        <Badge variant={entry.status === "waiting" || entry.status === "called" ? "secondary" : "default"}>
+                          {entry.status === "waiting" ? "Waiting" : entry.status === "called" ? "Called" : "In Service"}
+                        </Badge>
+                      </div>
+                      <div className="col-span-2 text-muted-foreground">
+                        {calculateWaitTime(entry)} min
+                        {entry.estimatedWaitTime && entry.status === "waiting" && (
+                          <span> (Est. {entry.estimatedWaitTime} min)</span>
+                        )}
+                      </div>
+                      <div className="col-span-2">
+                        <Button
+                          variant={hasEncounterToday ? "outline" : "default"}
+                          size="sm"
+                          onClick={(e) => {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            console.log('Button clicked for patient:', entry.patientId, entry.patientName)
+                            handleStartConsultation(entry.patientId, entry.patientName)
+                          }}
+                          className="w-full"
+                        >
+                          {hasEncounterToday ? (
+                            <>
+                              <FileText className="h-3 w-3 mr-1" />
+                              Continue Consultation
+                            </>
+                          ) : (
+                            <>
+                              <PlayCircle className="h-3 w-3 mr-1" />
+                              Start Consultation
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
+              <div className="p-6 text-center text-muted-foreground">
+                No patients in queue for {getServicePointName(servicePoint)}
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            <div className="grid grid-cols-12 bg-muted/50 p-3 text-sm font-medium">
+              <div className="col-span-1">#</div>
+              <div className="col-span-4">Patient</div>
+              <div className="col-span-2">Priority</div>
+              <div className="col-span-2">Status</div>
+              <div className="col-span-3">Wait Time</div>
+            </div>
+            {loading ? (
+              <div className="p-6 text-center text-muted-foreground">Loading queue data...</div>
+            ) : queueData.length > 0 ? (
+              <div className="divide-y">
+                {queueData.map((entry) => (
+                  <div key={entry.id} className="grid grid-cols-12 p-3 text-sm">
+                    <div className="col-span-1">{entry.ticketNumber || entry.queueNumber}</div>
+                    <div className="col-span-4 font-medium">{entry.patientName}</div>
+                    <div className="col-span-2">
+                      <Badge variant="outline" className={`${getPriorityColor(entry.priority)}`}>
+                        {entry.priority}
+                      </Badge>
+                    </div>
+                    <div className="col-span-2">
+                      <Badge variant={entry.status === "waiting" || entry.status === "called" ? "secondary" : "default"}>
+                        {entry.status === "waiting" ? "Waiting" : entry.status === "called" ? "Called" : "In Service"}
+                      </Badge>
+                    </div>
+                    <div className="col-span-3 text-muted-foreground">
+                      {calculateWaitTime(entry)} min
+                      {entry.estimatedWaitTime && entry.status === "waiting" && (
+                        <span> (Est. {entry.estimatedWaitTime} min)</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="p-6 text-center text-muted-foreground">
+                No patients in queue for {getServicePointName(servicePoint)}
+              </div>
+            )}
+          </>
+        )}
       </div>
 
-      {queueData.length > 0 ? (
-        <div className="divide-y">
-          {queueData.map((entry) => (
-            <div key={entry.id} className="grid grid-cols-12 p-3 text-sm">
-              <div className="col-span-1">{entry.queueNumber}</div>
-              <div className="col-span-4 font-medium">{entry.patientName}</div>
-              <div className="col-span-2">
-                <Badge variant="outline" className={`${getPriorityColor(entry.priority)}`}>
-                  {entry.priority}
-                </Badge>
-              </div>
-              <div className="col-span-2">
-                <Badge variant={entry.status === "waiting" ? "secondary" : "default"}>
-                  {entry.status === "waiting" ? "Waiting" : "In Service"}
-                </Badge>
-              </div>
-              <div className="col-span-3 text-muted-foreground">
-                {calculateWaitTime(entry)} min
-                {entry.estimatedWaitTime && entry.status === "waiting" && (
-                  <span> (Est. {entry.estimatedWaitTime} min)</span>
-                )}
-              </div>
+      {/* Patient Encounter Form for consultation */}
+      {isConsultation && selectedPatient && (
+        <>
+          {process.env.NODE_ENV === 'development' && (
+            <div className="text-xs text-muted-foreground p-2 bg-muted rounded mb-2">
+              Debug: Form should render. Patient: {selectedPatient.patientId}, Open: {encounterFormOpen ? 'Yes' : 'No'}, Doctor: {currentDoctorId || 'None'}
             </div>
-          ))}
-        </div>
-      ) : (
-        <div className="p-6 text-center text-muted-foreground">
-          No patients in queue for {getServicePointName(servicePoint)}
-        </div>
+          )}
+          <PatientEncounterForm
+            open={encounterFormOpen}
+            onOpenChange={(open) => {
+              console.log('Encounter form onOpenChange:', open, 'Patient:', selectedPatient?.patientId)
+              setEncounterFormOpen(open)
+              if (!open) {
+                setSelectedPatient(null)
+              }
+            }}
+            initialPatientId={selectedPatient.patientId}
+            initialDoctorId={currentDoctorId}
+            onSuccess={() => {
+              console.log('Encounter saved successfully')
+              // Refresh queue data to update encounter status
+              setEncountersToday(prev => ({
+                ...prev,
+                [selectedPatient.patientId]: true
+              }))
+            }}
+          />
+        </>
       )}
-    </div>
+    </>
   )
 }

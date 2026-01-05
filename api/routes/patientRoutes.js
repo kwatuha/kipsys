@@ -305,5 +305,43 @@ router.delete('/:id', async (req, res) => {
     }
 });
 
+/**
+ * @route GET /api/patients/:id/vitals
+ * @description Get patient vital signs (optionally filtered by date)
+ */
+router.get('/:id/vitals', async (req, res) => {
+    const { id } = req.params;
+    const { date, today } = req.query;
+
+    try {
+        let query = `
+            SELECT vs.*, 
+                   u.firstName as recordedByFirstName, 
+                   u.lastName as recordedByLastName
+            FROM vital_signs vs
+            LEFT JOIN users u ON vs.recordedBy = u.userId
+            WHERE vs.patientId = ?
+        `;
+        const params = [id];
+
+        if (today === 'true' || date) {
+            if (today === 'true') {
+                query += ` AND DATE(vs.recordedDate) = CURDATE()`;
+            } else {
+                query += ` AND DATE(vs.recordedDate) = ?`;
+                params.push(date);
+            }
+        }
+
+        query += ` ORDER BY vs.recordedDate DESC LIMIT 10`;
+
+        const [rows] = await pool.execute(query, params);
+        res.status(200).json(rows);
+    } catch (error) {
+        console.error('Error fetching patient vitals:', error);
+        res.status(500).json({ message: 'Error fetching patient vitals', error: error.message });
+    }
+});
+
 module.exports = router;
 

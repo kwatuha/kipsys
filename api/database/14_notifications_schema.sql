@@ -35,3 +35,5 @@ CREATE TABLE IF NOT EXISTS drug_notifications (
     INDEX idx_created (createdAt)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+
+

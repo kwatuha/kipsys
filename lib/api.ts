@@ -88,6 +88,14 @@ export const patientApi = {
   
   deleteAllergy: (patientId: string, allergyId: string) =>
     apiRequest<any>(`/api/patients/${patientId}/allergies/${allergyId}`, { method: 'DELETE' }),
+  
+  // Patient vitals
+  getVitals: (patientId: string, today?: boolean, date?: string) => {
+    const params = new URLSearchParams();
+    if (today) params.append('today', 'true');
+    if (date) params.append('date', date);
+    return apiRequest<any[]>(`/api/patients/${patientId}/vitals${params.toString() ? `?${params.toString()}` : ''}`);
+  },
 };
 
 // Department API

@@ -34,11 +34,14 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
 import { AddToQueueForm } from "@/components/add-to-queue-form"
-import { queueApi } from "@/lib/api"
+import { queueApi, medicalRecordsApi } from "@/lib/api"
 import { toast } from "@/components/ui/use-toast"
-import { Search, Plus, Edit, Trash2, MoreHorizontal, Loader2, ArrowRight, Monitor, Users, Receipt } from "lucide-react"
+import { Search, Plus, Edit, Trash2, MoreHorizontal, Loader2, ArrowRight, Monitor, Users, Receipt, FileText, PlayCircle } from "lucide-react"
 import Link from "next/link"
 import { ViewBillDialog } from "@/components/view-bill-dialog"
+import { PatientEncounterForm } from "@/components/patient-encounter-form"
+import { useAuth } from "@/lib/auth/auth-context"
+import { format } from "date-fns"
 
 const servicePoints = [
   { value: "triage", label: "Triage" },
@@ -81,10 +84,86 @@ export default function QueueManagement() {
   const [deleteLoading, setDeleteLoading] = useState(false)
   const [statusLoading, setStatusLoading] = useState(false)
   const [viewingBill, setViewingBill] = useState<any>(null)
+  const [encounterFormOpen, setEncounterFormOpen] = useState(false)
+  const [selectedPatientForEncounter, setSelectedPatientForEncounter] = useState<{ patientId: string; patientName: string } | null>(null)
+  const [encountersToday, setEncountersToday] = useState<Record<string, boolean>>({})
+  const [currentDoctorId, setCurrentDoctorId] = useState<string | undefined>()
+  const { user } = useAuth()
 
   useEffect(() => {
     setIsMounted(true)
   }, [])
+
+  // Get current doctor ID - only run on client
+  useEffect(() => {
+    if (!isMounted) return
+
+    if (user?.id) {
+      setCurrentDoctorId(user.id)
+    } else {
+      try {
+        if (typeof window !== 'undefined') {
+          const token = localStorage.getItem('token') || localStorage.getItem('jwt_token')
+          if (token) {
+            const payload = JSON.parse(atob(token.split('.')[1]))
+            if (payload?.user?.id) {
+              setCurrentDoctorId(payload.user.id.toString())
+            }
+          }
+        }
+      } catch (e) {
+        console.error('Error getting doctor ID:', e)
+      }
+    }
+  }, [user, isMounted])
+
+  // Check for encounters today when consultation queue is filtered
+  useEffect(() => {
+    if (!isMounted || servicePointFilter !== "consultation" || queues.length === 0) {
+      return
+    }
+
+    const checkEncounters = async () => {
+      // Only check for consultation queues
+      const consultationQueues = queues.filter((q: any) => q.servicePoint === "consultation" && q.patientId)
+      if (consultationQueues.length === 0) {
+        return
+      }
+
+      const today = format(new Date(), 'yyyy-MM-dd')
+      const encounterChecks: Record<string, boolean> = {}
+      
+      await Promise.all(
+        consultationQueues.map(async (queue: any) => {
+          if (!queue.patientId) return
+          try {
+            const records = await medicalRecordsApi.getAll(
+              undefined,
+              queue.patientId.toString(),
+              undefined,
+              undefined,
+              undefined,
+              1,
+              10
+            )
+            const hasEncounterToday = records.some((record: any) => {
+              if (!record.visitDate) return false
+              const recordDate = format(new Date(record.visitDate), 'yyyy-MM-dd')
+              return recordDate === today
+            })
+            encounterChecks[queue.patientId.toString()] = hasEncounterToday
+          } catch (error) {
+            console.error(`Error checking encounters for patient ${queue.patientId}:`, error)
+            encounterChecks[queue.patientId.toString()] = false
+          }
+        })
+      )
+      
+      setEncountersToday(encounterChecks)
+    }
+
+    checkEncounters()
+  }, [isMounted, servicePointFilter, queues])
 
   // Load all queues for summary stats
   useEffect(() => {
@@ -182,6 +261,17 @@ export default function QueueManagement() {
     setAddQueueOpen(true)
   }
 
+  const handleStartConsultation = (queue: any) => {
+    const patientId = queue.patientId?.toString() || ""
+    const patientName = queue.patientFirstName && queue.patientLastName
+      ? `${queue.patientFirstName} ${queue.patientLastName}`
+      : "Unknown Patient"
+    
+    console.log('Starting consultation for:', { patientId, patientName })
+    setSelectedPatientForEncounter({ patientId, patientName })
+    setEncounterFormOpen(true)
+  }
+
   const handleCloseForm = (open: boolean) => {
     setAddQueueOpen(open)
     if (!open) {
@@ -189,8 +279,10 @@ export default function QueueManagement() {
     }
   }
 
-  // Filter queues
-  const filteredQueues = useMemo(() => {
+
+  // Filter queues - memoized to avoid hydration issues
+  const memoizedFilteredQueues = useMemo(() => {
+    if (!isMounted) return []
     return queues.filter((queue) => {
       const matchesSearch =
         !searchQuery ||
@@ -205,15 +297,19 @@ export default function QueueManagement() {
 
       return matchesSearch && matchesServicePoint && matchesStatus
     })
-  }, [queues, searchQuery, servicePointFilter, statusFilter])
+  }, [isMounted, queues, searchQuery, servicePointFilter, statusFilter])
 
-  // Calculate wait time in minutes
+  // Calculate wait time in minutes - only calculate on client
   const calculateWaitTime = (queue: any) => {
-    if (!queue.arrivalTime) return 0
-    const arrival = new Date(queue.arrivalTime)
-    const now = new Date()
-    const diffMs = now.getTime() - arrival.getTime()
-    return Math.floor(diffMs / 60000) // Convert to minutes
+    if (!isMounted || !queue.arrivalTime) return 0
+    try {
+      const arrival = new Date(queue.arrivalTime)
+      const now = new Date()
+      const diffMs = now.getTime() - arrival.getTime()
+      return Math.max(0, Math.floor(diffMs / 60000)) // Convert to minutes, ensure non-negative
+    } catch {
+      return 0
+    }
   }
 
   // Get status badge variant
@@ -363,14 +459,14 @@ export default function QueueManagement() {
                           <p className="text-sm text-muted-foreground mt-2">Loading queue entries...</p>
                         </TableCell>
                       </TableRow>
-                    ) : filteredQueues.length === 0 ? (
+                    ) : memoizedFilteredQueues.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                           No queue entries found
                         </TableCell>
                       </TableRow>
                     ) : (
-                      filteredQueues.map((queue) => (
+                      memoizedFilteredQueues.map((queue) => (
                         <TableRow key={queue.queueId}>
                           <TableCell className="font-medium">{queue.ticketNumber}</TableCell>
                           <TableCell>
@@ -409,6 +505,21 @@ export default function QueueManagement() {
                                 </Button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
+                                {queue.servicePoint === "consultation" && (
+                                  <DropdownMenuItem onClick={() => handleStartConsultation(queue)}>
+                                    {encountersToday[queue.patientId?.toString() || ""] ? (
+                                      <>
+                                        <FileText className="mr-2 h-4 w-4" />
+                                        Continue Consultation
+                                      </>
+                                    ) : (
+                                      <>
+                                        <PlayCircle className="mr-2 h-4 w-4" />
+                                        Start Consultation
+                                      </>
+                                    )}
+                                  </DropdownMenuItem>
+                                )}
                                 {queue.servicePoint === "cashier" && (
                                   <DropdownMenuItem onClick={() => setViewingBill(queue)}>
                                     <Receipt className="mr-2 h-4 w-4" />
@@ -594,6 +705,35 @@ export default function QueueManagement() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Patient Encounter Form */}
+      {selectedPatientForEncounter && (
+        <PatientEncounterForm
+          open={encounterFormOpen}
+          onOpenChange={(open) => {
+            setEncounterFormOpen(open)
+            if (!open) {
+              setSelectedPatientForEncounter(null)
+            }
+          }}
+          initialPatientId={selectedPatientForEncounter.patientId}
+          initialDoctorId={currentDoctorId}
+          onSuccess={() => {
+            toast({
+              title: "Encounter Saved",
+              description: `Encounter for ${selectedPatientForEncounter.patientName} has been saved successfully.`,
+            })
+            // Update encounter status
+            setEncountersToday(prev => ({
+              ...prev,
+              [selectedPatientForEncounter.patientId]: true
+            }))
+            // Refresh queue data
+            loadQueues()
+            loadAllQueues()
+          }}
+        />
+      )}
 
       <Dialog
         open={!!changingStatus}
