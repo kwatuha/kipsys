@@ -1397,9 +1397,9 @@ export function PatientEncounterForm({
 
       {/* Lab Tests Sheet */}
       <Sheet open={labTestsSheetOpen} onOpenChange={setLabTestsSheetOpen}>
-        <SheetContent side="right" className="w-full sm:w-[90vw] sm:max-w-5xl overflow-y-auto p-0 z-[60]">
+        <SheetContent side="right" className="w-full sm:w-[90vw] sm:max-w-5xl p-0 flex flex-col overflow-hidden z-[60]">
           <Form {...form}>
-            <SheetHeader className="px-6 pt-6 pb-4 border-b">
+            <SheetHeader className="px-6 pt-6 pb-4 border-b flex-shrink-0">
               <SheetTitle className="flex items-center gap-2">
                 <Flask className="h-5 w-5" />
                 Order Lab Tests
@@ -1408,9 +1408,9 @@ export function PatientEncounterForm({
                 Order laboratory tests for this patient encounter
               </SheetDescription>
             </SheetHeader>
-            <div className="flex h-[calc(100vh-120px)] mt-0">
+            <div className="flex flex-1 overflow-hidden min-h-0">
               <ScrollArea className="flex-1 px-6">
-                <div className="space-y-4 mt-4">
+                <div className="space-y-4 mt-4 pb-4">
                   <div className="flex items-center justify-between">
                     <h3 className="text-md font-medium">Order Lab Tests</h3>
                     <Button
@@ -1802,9 +1802,9 @@ export function PatientEncounterForm({
 
       {/* Prescription Sheet */}
       <Sheet open={prescriptionSheetOpen} onOpenChange={setPrescriptionSheetOpen}>
-        <SheetContent side="right" className="w-full sm:w-[90vw] sm:max-w-5xl overflow-y-auto p-0 z-[60]">
+        <SheetContent side="right" className="w-full sm:w-[90vw] sm:max-w-5xl p-0 flex flex-col overflow-hidden z-[60]">
           <Form {...form}>
-            <SheetHeader className="px-6 pt-6 pb-4 border-b">
+            <SheetHeader className="px-6 pt-6 pb-4 border-b flex-shrink-0">
               <SheetTitle className="flex items-center gap-2">
                 <Pills className="h-5 w-5" />
                 Prescribe Medications
@@ -1813,9 +1813,9 @@ export function PatientEncounterForm({
                 Prescribe medications for this patient encounter
               </SheetDescription>
             </SheetHeader>
-            <div className="flex h-[calc(100vh-120px)] mt-0">
+            <div className="flex flex-1 overflow-hidden min-h-0">
               <ScrollArea className="flex-1 px-6">
-                <div className="space-y-4 mt-4">
+                <div className="space-y-4 mt-4 pb-4">
                   <div className="flex items-center justify-between">
                     <h3 className="text-md font-medium">Prescribe Medications</h3>
                     <Button
