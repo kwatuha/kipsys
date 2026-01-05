@@ -865,17 +865,17 @@ export function PatientEncounterForm({
             {patientMedications.length > 0 ? (
               <div className="space-y-2">
                 {patientMedications.slice(0, 5).map((prescription: any) => (
-                  <Card key={prescription.prescriptionId} className="border-l-2 border-l-primary/30">
+                  <Card key={prescription.prescriptionId} className="border-l-2 border-l-primary/30 bg-card">
                     <CardContent className="pt-4">
                       <div className="text-xs space-y-1.5">
-                        <div className="font-semibold">
+                        <div className="font-semibold text-foreground">
                           {prescription.items?.[0]?.medicationName || 'Medication'}
                         </div>
-                        <div className="text-muted-foreground">
+                        <div className="text-foreground/80">
                           {prescription.items?.[0]?.dosage} • {prescription.items?.[0]?.frequency}
                         </div>
                         {prescription.items?.[0]?.duration && (
-                          <div className="text-muted-foreground">
+                          <div className="text-foreground/80">
                             Duration: {prescription.items?.[0]?.duration}
                           </div>
                         )}
@@ -883,7 +883,7 @@ export function PatientEncounterForm({
                           <Badge variant={prescription.status === 'completed' ? 'default' : 'secondary'} className="text-xs">
                             {prescription.status}
                           </Badge>
-                          <span className="text-muted-foreground text-[10px]">
+                          <span className="text-foreground/70 text-[10px]">
                             {new Date(prescription.prescriptionDate).toLocaleDateString()}
                           </span>
                         </div>
@@ -893,8 +893,8 @@ export function PatientEncounterForm({
                 ))}
               </div>
             ) : (
-              <Card>
-                <CardContent className="pt-4 text-xs text-muted-foreground text-center py-4">
+              <Card className="bg-card">
+                <CardContent className="pt-4 text-xs text-foreground/60 text-center py-4">
                   No recent medications
                 </CardContent>
               </Card>
@@ -910,15 +910,15 @@ export function PatientEncounterForm({
             {patientLabResults.length > 0 ? (
               <div className="space-y-2">
                 {patientLabResults.slice(0, 5).map((order: any) => (
-                  <Card key={order.orderId} className="border-l-2 border-l-blue-500/30">
+                  <Card key={order.orderId} className="border-l-2 border-l-blue-500/30 bg-card">
                     <CardContent className="pt-4">
                       <div className="text-xs space-y-1.5">
-                        <div className="font-semibold">Order #{order.orderNumber || order.orderId}</div>
-                        <div className="text-muted-foreground">
+                        <div className="font-semibold text-foreground">Order #{order.orderNumber || order.orderId}</div>
+                        <div className="text-foreground/80">
                           {order.items?.length || 0} test(s) • Priority: <span className="font-medium">{order.priority}</span>
                         </div>
                         {order.items && order.items.length > 0 && (
-                          <div className="text-muted-foreground">
+                          <div className="text-foreground/80">
                             Tests: {order.items.slice(0, 2).map((item: any) => item.testName || item.testTypeName).join(', ')}
                             {order.items.length > 2 && ` +${order.items.length - 2} more`}
                           </div>
@@ -927,7 +927,7 @@ export function PatientEncounterForm({
                           <Badge variant={order.status === 'completed' ? 'default' : 'secondary'} className="text-xs">
                             {order.status}
                           </Badge>
-                          <span className="text-muted-foreground text-[10px]">
+                          <span className="text-foreground/70 text-[10px]">
                             {new Date(order.orderDate).toLocaleDateString()}
                           </span>
                         </div>
@@ -937,8 +937,8 @@ export function PatientEncounterForm({
                 ))}
               </div>
             ) : (
-              <Card>
-                <CardContent className="pt-4 text-xs text-muted-foreground text-center py-4">
+              <Card className="bg-card">
+                <CardContent className="pt-4 text-xs text-foreground/60 text-center py-4">
                   No recent lab results
                 </CardContent>
               </Card>
@@ -976,7 +976,7 @@ export function PatientEncounterForm({
             <Form {...form}>
               <form onSubmit={form.handleSubmit(onSubmit)} className="flex-1 flex flex-col overflow-hidden min-h-0">
                 {/* Fixed Header Section - Patient Summary and Basic Fields */}
-                <div className="px-6 pt-4 pb-4 flex-shrink-0 border-b overflow-y-auto max-h-[40vh]">
+                <div className="px-6 pt-4 pb-4 flex-shrink-0 border-b">
                   {/* Patient Summary Panel */}
                   {patientId && patientData && (
                     <Card className="mb-4 border-l-4 border-l-primary">
@@ -1082,25 +1082,25 @@ export function PatientEncounterForm({
                               <span className="text-sm font-semibold">Recent Medications</span>
                             </div>
                             {patientMedications.length > 0 ? (
-                              <div className="space-y-1.5 bg-blue-50 p-2 rounded-md border border-blue-200">
+                              <div className="space-y-1.5 bg-blue-50 dark:bg-blue-950/30 p-2 rounded-md border border-blue-200 dark:border-blue-800">
                                 {patientMedications.slice(0, 3).map((prescription: any) => (
                                   <div key={prescription.prescriptionId} className="text-xs">
-                                    <div className="font-medium truncate">
+                                    <div className="font-medium truncate text-foreground">
                                       {prescription.items?.[0]?.medicationName || 'Medication'}
                                     </div>
-                                    <div className="text-muted-foreground text-[10px]">
+                                    <div className="text-foreground/70 text-[10px]">
                                       {prescription.status} • {new Date(prescription.prescriptionDate).toLocaleDateString()}
                                     </div>
                                   </div>
                                 ))}
                                 {patientMedications.length > 3 && (
-                                  <div className="text-xs text-muted-foreground pt-1">
+                                  <div className="text-xs text-foreground/70 pt-1">
                                     +{patientMedications.length - 3} more
                                   </div>
                                 )}
                               </div>
                             ) : (
-                              <div className="text-xs text-muted-foreground bg-muted p-2 rounded-md">
+                              <div className="text-xs text-foreground/60 bg-muted p-2 rounded-md">
                                 No active medications
                               </div>
                             )}
@@ -1113,7 +1113,7 @@ export function PatientEncounterForm({
                               <span className="text-sm font-semibold">Recent Lab Results</span>
                             </div>
                             {patientLabResults.length > 0 ? (
-                              <div className="space-y-1.5 bg-purple-50 p-2 rounded-md border border-purple-200">
+                              <div className="space-y-1.5 bg-purple-50 dark:bg-purple-950/30 p-2 rounded-md border border-purple-200 dark:border-purple-800">
                                 {patientLabResults.slice(0, 2).map((order: any) => (
                                   <div key={order.orderId} className="text-xs">
                                     <div className="flex items-center gap-1">
@@ -1122,25 +1122,25 @@ export function PatientEncounterForm({
                                       ) : (
                                         <Badge variant="secondary" className="text-[10px]">{order.status}</Badge>
                                       )}
-                                      <span className="text-muted-foreground text-[10px]">
+                                      <span className="text-foreground/70 text-[10px]">
                                         {new Date(order.orderDate).toLocaleDateString()}
                                       </span>
                                     </div>
                                     {order.items && order.items.length > 0 && (
-                                      <div className="text-muted-foreground text-[10px] mt-0.5">
+                                      <div className="text-foreground/70 text-[10px] mt-0.5">
                                         {order.items.length} test(s)
                                       </div>
                                     )}
                                   </div>
                                 ))}
                                 {patientLabResults.length > 2 && (
-                                  <div className="text-xs text-muted-foreground pt-1">
+                                  <div className="text-xs text-foreground/70 pt-1">
                                     +{patientLabResults.length - 2} more
                                   </div>
                                 )}
                               </div>
                             ) : (
-                              <div className="text-xs text-muted-foreground bg-muted p-2 rounded-md">
+                              <div className="text-xs text-foreground/60 bg-muted p-2 rounded-md">
                                 No recent lab results
                               </div>
                             )}
@@ -1150,116 +1150,6 @@ export function PatientEncounterForm({
                     </Card>
                   )}
 
-                  {/* Main Form Fields */}
-                  <div className="grid grid-cols-2 gap-4 mb-4">
-                    <FormField
-                      control={form.control}
-                      name="patientId"
-                      render={({ field }) => (
-                        <FormItem className="flex flex-col">
-                          <FormLabel>Patient *</FormLabel>
-                          <FormControl>
-                            <PatientCombobox
-                              value={field.value}
-                              onValueChange={(value) => {
-                                field.onChange(value)
-                              }}
-                              placeholder="Search patient by name, ID, or number..."
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name="doctorId"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Doctor *</FormLabel>
-                          <Select onValueChange={field.onChange} defaultValue={field.value || ""}>
-                            <FormControl>
-                              <SelectTrigger>
-                                <SelectValue placeholder="Select doctor" />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              {doctors.map((doctor) => (
-                                <SelectItem key={doctor.userId} value={doctor.userId.toString()}>
-                                  {getDoctorName(doctor)} {doctor.department && ` - ${doctor.department}`}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-3 gap-4 mb-4">
-                    <FormField
-                      control={form.control}
-                      name="encounterDate"
-                      render={({ field }) => (
-                        <FormItem className="flex flex-col">
-                          <FormLabel>Encounter Date *</FormLabel>
-                          <Popover>
-                            <PopoverTrigger asChild>
-                              <FormControl>
-                                <Button
-                                  variant={"outline"}
-                                  className={`w-full pl-3 text-left font-normal ${!field.value ? "text-muted-foreground" : ""}`}
-                                >
-                                  {field.value ? format(field.value, "PPP") : <span>Select date</span>}
-                                  <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-                                </Button>
-                              </FormControl>
-                            </PopoverTrigger>
-                            <PopoverContent className="w-auto p-0" align="start">
-                              <Calendar mode="single" selected={field.value} onSelect={field.onChange} initialFocus />
-                            </PopoverContent>
-                          </Popover>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name="visitType"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Visit Type</FormLabel>
-                          <Select onValueChange={field.onChange} value={field.value || ""}>
-                            <FormControl>
-                              <SelectTrigger>
-                                <SelectValue placeholder="Select visit type" />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              <SelectItem value="Outpatient">Outpatient</SelectItem>
-                              <SelectItem value="Inpatient">Inpatient</SelectItem>
-                              <SelectItem value="Emergency">Emergency</SelectItem>
-                            </SelectContent>
-                          </Select>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name="department"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Department</FormLabel>
-                          <FormControl>
-                            <Input placeholder="e.g., Cardiology" {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </div>
                 </div>
 
                 {/* Tabs Container */}
@@ -1316,13 +1206,119 @@ export function PatientEncounterForm({
                   {/* Scrollable Tab Content */}
                   {/* Encounter Details Tab */}
                   <TabsContent value="encounter" className="flex-1 overflow-hidden min-h-0">
-                    <div className="flex items-center justify-center h-full">
-                      <div className="text-center text-muted-foreground">
-                        <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                        <p className="text-sm">Basic encounter information is shown above</p>
-                        <p className="text-xs mt-2">Use the tabs to access Symptoms, Diagnosis, Lab Tests, and Prescription</p>
+                    <ScrollArea className="h-full px-6">
+                      <div className="space-y-4 mt-4 pb-4">
+                        <div className="grid grid-cols-2 gap-4">
+                          <FormField
+                            control={form.control}
+                            name="patientId"
+                            render={({ field }) => (
+                              <FormItem className="flex flex-col">
+                                <FormLabel>Patient *</FormLabel>
+                                <FormControl>
+                                  <PatientCombobox
+                                    value={field.value}
+                                    onValueChange={(value) => {
+                                      field.onChange(value)
+                                    }}
+                                    placeholder="Search patient by name, ID, or number..."
+                                  />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          <FormField
+                            control={form.control}
+                            name="doctorId"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Doctor *</FormLabel>
+                                <Select onValueChange={field.onChange} defaultValue={field.value || ""}>
+                                  <FormControl>
+                                    <SelectTrigger>
+                                      <SelectValue placeholder="Select doctor" />
+                                    </SelectTrigger>
+                                  </FormControl>
+                                  <SelectContent>
+                                    {doctors.map((doctor) => (
+                                      <SelectItem key={doctor.userId} value={doctor.userId.toString()}>
+                                        {getDoctorName(doctor)} {doctor.department && ` - ${doctor.department}`}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-4">
+                          <FormField
+                            control={form.control}
+                            name="encounterDate"
+                            render={({ field }) => (
+                              <FormItem className="flex flex-col">
+                                <FormLabel>Encounter Date *</FormLabel>
+                                <Popover>
+                                  <PopoverTrigger asChild>
+                                    <FormControl>
+                                      <Button
+                                        variant={"outline"}
+                                        className={`w-full pl-3 text-left font-normal ${!field.value ? "text-muted-foreground" : ""}`}
+                                      >
+                                        {field.value ? format(field.value, "PPP") : <span>Select date</span>}
+                                        <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
+                                      </Button>
+                                    </FormControl>
+                                  </PopoverTrigger>
+                                  <PopoverContent className="w-auto p-0" align="start">
+                                    <Calendar mode="single" selected={field.value} onSelect={field.onChange} initialFocus />
+                                  </PopoverContent>
+                                </Popover>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          <FormField
+                            control={form.control}
+                            name="visitType"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Visit Type</FormLabel>
+                                <Select onValueChange={field.onChange} value={field.value || ""}>
+                                  <FormControl>
+                                    <SelectTrigger>
+                                      <SelectValue placeholder="Select visit type" />
+                                    </SelectTrigger>
+                                  </FormControl>
+                                  <SelectContent>
+                                    <SelectItem value="Outpatient">Outpatient</SelectItem>
+                                    <SelectItem value="Inpatient">Inpatient</SelectItem>
+                                    <SelectItem value="Emergency">Emergency</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          <FormField
+                            control={form.control}
+                            name="department"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Department</FormLabel>
+                                <FormControl>
+                                  <Input placeholder="e.g., Cardiology" {...field} />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        </div>
                       </div>
-                    </div>
+                    </ScrollArea>
                   </TabsContent>
 
                   {/* Symptoms and Diagnosis tabs now open in Sheets - placeholder content */}
