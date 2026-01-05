@@ -1,9 +1,9 @@
-export type ServicePointType = "triage" | "consultation" | "pharmacy" | "laboratory" | "radiology" | "billing"
+export type ServicePointType = "triage" | "consultation" | "pharmacy" | "laboratory" | "radiology" | "billing" | "cashier"
 
 // Alias for compatibility
 export type ServicePoint = ServicePointType
 
-export type QueueStatus = "waiting" | "serving" | "completed" | "no-show" | "cancelled"
+export type QueueStatus = "waiting" | "called" | "serving" | "completed" | "no-show" | "cancelled"
 
 export type Priority = "normal" | "urgent" | "emergency"
 
@@ -87,6 +87,7 @@ export const servicePoints: ServicePointType[] = [
   "laboratory",
   "radiology",
   "billing",
+  "cashier",
 ]
 
 export function getQueueEntriesByServicePoint(servicePoint: ServicePointType): QueueEntry[] {
@@ -109,6 +110,7 @@ export function getServicePointName(servicePoint: ServicePointType): string {
     laboratory: "Laboratory",
     radiology: "Radiology",
     billing: "Billing",
+    cashier: "Cashier",
   }
   return names[servicePoint] || servicePoint
 }
