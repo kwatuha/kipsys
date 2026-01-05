@@ -18,7 +18,8 @@ import {
   X,
   CheckCircle2,
   Clock,
-  Eye
+  Eye,
+  Activity
 } from "lucide-react"
 import { format } from "date-fns"
 
@@ -187,7 +188,7 @@ export function PatientEncounterForm({
     defaultValues: {
       patientId: initialPatientId || "",
       doctorId: initialDoctorId || "",
-      encounterDate: new Date(),
+      encounterDate: new Date(new Date().setHours(0, 0, 0, 0)), // Today's date at midnight
       visitType: "Outpatient",
       department: "",
       chiefComplaint: "",
@@ -235,7 +236,7 @@ export function PatientEncounterForm({
         form.reset({
           patientId: initialPatientId || "",
           doctorId: initialDoctorId || "",
-          encounterDate: new Date(),
+          encounterDate: new Date(new Date().setHours(0, 0, 0, 0)), // Today's date at midnight
           visitType: "Outpatient",
           department: "",
           chiefComplaint: "",
@@ -975,184 +976,7 @@ export function PatientEncounterForm({
 
             <Form {...form}>
               <form onSubmit={form.handleSubmit(onSubmit)} className="flex-1 flex flex-col overflow-hidden min-h-0">
-                {/* Fixed Header Section - Patient Summary and Basic Fields */}
-                <div className="px-6 pt-4 pb-4 flex-shrink-0 border-b">
-                  {/* Patient Summary Panel */}
-                  {patientId && patientData && (
-                    <Card className="mb-4 border-l-4 border-l-primary">
-                      <CardHeader className="pb-3">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <CardTitle className="text-lg">{getPatientName(patientData)}</CardTitle>
-                            <CardDescription>
-                              {patientData.patientNumber} • {patientData.gender} • {patientData.dateOfBirth ? new Date(patientData.dateOfBirth).toLocaleDateString() : 'N/A'}
-                            </CardDescription>
-                          </div>
-                          {loadingPatientData && (
-                            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                          )}
-                        </div>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                          {/* Today's Vitals */}
-                          <div className="space-y-2">
-                            <div className="flex items-center gap-2">
-                              <Clock className="h-4 w-4 text-green-600" />
-                              <span className="text-sm font-semibold">Today's Vitals</span>
-                            </div>
-                            {todayVitals ? (
-                              <div className="space-y-1.5 text-xs bg-green-50 p-2 rounded-md border border-green-200">
-                                {todayVitals.systolicBP && todayVitals.diastolicBP && (
-                                  <div className="flex justify-between">
-                                    <span className="text-muted-foreground">BP:</span>
-                                    <span className="font-semibold">{todayVitals.systolicBP}/{todayVitals.diastolicBP} mmHg</span>
-                                  </div>
-                                )}
-                                {todayVitals.heartRate && (
-                                  <div className="flex justify-between">
-                                    <span className="text-muted-foreground">HR:</span>
-                                    <span className="font-semibold">{todayVitals.heartRate} bpm</span>
-                                  </div>
-                                )}
-                                {todayVitals.temperature && (
-                                  <div className="flex justify-between">
-                                    <span className="text-muted-foreground">Temp:</span>
-                                    <span className="font-semibold">{todayVitals.temperature}°C</span>
-                                  </div>
-                                )}
-                                {todayVitals.respiratoryRate && (
-                                  <div className="flex justify-between">
-                                    <span className="text-muted-foreground">RR:</span>
-                                    <span className="font-semibold">{todayVitals.respiratoryRate} bpm</span>
-                                  </div>
-                                )}
-                                {todayVitals.oxygenSaturation && (
-                                  <div className="flex justify-between">
-                                    <span className="text-muted-foreground">SpO2:</span>
-                                    <span className="font-semibold">{todayVitals.oxygenSaturation}%</span>
-                                  </div>
-                                )}
-                                {todayVitals.weight && (
-                                  <div className="flex justify-between">
-                                    <span className="text-muted-foreground">Weight:</span>
-                                    <span className="font-semibold">{todayVitals.weight} kg</span>
-                                  </div>
-                                )}
-                              </div>
-                            ) : (
-                              <div className="text-xs text-muted-foreground bg-muted p-2 rounded-md">
-                                No vitals recorded today
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Allergies Alert */}
-                          <div className="space-y-2">
-                            <div className="flex items-center gap-2">
-                              <AlertTriangle className="h-4 w-4 text-destructive" />
-                              <span className="text-sm font-semibold">Allergies</span>
-                            </div>
-                            {patientAllergies.length > 0 ? (
-                              <div className="space-y-1.5 bg-red-50 p-2 rounded-md border border-red-200">
-                                <div className="flex flex-wrap gap-1">
-                                  {patientAllergies.slice(0, 3).map((allergy: any) => (
-                                    <Badge key={allergy.allergyId} variant="destructive" className="text-xs">
-                                      {allergy.allergen}
-                                    </Badge>
-                                  ))}
-                                  {patientAllergies.length > 3 && (
-                                    <Badge variant="destructive" className="text-xs">
-                                      +{patientAllergies.length - 3} more
-                                    </Badge>
-                                  )}
-                                </div>
-                              </div>
-                            ) : (
-                              <div className="text-xs text-muted-foreground bg-muted p-2 rounded-md">
-                                No known allergies
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Current Medications */}
-                          <div className="space-y-2">
-                            <div className="flex items-center gap-2">
-                              <Pills className="h-4 w-4 text-primary" />
-                              <span className="text-sm font-semibold">Recent Medications</span>
-                            </div>
-                            {patientMedications.length > 0 ? (
-                              <div className="space-y-1.5 bg-blue-50 dark:bg-blue-950/30 p-2 rounded-md border border-blue-200 dark:border-blue-800">
-                                {patientMedications.slice(0, 3).map((prescription: any) => (
-                                  <div key={prescription.prescriptionId} className="text-xs">
-                                    <div className="font-medium truncate text-foreground">
-                                      {prescription.items?.[0]?.medicationName || 'Medication'}
-                                    </div>
-                                    <div className="text-foreground/70 text-[10px]">
-                                      {prescription.status} • {new Date(prescription.prescriptionDate).toLocaleDateString()}
-                                    </div>
-                                  </div>
-                                ))}
-                                {patientMedications.length > 3 && (
-                                  <div className="text-xs text-foreground/70 pt-1">
-                                    +{patientMedications.length - 3} more
-                                  </div>
-                                )}
-                              </div>
-                            ) : (
-                              <div className="text-xs text-foreground/60 bg-muted p-2 rounded-md">
-                                No active medications
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Recent Lab Results */}
-                          <div className="space-y-2">
-                            <div className="flex items-center gap-2">
-                              <Flask className="h-4 w-4 text-blue-500" />
-                              <span className="text-sm font-semibold">Recent Lab Results</span>
-                            </div>
-                            {patientLabResults.length > 0 ? (
-                              <div className="space-y-1.5 bg-purple-50 dark:bg-purple-950/30 p-2 rounded-md border border-purple-200 dark:border-purple-800">
-                                {patientLabResults.slice(0, 2).map((order: any) => (
-                                  <div key={order.orderId} className="text-xs">
-                                    <div className="flex items-center gap-1">
-                                      {order.status === 'completed' ? (
-                                        <Badge variant="default" className="text-[10px]">Completed</Badge>
-                                      ) : (
-                                        <Badge variant="secondary" className="text-[10px]">{order.status}</Badge>
-                                      )}
-                                      <span className="text-foreground/70 text-[10px]">
-                                        {new Date(order.orderDate).toLocaleDateString()}
-                                      </span>
-                                    </div>
-                                    {order.items && order.items.length > 0 && (
-                                      <div className="text-foreground/70 text-[10px] mt-0.5">
-                                        {order.items.length} test(s)
-                                      </div>
-                                    )}
-                                  </div>
-                                ))}
-                                {patientLabResults.length > 2 && (
-                                  <div className="text-xs text-foreground/70 pt-1">
-                                    +{patientLabResults.length - 2} more
-                                  </div>
-                                )}
-                              </div>
-                            ) : (
-                              <div className="text-xs text-foreground/60 bg-muted p-2 rounded-md">
-                                No recent lab results
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  )}
-
-                </div>
-
-                {/* Tabs Container */}
+                {/* Tabs Container - Moved to Top */}
                 <Tabs value={activeTab} onValueChange={(value) => {
                   if (value === "prescription") {
                     setPrescriptionSheetOpen(true)
@@ -1181,7 +1005,7 @@ export function PatientEncounterForm({
                         Encounter
                       </TabsTrigger>
                       <TabsTrigger value="symptoms">
-                        <FileText className="h-4 w-4 mr-2" />
+                        <Activity className="h-4 w-4 mr-2" />
                         Symptoms
                       </TabsTrigger>
                       <TabsTrigger value="diagnosis">
@@ -1204,118 +1028,298 @@ export function PatientEncounterForm({
                   </div>
 
                   {/* Scrollable Tab Content */}
-                  {/* Encounter Details Tab */}
+                  {/* Encounter Details Tab - Combined with Patient Summary */}
                   <TabsContent value="encounter" className="flex-1 overflow-hidden min-h-0">
                     <ScrollArea className="h-full px-6">
-                      <div className="space-y-4 mt-4 pb-4">
-                        <div className="grid grid-cols-2 gap-4">
-                          <FormField
-                            control={form.control}
-                            name="patientId"
-                            render={({ field }) => (
-                              <FormItem className="flex flex-col">
-                                <FormLabel>Patient *</FormLabel>
-                                <FormControl>
-                                  <PatientCombobox
-                                    value={field.value}
-                                    onValueChange={(value) => {
-                                      field.onChange(value)
-                                    }}
-                                    placeholder="Search patient by name, ID, or number..."
-                                  />
-                                </FormControl>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                          <FormField
-                            control={form.control}
-                            name="doctorId"
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>Doctor *</FormLabel>
-                                <Select onValueChange={field.onChange} defaultValue={field.value || ""}>
-                                  <FormControl>
-                                    <SelectTrigger>
-                                      <SelectValue placeholder="Select doctor" />
-                                    </SelectTrigger>
-                                  </FormControl>
-                                  <SelectContent>
-                                    {doctors.map((doctor) => (
-                                      <SelectItem key={doctor.userId} value={doctor.userId.toString()}>
-                                        {getDoctorName(doctor)} {doctor.department && ` - ${doctor.department}`}
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                        </div>
+                      <div className="space-y-6 mt-4 pb-4">
+                        {/* Patient Summary Panel */}
+                        {patientId && patientData && (
+                          <Card className="border-l-4 border-l-primary">
+                            <CardHeader className="pb-3">
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <CardTitle className="text-lg">{getPatientName(patientData)}</CardTitle>
+                                  <CardDescription>
+                                    {patientData.patientNumber} • {patientData.gender} • {patientData.dateOfBirth ? new Date(patientData.dateOfBirth).toLocaleDateString() : 'N/A'}
+                                  </CardDescription>
+                                </div>
+                                {loadingPatientData && (
+                                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                                )}
+                              </div>
+                            </CardHeader>
+                            <CardContent>
+                              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                                {/* Today's Vitals */}
+                                <div className="space-y-2">
+                                  <div className="flex items-center gap-2">
+                                    <Clock className="h-4 w-4 text-green-600" />
+                                    <span className="text-sm font-semibold">Today's Vitals</span>
+                                  </div>
+                                  {todayVitals ? (
+                                    <div className="space-y-1.5 text-xs bg-green-50 dark:bg-green-950/30 p-2 rounded-md border border-green-200 dark:border-green-800">
+                                      {todayVitals.systolicBP && todayVitals.diastolicBP && (
+                                        <div className="flex justify-between">
+                                          <span className="text-foreground/70">BP:</span>
+                                          <span className="font-semibold text-foreground">{todayVitals.systolicBP}/{todayVitals.diastolicBP} mmHg</span>
+                                        </div>
+                                      )}
+                                      {todayVitals.heartRate && (
+                                        <div className="flex justify-between">
+                                          <span className="text-foreground/70">HR:</span>
+                                          <span className="font-semibold text-foreground">{todayVitals.heartRate} bpm</span>
+                                        </div>
+                                      )}
+                                      {todayVitals.temperature && (
+                                        <div className="flex justify-between">
+                                          <span className="text-foreground/70">Temp:</span>
+                                          <span className="font-semibold text-foreground">{todayVitals.temperature}°C</span>
+                                        </div>
+                                      )}
+                                      {todayVitals.respiratoryRate && (
+                                        <div className="flex justify-between">
+                                          <span className="text-foreground/70">RR:</span>
+                                          <span className="font-semibold text-foreground">{todayVitals.respiratoryRate} bpm</span>
+                                        </div>
+                                      )}
+                                      {todayVitals.oxygenSaturation && (
+                                        <div className="flex justify-between">
+                                          <span className="text-foreground/70">SpO2:</span>
+                                          <span className="font-semibold text-foreground">{todayVitals.oxygenSaturation}%</span>
+                                        </div>
+                                      )}
+                                      {todayVitals.weight && (
+                                        <div className="flex justify-between">
+                                          <span className="text-foreground/70">Weight:</span>
+                                          <span className="font-semibold text-foreground">{todayVitals.weight} kg</span>
+                                        </div>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <div className="text-xs text-foreground/60 bg-muted p-2 rounded-md">
+                                      No vitals recorded today
+                                    </div>
+                                  )}
+                                </div>
 
-                        <div className="grid grid-cols-3 gap-4">
-                          <FormField
-                            control={form.control}
-                            name="encounterDate"
-                            render={({ field }) => (
-                              <FormItem className="flex flex-col">
-                                <FormLabel>Encounter Date *</FormLabel>
-                                <Popover>
-                                  <PopoverTrigger asChild>
-                                    <FormControl>
-                                      <Button
-                                        variant={"outline"}
-                                        className={`w-full pl-3 text-left font-normal ${!field.value ? "text-muted-foreground" : ""}`}
-                                      >
-                                        {field.value ? format(field.value, "PPP") : <span>Select date</span>}
-                                        <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-                                      </Button>
-                                    </FormControl>
-                                  </PopoverTrigger>
-                                  <PopoverContent className="w-auto p-0" align="start">
-                                    <Calendar mode="single" selected={field.value} onSelect={field.onChange} initialFocus />
-                                  </PopoverContent>
-                                </Popover>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                          <FormField
-                            control={form.control}
-                            name="visitType"
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>Visit Type</FormLabel>
-                                <Select onValueChange={field.onChange} value={field.value || ""}>
+                                {/* Allergies Alert */}
+                                <div className="space-y-2">
+                                  <div className="flex items-center gap-2">
+                                    <AlertTriangle className="h-4 w-4 text-destructive" />
+                                    <span className="text-sm font-semibold">Allergies</span>
+                                  </div>
+                                  {patientAllergies.length > 0 ? (
+                                    <div className="space-y-1.5 bg-red-50 dark:bg-red-950/30 p-2 rounded-md border border-red-200 dark:border-red-800">
+                                      <div className="flex flex-wrap gap-1">
+                                        {patientAllergies.slice(0, 3).map((allergy: any) => (
+                                          <Badge key={allergy.allergyId} variant="destructive" className="text-xs">
+                                            {allergy.allergen}
+                                          </Badge>
+                                        ))}
+                                        {patientAllergies.length > 3 && (
+                                          <Badge variant="destructive" className="text-xs">
+                                            +{patientAllergies.length - 3} more
+                                          </Badge>
+                                        )}
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div className="text-xs text-foreground/60 bg-muted p-2 rounded-md">
+                                      No known allergies
+                                    </div>
+                                  )}
+                                </div>
+
+                                {/* Current Medications */}
+                                <div className="space-y-2">
+                                  <div className="flex items-center gap-2">
+                                    <Pills className="h-4 w-4 text-primary" />
+                                    <span className="text-sm font-semibold">Recent Medications</span>
+                                  </div>
+                                  {patientMedications.length > 0 ? (
+                                    <div className="space-y-1.5 bg-blue-50 dark:bg-blue-950/30 p-2 rounded-md border border-blue-200 dark:border-blue-800">
+                                      {patientMedications.slice(0, 3).map((prescription: any) => (
+                                        <div key={prescription.prescriptionId} className="text-xs">
+                                          <div className="font-medium truncate text-foreground">
+                                            {prescription.items?.[0]?.medicationName || 'Medication'}
+                                          </div>
+                                          <div className="text-foreground/70 text-[10px]">
+                                            {prescription.status} • {new Date(prescription.prescriptionDate).toLocaleDateString()}
+                                          </div>
+                                        </div>
+                                      ))}
+                                      {patientMedications.length > 3 && (
+                                        <div className="text-xs text-foreground/70 pt-1">
+                                          +{patientMedications.length - 3} more
+                                        </div>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <div className="text-xs text-foreground/60 bg-muted p-2 rounded-md">
+                                      No active medications
+                                    </div>
+                                  )}
+                                </div>
+
+                                {/* Recent Lab Results */}
+                                <div className="space-y-2">
+                                  <div className="flex items-center gap-2">
+                                    <Flask className="h-4 w-4 text-blue-500" />
+                                    <span className="text-sm font-semibold">Recent Lab Results</span>
+                                  </div>
+                                  {patientLabResults.length > 0 ? (
+                                    <div className="space-y-1.5 bg-purple-50 dark:bg-purple-950/30 p-2 rounded-md border border-purple-200 dark:border-purple-800">
+                                      {patientLabResults.slice(0, 2).map((order: any) => (
+                                        <div key={order.orderId} className="text-xs">
+                                          <div className="flex items-center gap-1">
+                                            {order.status === 'completed' ? (
+                                              <Badge variant="default" className="text-[10px]">Completed</Badge>
+                                            ) : (
+                                              <Badge variant="secondary" className="text-[10px]">{order.status}</Badge>
+                                            )}
+                                            <span className="text-foreground/70 text-[10px]">
+                                              {new Date(order.orderDate).toLocaleDateString()}
+                                            </span>
+                                          </div>
+                                          {order.items && order.items.length > 0 && (
+                                            <div className="text-foreground/70 text-[10px] mt-0.5">
+                                              {order.items.length} test(s)
+                                            </div>
+                                          )}
+                                        </div>
+                                      ))}
+                                      {patientLabResults.length > 2 && (
+                                        <div className="text-xs text-foreground/70 pt-1">
+                                          +{patientLabResults.length - 2} more
+                                        </div>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <div className="text-xs text-foreground/60 bg-muted p-2 rounded-md">
+                                      No recent lab results
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        )}
+
+                        {/* Encounter Form Fields */}
+                        <div className="space-y-4">
+                          <h3 className="text-lg font-semibold">Encounter Details</h3>
+                          <div className="grid grid-cols-2 gap-4">
+                            <FormField
+                              control={form.control}
+                              name="patientId"
+                              render={({ field }) => (
+                                <FormItem className="flex flex-col">
+                                  <FormLabel>Patient *</FormLabel>
                                   <FormControl>
-                                    <SelectTrigger>
-                                      <SelectValue placeholder="Select visit type" />
-                                    </SelectTrigger>
+                                    <PatientCombobox
+                                      value={field.value}
+                                      onValueChange={(value) => {
+                                        field.onChange(value)
+                                      }}
+                                      placeholder="Search patient by name, ID, or number..."
+                                      disabled={!!initialPatientId}
+                                    />
                                   </FormControl>
-                                  <SelectContent>
-                                    <SelectItem value="Outpatient">Outpatient</SelectItem>
-                                    <SelectItem value="Inpatient">Inpatient</SelectItem>
-                                    <SelectItem value="Emergency">Emergency</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                          <FormField
-                            control={form.control}
-                            name="department"
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>Department</FormLabel>
-                                <FormControl>
-                                  <Input placeholder="e.g., Cardiology" {...field} />
-                                </FormControl>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                            <FormField
+                              control={form.control}
+                              name="doctorId"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>Doctor *</FormLabel>
+                                  <Select 
+                                    onValueChange={field.onChange} 
+                                    defaultValue={field.value || ""}
+                                    disabled={!!initialDoctorId}
+                                  >
+                                    <FormControl>
+                                      <SelectTrigger>
+                                        <SelectValue placeholder="Select doctor" />
+                                      </SelectTrigger>
+                                    </FormControl>
+                                    <SelectContent>
+                                      {doctors.map((doctor) => (
+                                        <SelectItem key={doctor.userId} value={doctor.userId.toString()}>
+                                          {getDoctorName(doctor)} {doctor.department && ` - ${doctor.department}`}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          </div>
+
+                          <div className="grid grid-cols-3 gap-4">
+                            <FormField
+                              control={form.control}
+                              name="encounterDate"
+                              render={({ field }) => (
+                                <FormItem className="flex flex-col">
+                                  <FormLabel>Encounter Date *</FormLabel>
+                                  <Popover>
+                                    <PopoverTrigger asChild>
+                                      <FormControl>
+                                        <Button
+                                          variant={"outline"}
+                                          disabled={true}
+                                          className={`w-full pl-3 text-left font-normal ${!field.value ? "text-muted-foreground" : ""}`}
+                                        >
+                                          {field.value ? format(field.value, "PPP") : <span>Select date</span>}
+                                          <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
+                                        </Button>
+                                      </FormControl>
+                                    </PopoverTrigger>
+                                  </Popover>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                            <FormField
+                              control={form.control}
+                              name="visitType"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>Visit Type</FormLabel>
+                                  <Select onValueChange={field.onChange} value={field.value || ""}>
+                                    <FormControl>
+                                      <SelectTrigger>
+                                        <SelectValue placeholder="Select visit type" />
+                                      </SelectTrigger>
+                                    </FormControl>
+                                    <SelectContent>
+                                      <SelectItem value="Outpatient">Outpatient</SelectItem>
+                                      <SelectItem value="Inpatient">Inpatient</SelectItem>
+                                      <SelectItem value="Emergency">Emergency</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                            <FormField
+                              control={form.control}
+                              name="department"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>Department</FormLabel>
+                                  <FormControl>
+                                    <Input placeholder="e.g., Cardiology" {...field} />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          </div>
                         </div>
                       </div>
                     </ScrollArea>
