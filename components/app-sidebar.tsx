@@ -9,7 +9,7 @@ import {
   FileText,
   Home,
   Pill,
-  Settings,
+  HelpCircle,
   Users,
   CreditCard,
   BarChart3,
@@ -101,12 +101,14 @@ export const AppSidebar = memo(function AppSidebar({ activeCategory }: AppSideba
         <SidebarMenu>
           <SidebarMenuItem>
             <Link
-              href="/settings"
+              href="/help"
               className="flex flex-row items-center gap-2 w-full rounded-md px-3 py-2 text-sm font-medium 
                 transition-colors hover:bg-white/10 hover:text-white focus:bg-white/10 
-                focus:text-white focus:outline-none disabled:pointer-events-none disabled:opacity-50"
+                focus:text-white focus:outline-none disabled:pointer-events-none disabled:opacity-50
+                ${pathname === '/help' ? 'bg-white/20 text-white font-semibold' : ''}"
             >
-              <span>Settings</span>
+              <HelpCircle className="h-4 w-4 flex-shrink-0" />
+              <span>Help</span>
             </Link>
           </SidebarMenuItem>
         </SidebarMenu>
