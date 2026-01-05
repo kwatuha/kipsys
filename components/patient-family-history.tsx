@@ -1,7 +1,13 @@
+"use client"
+
+import { useState, useEffect } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
-import { Plus } from "lucide-react"
+import { Plus, AlertCircle } from "lucide-react"
+import { patientApi } from "@/lib/api"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Skeleton } from "@/components/ui/skeleton"
 
 type FamilyHistory = {
   id: string
@@ -12,47 +18,65 @@ type FamilyHistory = {
   notes: string
 }
 
-// Mock data for demonstration
-const familyHistoryData: FamilyHistory[] = [
-  {
-    id: "fh-1",
-    relation: "Father",
-    condition: "Hypertension",
-    ageAtDiagnosis: "45",
-    status: "Living",
-    notes: "Well controlled with medication",
-  },
-  {
-    id: "fh-2",
-    relation: "Mother",
-    condition: "Type 2 Diabetes",
-    ageAtDiagnosis: "50",
-    status: "Living",
-    notes: "Diet controlled",
-  },
-  {
-    id: "fh-3",
-    relation: "Paternal Grandfather",
-    condition: "Coronary Artery Disease",
-    ageAtDiagnosis: "60",
-    status: "Deceased",
-    notes: "Died at age 72 from heart attack",
-  },
-  {
-    id: "fh-4",
-    relation: "Maternal Aunt",
-    condition: "Breast Cancer",
-    ageAtDiagnosis: "55",
-    status: "Living",
-    notes: "In remission after treatment",
-  },
-]
-
 export function PatientFamilyHistory({ patientId }: { patientId: string }) {
-  // In a real application, you would fetch the family history data based on the patient ID
-  // const { data: familyHistory, isLoading, error } = usePatientFamilyHistory(patientId)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [familyHistory, setFamilyHistory] = useState<FamilyHistory[]>([])
 
-  const familyHistory = familyHistoryData // Using mock data for demonstration
+  useEffect(() => {
+    loadFamilyHistory()
+  }, [patientId])
+
+  const loadFamilyHistory = async () => {
+    try {
+      setLoading(true)
+      setError(null)
+
+      const historyData = await patientApi.getFamilyHistory(patientId)
+
+      const history: FamilyHistory[] = historyData.map((entry: any) => ({
+        id: `fh-${entry.familyHistoryId}`,
+        relation: entry.relation || 'Unknown',
+        condition: entry.condition || 'Not specified',
+        ageAtDiagnosis: entry.ageAtDiagnosis ? entry.ageAtDiagnosis.toString() : 'N/A',
+        status: entry.status || 'Unknown',
+        notes: entry.notes || ''
+      }))
+
+      setFamilyHistory(history)
+    } catch (err: any) {
+      console.error("Error loading family history:", err)
+      setError(err.message || "Failed to load family history")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <Card>
+        <CardContent className="p-4">
+          <div className="space-y-4">
+            <Skeleton className="h-[200px] w-full" />
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  if (error) {
+    return (
+      <Card>
+        <CardContent className="p-4">
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Error</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        </CardContent>
+      </Card>
+    )
+  }
 
   return (
     <Card>

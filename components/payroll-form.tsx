@@ -299,7 +299,7 @@ export function PayrollForm({ open, onOpenChange, onSuccess, employeeId, salaryI
                 name="nhif"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>NHIF (KES)</FormLabel>
+                    <FormLabel>SHA (KES)</FormLabel>
                     <FormControl>
                       <Input type="number" step="0.01" {...field} />
                     </FormControl>

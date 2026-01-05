@@ -31,7 +31,7 @@ export function DoctorPatients({ doctorId }: { doctorId: string }) {
       initials: "JK",
       turnAroundTime: 25, // minutes
       adherence: "Good",
-      insurance: "NHIF",
+      insurance: "SHA",
       phone: "+254 712 345 678",
     },
     {
@@ -82,7 +82,7 @@ export function DoctorPatients({ doctorId }: { doctorId: string }) {
       initials: "MA",
       turnAroundTime: 20, // minutes
       adherence: "Good",
-      insurance: "NHIF",
+      insurance: "SHA",
       phone: "+254 745 678 901",
     },
     {
@@ -116,7 +116,7 @@ export function DoctorPatients({ doctorId }: { doctorId: string }) {
       initials: "SN",
       turnAroundTime: 22, // minutes
       adherence: "Good",
-      insurance: "NHIF",
+      insurance: "SHA",
       phone: "+254 767 890 123",
     },
     {

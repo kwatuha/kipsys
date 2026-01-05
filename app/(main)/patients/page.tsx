@@ -16,7 +16,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { Trash2, Edit, Plus } from "lucide-react"
+import { Trash2, Edit, Plus, Search } from "lucide-react"
+import { Input } from "@/components/ui/input"
 
 interface Patient {
   patientId: number
@@ -49,7 +50,12 @@ export default function PatientsPage() {
   const [deleteLoading, setDeleteLoading] = useState(false)
 
   useEffect(() => {
-    loadPatients()
+    // Debounce search to avoid too many API calls
+    const timer = setTimeout(() => {
+      loadPatients()
+    }, 300) // Wait 300ms after user stops typing
+
+    return () => clearTimeout(timer)
   }, [searchQuery])
 
   const loadPatients = async () => {
@@ -145,6 +151,17 @@ export default function PatientsPage() {
           <Plus className="mr-2 h-4 w-4" />
           Add Patient
         </Button>
+      </div>
+
+      <div className="relative">
+        <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+        <Input
+          type="search"
+          placeholder="Search by name, patient number, phone, or email..."
+          className="w-full pl-8"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+        />
       </div>
 
       {error && (

@@ -1,9 +1,14 @@
+"use client"
+
+import { useState, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { AlertCircle } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { pharmacyApi } from "@/lib/api"
+import { Skeleton } from "@/components/ui/skeleton"
 
 type Medication = {
   id: string
@@ -19,83 +24,102 @@ type Medication = {
   dispensed: boolean
 }
 
-// Mock data for demonstration
-const medications: Medication[] = [
-  {
-    id: "med-1",
-    name: "Lisinopril",
-    dosage: "10mg",
-    frequency: "Once daily",
-    startDate: "2023-04-15",
-    endDate: null,
-    status: "Active",
-    prescribedBy: "Dr. James Ndiwa",
-    instructions: "Take in the morning with food",
-    reason: "Hypertension",
-    dispensed: true,
-  },
-  {
-    id: "med-2",
-    name: "Aspirin",
-    dosage: "81mg",
-    frequency: "Once daily",
-    startDate: "2023-04-15",
-    endDate: null,
-    status: "Active",
-    prescribedBy: "Dr. James Ndiwa",
-    instructions: "Take with food",
-    reason: "Cardiovascular prophylaxis",
-    dispensed: true,
-  },
-  {
-    id: "med-3",
-    name: "Atorvastatin",
-    dosage: "20mg",
-    frequency: "Once daily at bedtime",
-    startDate: "2023-04-15",
-    endDate: null,
-    status: "Active",
-    prescribedBy: "Dr. James Ndiwa",
-    instructions: "Take at night",
-    reason: "Hyperlipidemia",
-    dispensed: false,
-  },
-  {
-    id: "med-4",
-    name: "Metformin",
-    dosage: "500mg",
-    frequency: "Twice daily",
-    startDate: "2022-10-10",
-    endDate: "2023-01-15",
-    status: "Discontinued",
-    prescribedBy: "Dr. Sarah Isuvi",
-    instructions: "Take with meals",
-    reason: "Type 2 Diabetes",
-    dispensed: true,
-  },
-  {
-    id: "med-5",
-    name: "Amoxicillin",
-    dosage: "500mg",
-    frequency: "Three times daily",
-    startDate: "2022-08-05",
-    endDate: "2022-08-12",
-    status: "Completed",
-    prescribedBy: "Dr. Michael Siva",
-    instructions: "Take until completed",
-    reason: "Bacterial infection",
-    dispensed: true,
-  },
-]
-
 export function PatientMedications({ patientId }: { patientId: string }) {
-  // In a real application, you would fetch the medications data based on the patient ID
-  // const { data: meds, isLoading, error } = usePatientMedications(patientId)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [medications, setMedications] = useState<Medication[]>([])
 
-  const meds = medications // Using mock data for demonstration
-  const activeMeds = meds.filter((med) => med.status === "Active")
-  const pastMeds = meds.filter((med) => med.status !== "Active")
-  const pendingMeds = meds.filter((med) => !med.dispensed)
+  useEffect(() => {
+    loadMedications()
+  }, [patientId])
+
+  const loadMedications = async () => {
+    try {
+      setLoading(true)
+      setError(null)
+
+      // Fetch all prescriptions for the patient
+      const prescriptions = await pharmacyApi.getPrescriptions(patientId)
+
+      const meds: Medication[] = []
+
+      // Process each prescription
+      for (const prescription of prescriptions) {
+        try {
+          // Get prescription details with items
+          const prescriptionDetails = await pharmacyApi.getPrescription(prescription.prescriptionId.toString())
+          
+          if (prescriptionDetails.items && prescriptionDetails.items.length > 0) {
+            for (const item of prescriptionDetails.items) {
+              const isActive = prescription.status === 'active' || prescription.status === 'pending'
+              const isDispensed = item.dispensed || item.status === 'dispensed'
+              
+              meds.push({
+                id: `med-${prescription.prescriptionId}-${item.itemId}`,
+                name: item.medicationName || item.medicationNameFromCatalog || item.medication || 'Unknown Medication',
+                dosage: `${item.dosage || ''}${item.unit || ''}`.trim() || 'N/A',
+                frequency: item.frequency || item.dosageFrequency || 'As directed',
+                startDate: prescription.prescriptionDate ? new Date(prescription.prescriptionDate).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+                endDate: item.endDate ? new Date(item.endDate).toISOString().split('T')[0] : null,
+                status: isActive ? 'Active' : prescription.status === 'completed' ? 'Completed' : 'Discontinued',
+                prescribedBy: prescription.doctorName || `${prescription.doctorFirstName || ''} ${prescription.doctorLastName || ''}`.trim() || 'Unknown Doctor',
+                instructions: item.instructions || item.dosageInstructions || 'As directed',
+                reason: prescription.notes || item.indication || 'Not specified',
+                dispensed: isDispensed
+              })
+            }
+          }
+        } catch (err) {
+          console.error(`Error loading prescription ${prescription.prescriptionId}:`, err)
+        }
+      }
+
+      setMedications(meds)
+    } catch (err: any) {
+      console.error("Error loading medications:", err)
+      setError(err.message || "Failed to load medications")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const activeMeds = medications.filter((med) => med.status === "Active")
+  const pastMeds = medications.filter((med) => med.status !== "Active")
+  const pendingMeds = medications.filter((med) => !med.dispensed && med.status === "Active")
+
+  if (loading) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Medications</CardTitle>
+          <CardDescription>Current and past medication history</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            <Skeleton className="h-[400px] w-full" />
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  if (error) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Medications</CardTitle>
+          <CardDescription>Current and past medication history</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Error</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        </CardContent>
+      </Card>
+    )
+  }
 
   return (
     <Card>
@@ -169,7 +193,7 @@ export function PatientMedications({ patientId }: { patientId: string }) {
                         <TableCell className="font-medium">{med.name}</TableCell>
                         <TableCell>{med.dosage}</TableCell>
                         <TableCell>{med.startDate}</TableCell>
-                        <TableCell>{med.endDate}</TableCell>
+                        <TableCell>{med.endDate || 'N/A'}</TableCell>
                         <TableCell>{med.prescribedBy}</TableCell>
                         <TableCell>{med.reason}</TableCell>
                         <TableCell>

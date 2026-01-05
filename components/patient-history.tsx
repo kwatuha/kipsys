@@ -22,8 +22,8 @@ const mockPatientData = {
   dob: "1978-05-15",
   bloodType: "O+",
   nationalId: "12345678",
-  insuranceProvider: "NHIF",
-  insuranceNumber: "NHIF-123456789",
+    insuranceProvider: "SHA",
+    insuranceNumber: "SHA-123456789",
 }
 
 const mockMedicalHistory = [

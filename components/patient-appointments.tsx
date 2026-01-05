@@ -1,9 +1,16 @@
+"use client"
+
+import { useState, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Calendar, Clock, MapPin } from "lucide-react"
+import { appointmentsApi } from "@/lib/api"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { AlertCircle } from "lucide-react"
+import { Skeleton } from "@/components/ui/skeleton"
 
 type Appointment = {
   id: string
@@ -17,72 +24,91 @@ type Appointment = {
   notes: string
 }
 
-// Mock data for demonstration
-const appointments: Appointment[] = [
-  {
-    id: "apt-1",
-    date: "2023-05-20",
-    time: "10:30 AM",
-    doctor: "Dr. James Ndiwa",
-    department: "Cardiology",
-    reason: "Follow-up on hypertension",
-    status: "Scheduled",
-    location: "Main Hospital, Room 305",
-    notes: "Bring current medication list",
-  },
-  {
-    id: "apt-2",
-    date: "2023-04-15",
-    time: "09:30 AM",
-    doctor: "Dr. James Ndiwa",
-    department: "Cardiology",
-    reason: "Regular checkup",
-    status: "Completed",
-    location: "Main Hospital, Room 305",
-    notes: "Patient reported occasional headaches",
-  },
-  {
-    id: "apt-3",
-    date: "2023-03-20",
-    time: "11:15 AM",
-    doctor: "Dr. Sarah Isuvi",
-    department: "Internal Medicine",
-    reason: "Annual physical",
-    status: "Completed",
-    location: "Main Hospital, Room 210",
-    notes: "All vitals normal, recommended diet changes",
-  },
-  {
-    id: "apt-4",
-    date: "2023-02-10",
-    time: "02:45 PM",
-    doctor: "Dr. Michael Siva",
-    department: "Neurology",
-    reason: "Headache evaluation",
-    status: "Completed",
-    location: "Neurology Clinic, Room 110",
-    notes: "Prescribed pain medication, ordered MRI",
-  },
-  {
-    id: "apt-5",
-    date: "2023-06-15",
-    time: "01:30 PM",
-    doctor: "Dr. Emily Logovane",
-    department: "Ophthalmology",
-    reason: "Eye examination",
-    status: "Scheduled",
-    location: "Eye Clinic, Room 205",
-    notes: "Annual eye check",
-  },
-]
-
 export function PatientAppointments({ patientId }: { patientId: string }) {
-  // In a real application, you would fetch the appointments data based on the patient ID
-  // const { data: appts, isLoading, error } = usePatientAppointments(patientId)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [appointments, setAppointments] = useState<Appointment[]>([])
 
-  const appts = appointments // Using mock data for demonstration
-  const upcomingAppts = appts.filter((apt) => apt.status === "Scheduled")
-  const pastAppts = appts.filter((apt) => apt.status === "Completed")
+  useEffect(() => {
+    loadAppointments()
+  }, [patientId])
+
+  const loadAppointments = async () => {
+    try {
+      setLoading(true)
+      setError(null)
+
+      const apptsData = await appointmentsApi.getAll(undefined, undefined, undefined, patientId)
+
+      const appts: Appointment[] = apptsData.map((apt: any) => {
+        const appointmentDate = new Date(apt.appointmentDate || apt.date || new Date())
+        const doctorName = apt.doctorName || `${apt.doctorFirstName || ''} ${apt.doctorLastName || ''}`.trim() || 'Unknown Doctor'
+        
+        return {
+          id: `apt-${apt.appointmentId}`,
+          date: appointmentDate.toISOString().split('T')[0],
+          time: apt.appointmentTime || appointmentDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+          doctor: doctorName,
+          department: apt.department || 'General',
+          reason: apt.reason || apt.appointmentReason || 'Not specified',
+          status: apt.status === 'scheduled' ? 'Scheduled' : apt.status === 'completed' ? 'Completed' : apt.status || 'Scheduled',
+          location: apt.location || 'Main Hospital',
+          notes: apt.notes || ''
+        }
+      })
+
+      // Sort by date descending
+      appts.sort((a, b) => new Date(b.date + ' ' + b.time).getTime() - new Date(a.date + ' ' + a.time).getTime())
+
+      setAppointments(appts)
+    } catch (err: any) {
+      console.error("Error loading appointments:", err)
+      setError(err.message || "Failed to load appointments")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const upcomingAppts = appointments.filter((apt) => {
+    const aptDate = new Date(apt.date + ' ' + apt.time)
+    const today = new Date()
+    return apt.status === "Scheduled" && aptDate >= today
+  })
+  const pastAppts = appointments.filter((apt) => apt.status === "Completed" || new Date(apt.date + ' ' + apt.time) < new Date())
+
+  if (loading) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Appointments</CardTitle>
+          <CardDescription>Upcoming and past appointments</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            <Skeleton className="h-[400px] w-full" />
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  if (error) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Appointments</CardTitle>
+          <CardDescription>Upcoming and past appointments</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Error</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        </CardContent>
+      </Card>
+    )
+  }
 
   return (
     <Card>

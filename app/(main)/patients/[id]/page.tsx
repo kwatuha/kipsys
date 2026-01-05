@@ -21,6 +21,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { PatientTimeline } from "@/components/patient-timeline"
 import { PatientVitals } from "@/components/patient-vitals"
 import { PatientAlerts } from "@/components/patient-alerts"
+import { PatientMedicalOverview } from "@/components/patient-medical-overview"
 import { PatientLabResults } from "@/components/patient-lab-results"
 import { PatientMedications } from "@/components/patient-medications"
 import { PatientAppointments } from "@/components/patient-appointments"
@@ -297,10 +298,7 @@ export default function PatientProfilePage() {
               </TabsList>
 
               <TabsContent value="overview" className="space-y-4">
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                  <PatientAlerts alerts={patientDisplay.alerts} />
-                  <PatientTimeline patientId={patientDisplay.id} />
-                </div>
+                <PatientMedicalOverview patientId={patientId} />
               </TabsContent>
 
               <TabsContent value="vitals" className="space-y-4">

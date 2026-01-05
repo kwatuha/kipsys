@@ -9,7 +9,7 @@ const pool = require('../config/db');
  */
 router.get('/admissions', async (req, res) => {
     try {
-        const { status, wardId, page = 1, limit = 50, search } = req.query;
+        const { status, wardId, page = 1, limit = 50, search, patientId } = req.query;
         const offset = (page - 1) * limit;
 
         let query = `
@@ -35,6 +35,11 @@ router.get('/admissions', async (req, res) => {
         if (wardId) {
             query += ` AND w.wardId = ?`;
             params.push(wardId);
+        }
+
+        if (patientId) {
+            query += ` AND a.patientId = ?`;
+            params.push(patientId);
         }
 
         if (search) {

@@ -1,7 +1,13 @@
+"use client"
+
+import { useState, useEffect } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Edit, FileText } from "lucide-react"
+import { Edit, FileText, AlertCircle } from "lucide-react"
+import { insuranceApi } from "@/lib/api"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Skeleton } from "@/components/ui/skeleton"
 
 type Insurance = {
   provider: string
@@ -17,26 +23,99 @@ type Insurance = {
   notes: string
 }
 
-// Mock data for demonstration
-const insuranceInfo: Insurance = {
-  provider: "NHIF",
-  policyNumber: "NHIF-123456789",
-  groupNumber: "GRP-001",
-  startDate: "2022-01-01",
-  endDate: "2023-12-31",
-  policyHolder: "John Imbayi",
-  relationship: "Self",
-  coverageType: "Comprehensive",
-  status: "Active",
-  contactNumber: "+254 20 123 4567",
-  notes: "Annual renewal required",
-}
-
 export function PatientInsurance({ patientId }: { patientId: string }) {
-  // In a real application, you would fetch the insurance data based on the patient ID
-  // const { data: insurance, isLoading, error } = usePatientInsurance(patientId)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [insurance, setInsurance] = useState<Insurance | null>(null)
 
-  const insurance = insuranceInfo // Using mock data for demonstration
+  useEffect(() => {
+    loadInsurance()
+  }, [patientId])
+
+  const loadInsurance = async () => {
+    try {
+      setLoading(true)
+      setError(null)
+
+      const policies = await insuranceApi.getPolicies(patientId, undefined, 'active')
+
+      if (policies && policies.length > 0) {
+        const policy = policies[0] // Get the first active policy
+        
+        // Get provider details
+        let providerName = 'Unknown Provider'
+        let providerPhone = ''
+        if (policy.providerId) {
+          try {
+            const provider = await insuranceApi.getProviderById(policy.providerId.toString())
+            providerName = provider.providerName || providerName
+            providerPhone = provider.phone || ''
+          } catch (err) {
+            console.error('Error loading provider details:', err)
+          }
+        }
+
+        setInsurance({
+          provider: providerName,
+          policyNumber: policy.policyNumber || 'N/A',
+          groupNumber: policy.memberId || policy.groupNumber || 'N/A',
+          startDate: policy.coverageStartDate ? new Date(policy.coverageStartDate).toISOString().split('T')[0] : 'N/A',
+          endDate: policy.coverageEndDate ? new Date(policy.coverageEndDate).toISOString().split('T')[0] : 'N/A',
+          policyHolder: policy.memberName || policy.policyHolderName || 'N/A',
+          relationship: policy.relationship || 'self',
+          coverageType: policy.coverageType || 'Comprehensive',
+          status: policy.isActive ? 'Active' : 'Inactive',
+          contactNumber: providerPhone,
+          notes: policy.notes || 'No additional notes'
+        })
+      } else {
+        setInsurance(null) // No insurance found
+      }
+    } catch (err: any) {
+      console.error("Error loading insurance:", err)
+      setError(err.message || "Failed to load insurance information")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <Card>
+        <CardContent className="p-4">
+          <div className="space-y-4">
+            <Skeleton className="h-[200px] w-full" />
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  if (error) {
+    return (
+      <Card>
+        <CardContent className="p-4">
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Error</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  if (!insurance) {
+    return (
+      <Card>
+        <CardContent className="p-4">
+          <div className="text-center py-4 text-muted-foreground">
+            No active insurance policy found for this patient
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
 
   return (
     <Card>
@@ -80,7 +159,7 @@ export function PatientInsurance({ patientId }: { patientId: string }) {
           </div>
           <div>
             <div className="text-sm font-medium text-muted-foreground">Relationship to Patient</div>
-            <div className="font-medium">{insurance.relationship}</div>
+            <div className="font-medium capitalize">{insurance.relationship}</div>
           </div>
           <div>
             <div className="text-sm font-medium text-muted-foreground">Coverage Type</div>
@@ -88,7 +167,7 @@ export function PatientInsurance({ patientId }: { patientId: string }) {
           </div>
           <div>
             <div className="text-sm font-medium text-muted-foreground">Contact Number</div>
-            <div className="font-medium">{insurance.contactNumber}</div>
+            <div className="font-medium">{insurance.contactNumber || 'N/A'}</div>
           </div>
           <div>
             <div className="text-sm font-medium text-muted-foreground">Start Date</div>

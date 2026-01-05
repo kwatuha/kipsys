@@ -333,7 +333,7 @@ export function DoctorRevenue({ doctorId }: { doctorId: string }) {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center">
                     <Activity className="h-4 w-4 mr-2 text-muted-foreground" />
-                    <div>NHIF</div>
+                    <div>SHA</div>
                   </div>
                   <div className="flex items-center">
                     <div className="font-medium mr-2">{formatCurrency(450000)}</div>

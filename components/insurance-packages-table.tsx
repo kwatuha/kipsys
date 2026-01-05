@@ -27,7 +27,7 @@ const packages: InsurancePackage[] = [
   {
     id: "PKG-001",
     name: "Basic Cover",
-    provider: "NHIF",
+    provider: "SHA",
     coverageLimit: 500000,
     annualPremium: 6000,
     benefits: ["Outpatient", "Inpatient", "Maternity"],

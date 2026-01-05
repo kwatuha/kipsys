@@ -322,7 +322,7 @@ export function AddPatientForm({ open, onOpenChange }: { open: boolean; onOpenCh
                   <FormItem>
                     <FormLabel>Insurance Provider</FormLabel>
                     <FormControl>
-                      <Input placeholder="NHIF" {...field} />
+                      <Input placeholder="SHA" {...field} />
                     </FormControl>
                     <FormDescription>Optional</FormDescription>
                     <FormMessage />

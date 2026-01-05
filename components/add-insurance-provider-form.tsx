@@ -194,7 +194,7 @@ export function AddInsuranceProviderForm({
                   <FormItem>
                     <FormLabel>Provider Name *</FormLabel>
                     <FormControl>
-                      <Input placeholder="e.g., NHIF" {...field} />
+                      <Input placeholder="e.g., SHA" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>

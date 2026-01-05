@@ -8,9 +8,9 @@ INSERT IGNORE INTO insurance_providers (
     providerCode, providerName, contactPerson, phone, email, address, claimsAddress, website, isActive, notes, createdAt
 )
 VALUES
-    ('INS-0001', 'National Hospital Insurance Fund (NHIF)', 'John Mwangi', '+254 20 2720100', 
-     'info@nhif.or.ke', 'NHIF Building, Ragati Road, Upper Hill, Nairobi', 'NHIF Claims Department, P.O. Box 30443, Nairobi', 
-     'https://www.nhif.or.ke', TRUE, 'National health insurance provider', '2020-01-15 10:00:00'),
+    ('INS-0001', 'Social Health Authority (SHA)', 'John Mwangi', '+254 20 2720100', 
+     'info@sha.or.ke', 'SHA Building, Ragati Road, Upper Hill, Nairobi', 'SHA Claims Department, P.O. Box 30443, Nairobi', 
+     'https://www.sha.or.ke', TRUE, 'National health insurance provider', '2020-01-15 10:00:00'),
     
     ('INS-0002', 'AAR Insurance Kenya Limited', 'Sarah Wanjiku', '+254 20 2894000',
      'info@aar.co.ke', 'AAR Centre, Muthangari Drive, Westlands, Nairobi', 'AAR Claims Office, Westlands', 
@@ -64,18 +64,18 @@ INSERT IGNORE INTO patient_insurance (
     coverageStartDate, coverageEndDate, isActive, notes, createdAt
 )
 VALUES
-    -- NHIF Policies
-    (@patient1, @provider1, 'NHIF-2023-001234', 'NHIF-001234', NULL, 'self',
+    -- SHA Policies
+    (@patient1, @provider1, 'SHA-2023-001234', 'SHA-001234', NULL, 'self',
      DATE_SUB(CURDATE(), INTERVAL 12 MONTH), DATE_ADD(CURDATE(), INTERVAL 12 MONTH), TRUE,
-     'Active NHIF coverage', DATE_SUB(CURDATE(), INTERVAL 12 MONTH)),
+     'Active SHA coverage', DATE_SUB(CURDATE(), INTERVAL 12 MONTH)),
     
-    (@patient2, @provider1, 'NHIF-2022-005678', 'NHIF-005678', NULL, 'self',
+    (@patient2, @provider1, 'SHA-2022-005678', 'SHA-005678', NULL, 'self',
      DATE_SUB(CURDATE(), INTERVAL 18 MONTH), DATE_ADD(CURDATE(), INTERVAL 6 MONTH), TRUE,
-     'Family NHIF coverage', DATE_SUB(CURDATE(), INTERVAL 18 MONTH)),
+     'Family SHA coverage', DATE_SUB(CURDATE(), INTERVAL 18 MONTH)),
     
-    (@patient3, @provider1, 'NHIF-2024-001122', 'NHIF-001122', NULL, 'self',
+    (@patient3, @provider1, 'SHA-2024-001122', 'SHA-001122', NULL, 'self',
      DATE_SUB(CURDATE(), INTERVAL 6 MONTH), DATE_ADD(CURDATE(), INTERVAL 18 MONTH), TRUE,
-     'Recent NHIF registration', DATE_SUB(CURDATE(), INTERVAL 6 MONTH)),
+     'Recent SHA registration', DATE_SUB(CURDATE(), INTERVAL 6 MONTH)),
     
     -- AAR Insurance Policies
     (@patient4, @provider2, 'AAR-2023-POL-7890', 'AAR-7890', 'Jane Doe', 'self',

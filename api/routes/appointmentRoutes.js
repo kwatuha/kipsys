@@ -5,7 +5,7 @@ const pool = require('../config/db');
 
 router.get('/', async (req, res) => {
     try {
-        const { date, status, doctorId } = req.query;
+        const { date, status, doctorId, patientId } = req.query;
         let query = `
             SELECT a.*, 
                    p.firstName as patientFirstName, p.lastName as patientLastName,
@@ -28,6 +28,10 @@ router.get('/', async (req, res) => {
         if (doctorId) {
             query += ` AND a.doctorId = ?`;
             params.push(doctorId);
+        }
+        if (patientId) {
+            query += ` AND a.patientId = ?`;
+            params.push(patientId);
         }
 
         query += ` ORDER BY a.appointmentDate DESC, a.appointmentTime DESC`;

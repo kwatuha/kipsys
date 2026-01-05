@@ -25,7 +25,7 @@ VALUES
     
     ('CASH-20250418-0001', DATE_SUB(CURDATE(), INTERVAL 7 DAY), 'receipt', 350000.00, 
      'CLM-2023-0078', 'claim', 'Insurance Counter', @user2, 
-     'Payment from NHIF', DATE_SUB(CURDATE(), INTERVAL 7 DAY)),
+     'Payment from SHA', DATE_SUB(CURDATE(), INTERVAL 7 DAY)),
     
     ('CASH-20250417-0001', DATE_SUB(CURDATE(), INTERVAL 8 DAY), 'receipt', 45000.00, 
      'INV-2023-1008', 'invoice', 'Main Cash Register', @user1, 

@@ -1,9 +1,15 @@
+"use client"
+
+import { useState, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Download, Eye } from "lucide-react"
+import { Download, Eye, AlertCircle } from "lucide-react"
+import { billingApi } from "@/lib/api"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Skeleton } from "@/components/ui/skeleton"
 
 type Invoice = {
   id: string
@@ -26,94 +32,114 @@ type InvoiceItem = {
   category: string
 }
 
-// Mock data for demonstration
-const invoices: Invoice[] = [
-  {
-    id: "INV-1001",
-    date: "2023-04-15",
-    amount: 15000,
-    status: "Paid",
-    dueDate: "2023-05-15",
-    items: [
-      { description: "Cardiology Consultation", quantity: 1, unitPrice: 3000, total: 3000, category: "Consultation" },
-      { description: "ECG", quantity: 1, unitPrice: 2000, total: 2000, category: "Diagnostic" },
-      { description: "Blood Tests", quantity: 1, unitPrice: 5000, total: 5000, category: "Laboratory" },
-      { description: "Medication", quantity: 1, unitPrice: 5000, total: 5000, category: "Pharmacy" },
-    ],
-    paymentMethod: "Insurance",
-    paymentDate: "2023-04-20",
-    insuranceCoverage: 12000,
-    patientResponsibility: 3000,
-  },
-  {
-    id: "INV-985",
-    date: "2023-03-20",
-    amount: 8000,
-    status: "Paid",
-    dueDate: "2023-04-20",
-    items: [
-      { description: "General Checkup", quantity: 1, unitPrice: 2000, total: 2000, category: "Consultation" },
-      { description: "Urinalysis", quantity: 1, unitPrice: 1000, total: 1000, category: "Laboratory" },
-      { description: "X-Ray", quantity: 1, unitPrice: 5000, total: 5000, category: "Radiology" },
-    ],
-    paymentMethod: "Cash",
-    paymentDate: "2023-03-20",
-    insuranceCoverage: 6000,
-    patientResponsibility: 2000,
-  },
-  {
-    id: "INV-950",
-    date: "2023-02-10",
-    amount: 12000,
-    status: "Paid",
-    dueDate: "2023-03-10",
-    items: [
-      { description: "Neurology Consultation", quantity: 1, unitPrice: 4000, total: 4000, category: "Consultation" },
-      { description: "MRI Scan", quantity: 1, unitPrice: 8000, total: 8000, category: "Radiology" },
-    ],
-    paymentMethod: "Insurance",
-    paymentDate: "2023-02-15",
-    insuranceCoverage: 9600,
-    patientResponsibility: 2400,
-  },
-  {
-    id: "INV-1050",
-    date: "2023-05-10",
-    amount: 7000,
-    status: "Pending",
-    dueDate: "2023-06-10",
-    items: [
-      {
-        description: "Ophthalmology Consultation",
-        quantity: 1,
-        unitPrice: 2500,
-        total: 2500,
-        category: "Consultation",
-      },
-      { description: "Eye Examination", quantity: 1, unitPrice: 1500, total: 1500, category: "Diagnostic" },
-      { description: "Prescription Glasses", quantity: 1, unitPrice: 3000, total: 3000, category: "Medical Supplies" },
-    ],
-    paymentMethod: "Pending",
-    paymentDate: null,
-    insuranceCoverage: 5000,
-    patientResponsibility: 2000,
-  },
-]
-
 export function PatientBilling({ patientId }: { patientId: string }) {
-  // In a real application, you would fetch the billing data based on the patient ID
-  // const { data: bills, isLoading, error } = usePatientBilling(patientId)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [invoices, setInvoices] = useState<Invoice[]>([])
 
-  const bills = invoices // Using mock data for demonstration
-  const paidInvoices = bills.filter((bill) => bill.status === "Paid")
-  const pendingInvoices = bills.filter((bill) => bill.status === "Pending")
+  useEffect(() => {
+    loadBilling()
+  }, [patientId])
+
+  const loadBilling = async () => {
+    try {
+      setLoading(true)
+      setError(null)
+
+      const invoicesData = await billingApi.getInvoices(patientId)
+
+      const bills: Invoice[] = await Promise.all(invoicesData.map(async (inv: any) => {
+        // Get invoice details including items
+        let items: InvoiceItem[] = []
+        try {
+          const invoiceDetails = await billingApi.getInvoiceById(inv.invoiceId.toString())
+          if (invoiceDetails.items && invoiceDetails.items.length > 0) {
+            items = invoiceDetails.items.map((item: any) => ({
+              description: item.description || item.itemDescription || item.serviceName || 'Service',
+              quantity: item.quantity || 1,
+              unitPrice: parseFloat(item.unitPrice || item.price || 0),
+              total: parseFloat(item.total || item.totalAmount || 0),
+              category: item.category || item.serviceCategory || 'General'
+            }))
+          }
+        } catch (err) {
+          console.error(`Error loading invoice ${inv.invoiceId} details:`, err)
+        }
+
+        const totalAmount = parseFloat(inv.totalAmount || 0)
+        const paidAmount = parseFloat(inv.paidAmount || 0)
+        const invoiceDate = new Date(inv.invoiceDate || inv.date || new Date())
+        const dueDate = inv.dueDate ? new Date(inv.dueDate) : new Date(invoiceDate.getTime() + 30 * 24 * 60 * 60 * 1000) // 30 days default
+
+        return {
+          id: inv.invoiceNumber || `INV-${inv.invoiceId}`,
+          date: invoiceDate.toISOString().split('T')[0],
+          amount: totalAmount,
+          status: paidAmount >= totalAmount ? 'Paid' : 'Pending',
+          dueDate: dueDate.toISOString().split('T')[0],
+          items: items,
+          paymentMethod: inv.paymentMethod || 'N/A',
+          paymentDate: inv.paymentDate ? new Date(inv.paymentDate).toISOString().split('T')[0] : null,
+          insuranceCoverage: parseFloat(inv.insuranceCoverage || inv.insuranceAmount || 0),
+          patientResponsibility: totalAmount - parseFloat(inv.insuranceCoverage || inv.insuranceAmount || 0)
+        }
+      }))
+
+      // Sort by date descending
+      bills.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+
+      setInvoices(bills)
+    } catch (err: any) {
+      console.error("Error loading billing:", err)
+      setError(err.message || "Failed to load billing information")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const paidInvoices = invoices.filter((bill) => bill.status === "Paid")
+  const pendingInvoices = invoices.filter((bill) => bill.status === "Pending")
 
   // Calculate totals
-  const totalBilled = bills.reduce((sum, bill) => sum + bill.amount, 0)
+  const totalBilled = invoices.reduce((sum, bill) => sum + bill.amount, 0)
   const totalPaid = paidInvoices.reduce((sum, bill) => sum + bill.amount, 0)
   const totalPending = pendingInvoices.reduce((sum, bill) => sum + bill.amount, 0)
-  const totalInsuranceCoverage = bills.reduce((sum, bill) => sum + bill.insuranceCoverage, 0)
-  const totalPatientResponsibility = bills.reduce((sum, bill) => sum + bill.patientResponsibility, 0)
+  const totalInsuranceCoverage = invoices.reduce((sum, bill) => sum + bill.insuranceCoverage, 0)
+  const totalPatientResponsibility = invoices.reduce((sum, bill) => sum + bill.patientResponsibility, 0)
+
+  if (loading) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Billing & Payments</CardTitle>
+          <CardDescription>Invoice history and payment information</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            <Skeleton className="h-[400px] w-full" />
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  if (error) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Billing & Payments</CardTitle>
+          <CardDescription>Invoice history and payment information</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Error</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        </CardContent>
+      </Card>
+    )
+  }
 
   return (
     <Card>
@@ -151,47 +177,51 @@ export function PatientBilling({ patientId }: { patientId: string }) {
           </TabsList>
 
           <TabsContent value="all" className="space-y-4">
-            <div className="rounded-md border">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Invoice #</TableHead>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Amount</TableHead>
-                    <TableHead>Insurance</TableHead>
-                    <TableHead>Patient</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {bills.map((bill) => (
-                    <TableRow key={bill.id}>
-                      <TableCell className="font-medium">{bill.id}</TableCell>
-                      <TableCell>{bill.date}</TableCell>
-                      <TableCell>KES {bill.amount.toLocaleString()}</TableCell>
-                      <TableCell>KES {bill.insuranceCoverage.toLocaleString()}</TableCell>
-                      <TableCell>KES {bill.patientResponsibility.toLocaleString()}</TableCell>
-                      <TableCell>
-                        <Badge variant={bill.status === "Paid" ? "default" : "secondary"}>{bill.status}</Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                          <Button variant="outline" size="sm">
-                            <Eye className="h-4 w-4 mr-1" />
-                            View
-                          </Button>
-                          <Button variant="outline" size="sm">
-                            <Download className="h-4 w-4 mr-1" />
-                            PDF
-                          </Button>
-                        </div>
-                      </TableCell>
+            {invoices.length > 0 ? (
+              <div className="rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Invoice #</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Amount</TableHead>
+                      <TableHead>Insurance</TableHead>
+                      <TableHead>Patient</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+                  </TableHeader>
+                  <TableBody>
+                    {invoices.map((bill) => (
+                      <TableRow key={bill.id}>
+                        <TableCell className="font-medium">{bill.id}</TableCell>
+                        <TableCell>{bill.date}</TableCell>
+                        <TableCell>KES {bill.amount.toLocaleString()}</TableCell>
+                        <TableCell>KES {bill.insuranceCoverage.toLocaleString()}</TableCell>
+                        <TableCell>KES {bill.patientResponsibility.toLocaleString()}</TableCell>
+                        <TableCell>
+                          <Badge variant={bill.status === "Paid" ? "default" : "secondary"}>{bill.status}</Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
+                            <Button variant="outline" size="sm">
+                              <Eye className="h-4 w-4 mr-1" />
+                              View
+                            </Button>
+                            <Button variant="outline" size="sm">
+                              <Download className="h-4 w-4 mr-1" />
+                              PDF
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            ) : (
+              <div className="text-center py-4 text-muted-foreground">No invoices found</div>
+            )}
           </TabsContent>
 
           <TabsContent value="pending" className="space-y-4">
@@ -252,7 +282,7 @@ export function PatientBilling({ patientId }: { patientId: string }) {
                         <TableCell>{bill.date}</TableCell>
                         <TableCell>KES {bill.amount.toLocaleString()}</TableCell>
                         <TableCell>{bill.paymentMethod}</TableCell>
-                        <TableCell>{bill.paymentDate}</TableCell>
+                        <TableCell>{bill.paymentDate || 'N/A'}</TableCell>
                         <TableCell className="text-right">
                           <Button variant="outline" size="sm">
                             <Download className="h-4 w-4 mr-1" />

@@ -19,9 +19,9 @@ router.get('/', async (req, res) => {
         const params = [];
 
         if (search) {
-            query += ` AND (firstName LIKE ? OR lastName LIKE ? OR patientNumber LIKE ? OR phone LIKE ?)`;
+            query += ` AND (firstName LIKE ? OR lastName LIKE ? OR patientNumber LIKE ? OR phone LIKE ? OR email LIKE ? OR CONCAT(firstName, ' ', lastName) LIKE ?)`;
             const searchTerm = `%${search}%`;
-            params.push(searchTerm, searchTerm, searchTerm, searchTerm);
+            params.push(searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm);
         }
 
         query += ` ORDER BY createdAt DESC LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset)}`;

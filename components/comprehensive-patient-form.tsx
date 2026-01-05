@@ -39,7 +39,7 @@ const counties = [
   "Meru",
 ] as const
 const insuranceProviders = [
-  "NHIF",
+  "SHA",
   "AAR",
   "Jubilee",
   "Britam",

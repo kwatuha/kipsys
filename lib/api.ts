@@ -89,14 +89,27 @@ export const patientApi = {
   deleteAllergy: (patientId: string, allergyId: string) =>
     apiRequest<any>(`/api/patients/${patientId}/allergies/${allergyId}`, { method: 'DELETE' }),
   
-  // Patient vitals
-  getVitals: (patientId: string, today?: boolean, date?: string) => {
-    const params = new URLSearchParams();
-    if (today) params.append('today', 'true');
-    if (date) params.append('date', date);
-    return apiRequest<any[]>(`/api/patients/${patientId}/vitals${params.toString() ? `?${params.toString()}` : ''}`);
-  },
-};
+        // Patient vitals
+        getVitals: (patientId: string, today?: boolean, date?: string) => {
+          const params = new URLSearchParams();
+          if (today) params.append('today', 'true');
+          if (date) params.append('date', date);
+          return apiRequest<any[]>(`/api/patients/${patientId}/vitals${params.toString() ? `?${params.toString()}` : ''}`);
+        },
+        
+        // Patient family history
+        getFamilyHistory: (patientId: string) =>
+          apiRequest<any[]>(`/api/patients/${patientId}/family-history`),
+        
+        createFamilyHistory: (patientId: string, data: any) =>
+          apiRequest<any>(`/api/patients/${patientId}/family-history`, { method: 'POST', body: data }),
+        
+        updateFamilyHistory: (patientId: string, id: string, data: any) =>
+          apiRequest<any>(`/api/patients/${patientId}/family-history/${id}`, { method: 'PUT', body: data }),
+        
+        deleteFamilyHistory: (patientId: string, id: string) =>
+          apiRequest<any>(`/api/patients/${patientId}/family-history/${id}`, { method: 'DELETE' }),
+      };
 
 // Department API
 export const departmentApi = {
@@ -269,8 +282,8 @@ export const laboratoryApi = {
 
 // Inpatient API
 export const inpatientApi = {
-  getAdmissions: (status?: string, wardId?: string, page = 1, limit = 50, search?: string) =>
-    apiRequest<any[]>(`/api/inpatient/admissions?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(status && { status }), ...(wardId && { wardId }), ...(search && { search }) })}`),
+  getAdmissions: (status?: string, wardId?: string, page = 1, limit = 50, search?: string, patientId?: string) =>
+    apiRequest<any[]>(`/api/inpatient/admissions?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(status && { status }), ...(wardId && { wardId }), ...(search && { search }), ...(patientId && { patientId }) })}`),
   
   getAdmission: (id: string) =>
     apiRequest<any>(`/api/inpatient/admissions/${id}`),
@@ -562,8 +575,8 @@ export const doctorsApi = {
 
 // Appointments API
 export const appointmentsApi = {
-  getAll: (date?: string, status?: string, doctorId?: string, page = 1, limit = 50) =>
-    apiRequest<any[]>(`/api/appointments?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(date && { date }), ...(status && { status }), ...(doctorId && { doctorId }) })}`),
+  getAll: (date?: string, status?: string, doctorId?: string, patientId?: string, page = 1, limit = 50) =>
+    apiRequest<any[]>(`/api/appointments?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(date && { date }), ...(status && { status }), ...(doctorId && { doctorId }), ...(patientId && { patientId }) })}`),
   
   getById: (id: string) =>
     apiRequest<any>(`/api/appointments/${id}`),

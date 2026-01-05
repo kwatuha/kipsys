@@ -1,7 +1,13 @@
+"use client"
+
+import { useState, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
-import { Eye } from "lucide-react"
+import { Eye, AlertCircle } from "lucide-react"
+import { inpatientApi } from "@/lib/api"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Skeleton } from "@/components/ui/skeleton"
 
 type Admission = {
   id: string
@@ -16,65 +22,91 @@ type Admission = {
   department: string
 }
 
-// Mock data for demonstration
-const admissions: Admission[] = [
-  {
-    id: "ADM-1001",
-    admissionDate: "2023-01-15",
-    dischargeDate: "2023-01-20",
-    ward: "Cardiology",
-    bedNumber: "C-105",
-    admittingDoctor: "Dr. James Ndiwa",
-    diagnosis: "Acute Myocardial Infarction",
-    status: "Discharged",
-    notes: "Patient responded well to treatment",
-    department: "Cardiology",
-  },
-  {
-    id: "ADM-950",
-    admissionDate: "2022-10-05",
-    dischargeDate: "2022-10-12",
-    ward: "General Medicine",
-    bedNumber: "G-210",
-    admittingDoctor: "Dr. Sarah Isuvi",
-    diagnosis: "Pneumonia",
-    status: "Discharged",
-    notes: "Completed antibiotic course",
-    department: "Internal Medicine",
-  },
-  {
-    id: "ADM-875",
-    admissionDate: "2022-07-20",
-    dischargeDate: "2022-07-25",
-    ward: "Surgical",
-    bedNumber: "S-305",
-    admittingDoctor: "Dr. Michael Siva",
-    diagnosis: "Appendicitis",
-    status: "Discharged",
-    notes: "Successful appendectomy performed",
-    department: "Surgery",
-  },
-  {
-    id: "ADM-1050",
-    admissionDate: "2023-04-28",
-    dischargeDate: null,
-    ward: "ICU",
-    bedNumber: "ICU-03",
-    admittingDoctor: "Dr. James Ndiwa",
-    diagnosis: "Congestive Heart Failure",
-    status: "Current",
-    notes: "Patient under observation",
-    department: "Intensive Care",
-  },
-]
-
 export function PatientAdmissions({ patientId }: { patientId: string }) {
-  // In a real application, you would fetch the admissions data based on the patient ID
-  // const { data: admissionData, isLoading, error } = usePatientAdmissions(patientId)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [admissions, setAdmissions] = useState<Admission[]>([])
 
-  const admissionData = admissions // Using mock data for demonstration
-  const currentAdmission = admissionData.find((adm) => adm.status === "Current")
-  const pastAdmissions = admissionData.filter((adm) => adm.status === "Discharged")
+  useEffect(() => {
+    loadAdmissions()
+  }, [patientId])
+
+  const loadAdmissions = async () => {
+    try {
+      setLoading(true)
+      setError(null)
+
+      const admissionsData = await inpatientApi.getAdmissions(undefined, undefined, 1, 100, undefined, patientId)
+
+      const admissionList: Admission[] = admissionsData.map((adm: any) => {
+        const admissionDate = new Date(adm.admissionDate || new Date())
+        const dischargeDate = adm.dischargeDate ? new Date(adm.dischargeDate) : null
+        const primaryDiagnosis = adm.diagnoses && adm.diagnoses.length > 0 
+          ? adm.diagnoses.find((d: any) => d.diagnosisType === 'primary') || adm.diagnoses[0]
+          : null
+
+        return {
+          id: adm.admissionNumber || `ADM-${adm.admissionId}`,
+          admissionDate: admissionDate.toISOString().split('T')[0],
+          dischargeDate: dischargeDate ? dischargeDate.toISOString().split('T')[0] : null,
+          ward: adm.wardName || adm.ward || 'Unknown Ward',
+          bedNumber: adm.bedNumber || 'N/A',
+          admittingDoctor: adm.doctorName || `${adm.doctorFirstName || ''} ${adm.doctorLastName || ''}`.trim() || 'Unknown Doctor',
+          diagnosis: primaryDiagnosis ? (primaryDiagnosis.diagnosis || primaryDiagnosis.diagnosisName) : (adm.admissionDiagnosis || 'Not specified'),
+          status: adm.status === 'active' ? 'Current' : 'Discharged',
+          notes: adm.notes || '',
+          department: adm.wardType || adm.department || 'General'
+        }
+      })
+
+      // Sort by admission date descending
+      admissionList.sort((a, b) => new Date(b.admissionDate).getTime() - new Date(a.admissionDate).getTime())
+
+      setAdmissions(admissionList)
+    } catch (err: any) {
+      console.error("Error loading admissions:", err)
+      setError(err.message || "Failed to load admissions")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const currentAdmission = admissions.find((adm) => adm.status === "Current")
+  const pastAdmissions = admissions.filter((adm) => adm.status === "Discharged")
+
+  if (loading) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Hospital Admissions</CardTitle>
+          <CardDescription>Current and previous hospital stays</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            <Skeleton className="h-[400px] w-full" />
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  if (error) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Hospital Admissions</CardTitle>
+          <CardDescription>Current and previous hospital stays</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Error</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        </CardContent>
+      </Card>
+    )
+  }
 
   return (
     <Card>
@@ -117,10 +149,12 @@ export function PatientAdmissions({ patientId }: { patientId: string }) {
                     <div className="text-sm font-medium text-muted-foreground">Diagnosis</div>
                     <div className="font-medium">{currentAdmission.diagnosis}</div>
                   </div>
-                  <div className="md:col-span-2">
-                    <div className="text-sm font-medium text-muted-foreground">Notes</div>
-                    <div className="font-medium">{currentAdmission.notes}</div>
-                  </div>
+                  {currentAdmission.notes && (
+                    <div className="md:col-span-2">
+                      <div className="text-sm font-medium text-muted-foreground">Notes</div>
+                      <div className="font-medium">{currentAdmission.notes}</div>
+                    </div>
+                  )}
                 </div>
                 <div className="flex justify-end mt-4">
                   <Button size="sm">View Details</Button>
@@ -151,7 +185,7 @@ export function PatientAdmissions({ patientId }: { patientId: string }) {
                     <TableRow key={admission.id}>
                       <TableCell className="font-medium">{admission.id}</TableCell>
                       <TableCell>{admission.admissionDate}</TableCell>
-                      <TableCell>{admission.dischargeDate}</TableCell>
+                      <TableCell>{admission.dischargeDate || 'N/A'}</TableCell>
                       <TableCell>{admission.ward}</TableCell>
                       <TableCell>{admission.diagnosis}</TableCell>
                       <TableCell>{admission.admittingDoctor}</TableCell>

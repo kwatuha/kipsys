@@ -37,8 +37,8 @@ const appointments = {
     patientInitials: "AK",
     doctorAvatar: "/vibrant-street-market.png",
     doctorInitials: "JN",
-    insurance: "NHIF",
-    policyNumber: "NHIF-123456",
+    insurance: "SHA",
+    policyNumber: "SHA-123456",
     copay: "KES 500",
     previousAppointments: [
       { date: "2023-04-25", doctor: "Dr. James Ndiwa", reason: "Initial consultation" },
