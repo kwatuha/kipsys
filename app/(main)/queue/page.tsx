@@ -39,9 +39,11 @@ import { toast } from "@/components/ui/use-toast"
 import { Search, Plus, Edit, Trash2, MoreHorizontal, Loader2, ArrowRight, Monitor, Users, Receipt, FileText, PlayCircle } from "lucide-react"
 import Link from "next/link"
 import { ViewBillDialog } from "@/components/view-bill-dialog"
+import { DispenseMedicationDialog } from "@/components/dispense-medication-dialog"
 import { PatientEncounterForm } from "@/components/patient-encounter-form"
 import { useAuth } from "@/lib/auth/auth-context"
 import { format } from "date-fns"
+import { Pill } from "lucide-react"
 
 const servicePoints = [
   { value: "triage", label: "Triage" },
@@ -88,6 +90,8 @@ export default function QueueManagement() {
   const [selectedPatientForEncounter, setSelectedPatientForEncounter] = useState<{ patientId: string; patientName: string } | null>(null)
   const [encountersToday, setEncountersToday] = useState<Record<string, boolean>>({})
   const [currentDoctorId, setCurrentDoctorId] = useState<string | undefined>()
+  const [dispenseDialogOpen, setDispenseDialogOpen] = useState(false)
+  const [selectedPatientForDispense, setSelectedPatientForDispense] = useState<{ patientId: number; patientName: string } | null>(null)
   const { user } = useAuth()
 
   useEffect(() => {
@@ -562,6 +566,18 @@ export default function QueueManagement() {
                                     View Bill
                                   </DropdownMenuItem>
                                 )}
+                                {queue.servicePoint === "pharmacy" && queue.patientId && (
+                                  <DropdownMenuItem onClick={() => {
+                                    setSelectedPatientForDispense({
+                                      patientId: parseInt(queue.patientId.toString()),
+                                      patientName: queue.patientName || "Unknown Patient"
+                                    })
+                                    setDispenseDialogOpen(true)
+                                  }}>
+                                    <Pill className="mr-2 h-4 w-4" />
+                                    Dispense Medication
+                                  </DropdownMenuItem>
+                                )}
                                 <DropdownMenuItem onClick={() => handleEdit(queue)}>
                                   <Edit className="mr-2 h-4 w-4" />
                                   Edit
@@ -838,6 +854,23 @@ export default function QueueManagement() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Dispense Medication Dialog for pharmacy */}
+      {selectedPatientForDispense && (
+        <DispenseMedicationDialog
+          open={dispenseDialogOpen}
+          onOpenChange={(open) => {
+            setDispenseDialogOpen(open)
+            if (!open) {
+              setSelectedPatientForDispense(null)
+            }
+          }}
+          patientId={selectedPatientForDispense.patientId}
+          onDispensed={() => {
+            loadQueues()
+          }}
+        />
+      )}
     </div>
   )
 }

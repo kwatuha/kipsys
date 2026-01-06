@@ -185,6 +185,22 @@ export const pharmacyApi = {
   
   deleteDrugInventoryItem: (id: string) =>
     apiRequest<any>(`/api/pharmacy/drug-inventory/${id}`, { method: 'DELETE' }),
+  
+  // Dispensing
+  getPaidPrescriptionItemsReadyForDispensing: (patientId?: string) => {
+    const params = new URLSearchParams();
+    if (patientId) params.append('patientId', patientId);
+    return apiRequest<any[]>(`/api/pharmacy/prescriptions/paid/ready-for-dispensing?${params.toString()}`);
+  },
+  
+  getPrescriptionItemsReadyForDispensing: (prescriptionId: string) =>
+    apiRequest<any[]>(`/api/pharmacy/prescriptions/${prescriptionId}/items/ready-for-dispensing`),
+  
+  getAvailableDrugInventory: (medicationId: string) =>
+    apiRequest<any[]>(`/api/pharmacy/drug-inventory/available/${medicationId}`),
+  
+  createDispensation: (data: any) =>
+    apiRequest<any>('/api/pharmacy/dispensations', { method: 'POST', body: data }),
 };
 
 // Notification API

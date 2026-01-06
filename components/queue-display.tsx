@@ -19,6 +19,7 @@ import { useScreenSize } from "@/hooks/use-screen-size"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { queueApi, medicalRecordsApi } from "@/lib/api"
 import { PatientEncounterForm } from "@/components/patient-encounter-form"
+import { DispenseMedicationDialog } from "@/components/dispense-medication-dialog"
 import { useAuth } from "@/lib/auth/auth-context"
 import { format } from "date-fns"
 
@@ -191,7 +192,11 @@ function QueueContent({ servicePoint }: { servicePoint: ServicePoint }) {
   const [selectedPatient, setSelectedPatient] = useState<{ patientId: string; patientName: string } | null>(null)
   const [encountersToday, setEncountersToday] = useState<Record<string, boolean>>({})
   const [currentDoctorId, setCurrentDoctorId] = useState<string | undefined>()
+  const [dispenseDialogOpen, setDispenseDialogOpen] = useState(false)
+  const [selectedPatientForDispense, setSelectedPatientForDispense] = useState<{ patientId: number; patientName: string } | null>(null)
   const { user } = useAuth()
+  const isConsultation = servicePoint === "consultation"
+  const isPharmacy = servicePoint === "pharmacy"
 
   // Get current doctor ID
   useEffect(() => {
@@ -213,8 +218,7 @@ function QueueContent({ servicePoint }: { servicePoint: ServicePoint }) {
   }, [user])
 
   // Fetch queue data from API
-  useEffect(() => {
-    const loadQueueData = async () => {
+  const loadQueueData = async () => {
       try {
         setLoading(true)
         const data = await queueApi.getAll(servicePoint, undefined)
@@ -277,6 +281,7 @@ function QueueContent({ servicePoint }: { servicePoint: ServicePoint }) {
       }
     }
 
+  useEffect(() => {
     loadQueueData()
   }, [servicePoint])
 
@@ -286,8 +291,6 @@ function QueueContent({ servicePoint }: { servicePoint: ServicePoint }) {
     setEncounterFormOpen(true)
     console.log('Encounter form state set to open')
   }
-
-  const isConsultation = servicePoint === "consultation"
 
   return (
     <>
@@ -356,6 +359,63 @@ function QueueContent({ servicePoint }: { servicePoint: ServicePoint }) {
                     </div>
                   )
                 })}
+              </div>
+            ) : (
+              <div className="p-6 text-center text-muted-foreground">
+                No patients in queue for {getServicePointName(servicePoint)}
+              </div>
+            )}
+          </>
+        ) : isPharmacy ? (
+          <>
+            <div className="grid grid-cols-12 bg-muted/50 p-3 text-sm font-medium">
+              <div className="col-span-1">#</div>
+              <div className="col-span-3">Patient</div>
+              <div className="col-span-2">Priority</div>
+              <div className="col-span-2">Status</div>
+              <div className="col-span-2">Wait Time</div>
+              <div className="col-span-2">Action</div>
+            </div>
+            {loading ? (
+              <div className="p-6 text-center text-muted-foreground">Loading queue data...</div>
+            ) : queueData.length > 0 ? (
+              <div className="divide-y">
+                {queueData.map((entry) => (
+                  <div key={entry.id} className="grid grid-cols-12 p-3 text-sm items-center">
+                    <div className="col-span-1">{entry.ticketNumber || entry.queueNumber}</div>
+                    <div className="col-span-3 font-medium">{entry.patientName}</div>
+                    <div className="col-span-2">
+                      <Badge variant="outline" className={`${getPriorityColor(entry.priority)}`}>
+                        {entry.priority}
+                      </Badge>
+                    </div>
+                    <div className="col-span-2">
+                      <Badge variant={entry.status === "waiting" || entry.status === "called" ? "secondary" : "default"}>
+                        {entry.status === "waiting" ? "Waiting" : entry.status === "called" ? "Called" : "In Service"}
+                      </Badge>
+                    </div>
+                    <div className="col-span-2 text-muted-foreground">
+                      {calculateWaitTime(entry)} min
+                      {entry.estimatedWaitTime && entry.status === "waiting" && (
+                        <span> (Est. {entry.estimatedWaitTime} min)</span>
+                      )}
+                    </div>
+                    <div className="col-span-2">
+                      <Button
+                        variant="default"
+                        size="sm"
+                        onClick={() => {
+                          setSelectedPatientForDispense({ patientId: parseInt(entry.patientId), patientName: entry.patientName })
+                          setDispenseDialogOpen(true)
+                        }}
+                        className="w-full"
+                      >
+                        <Pill className="h-3 w-3 mr-1" />
+                        Dispense Medication
+                      </Button>
+                    </div>
+                  </div>
+                ))}
               </div>
             ) : (
               <div className="p-6 text-center text-muted-foreground">
@@ -437,6 +497,23 @@ function QueueContent({ servicePoint }: { servicePoint: ServicePoint }) {
             }}
           />
         </>
+      )}
+
+      {/* Dispense Medication Dialog for pharmacy */}
+      {isPharmacy && selectedPatientForDispense && (
+        <DispenseMedicationDialog
+          open={dispenseDialogOpen}
+          onOpenChange={(open) => {
+            setDispenseDialogOpen(open)
+            if (!open) {
+              setSelectedPatientForDispense(null)
+            }
+          }}
+          patientId={selectedPatientForDispense.patientId}
+          onDispensed={() => {
+            loadQueueData()
+          }}
+        />
       )}
     </>
   )

@@ -16,9 +16,10 @@ import {
 } from "@/lib/data/queue-data"
 import { toast } from "@/components/ui/use-toast"
 import { PatientEncounterForm } from "@/components/patient-encounter-form"
+import { DispenseMedicationDialog } from "@/components/dispense-medication-dialog"
 import { useAuth } from "@/lib/auth/auth-context"
 import { queueApi } from "@/lib/api"
-import { Loader2 } from "lucide-react"
+import { Loader2, Pill } from "lucide-react"
 
 interface CallPatientPanelProps {
   servicePoint: ServicePoint
@@ -33,7 +34,9 @@ export function CallPatientPanel({ servicePoint, staffName, counterNumber = 1 }:
   const [currentDoctorId, setCurrentDoctorId] = useState<string | undefined>()
   const [queueData, setQueueData] = useState<QueueEntry[]>([])
   const [loadingQueue, setLoadingQueue] = useState(false)
+  const [dispenseDialogOpen, setDispenseDialogOpen] = useState(false)
   const { user } = useAuth()
+  const isPharmacy = servicePoint === "pharmacy"
 
   // Get current doctor ID from auth context or localStorage
   useEffect(() => {
@@ -271,6 +274,17 @@ export function CallPatientPanel({ servicePoint, staffName, counterNumber = 1 }:
                     Start Encounter
                   </Button>
                 )}
+                {isPharmacy && (
+                  <Button 
+                    onClick={() => setDispenseDialogOpen(true)} 
+                    className="flex-1" 
+                    size="sm"
+                    variant="default"
+                  >
+                    <Pill className="h-4 w-4 mr-2" />
+                    Dispense Medication
+                  </Button>
+                )}
                 <Button onClick={handleCompleteService} className="flex-1" size="sm" variant="outline">
                   <CheckCircle className="h-4 w-4 mr-2" />
                   Complete Service
@@ -394,6 +408,23 @@ export function CallPatientPanel({ servicePoint, staffName, counterNumber = 1 }:
           </>
         ) : null
       })()}
+
+      {/* Dispense Medication Dialog for pharmacy */}
+      {isPharmacy && currentPatient && (
+        <DispenseMedicationDialog
+          open={dispenseDialogOpen}
+          onOpenChange={(open) => {
+            setDispenseDialogOpen(open)
+          }}
+          patientId={parseInt(currentPatient.patientId)}
+          onDispensed={() => {
+            toast({
+              title: "Medications Dispensed",
+              description: `Medications for ${currentPatient.patientName} have been dispensed successfully.`,
+            })
+          }}
+        />
+      )}
     </div>
   )
 }

@@ -153,20 +153,22 @@ router.post('/', async (req, res) => {
             priorityLevel = 4;
         }
 
-        // Generate triage number - use MAX to avoid race conditions
-        const [maxResult] = await connection.query(
+        // Generate triage number with proper locking to avoid race conditions
+        // Use SELECT FOR UPDATE to lock rows and prevent concurrent access
+        const [maxResult] = await connection.execute(
             `SELECT MAX(CAST(SUBSTRING(triageNumber, 5) AS UNSIGNED)) as maxNum 
              FROM triage_assessments 
-             WHERE DATE(triageDate) = CURDATE() AND triageNumber LIKE 'TRI-%'`
+             WHERE DATE(triageDate) = CURDATE() AND triageNumber LIKE 'TRI-%'
+             FOR UPDATE`
         );
-        let nextNum = (maxResult[0].maxNum || 0) + 1;
+        let nextNum = (maxResult[0]?.maxNum || 0) + 1;
         let triageNumber = `TRI-${String(nextNum).padStart(6, '0')}`;
         
-        // Double-check the number doesn't exist (handle edge cases and race conditions)
+        // Double-check the number doesn't exist (handle edge cases)
         let attempts = 0;
         while (attempts < 10) {
-            const [existing] = await connection.query(
-                'SELECT triageId FROM triage_assessments WHERE triageNumber = ?',
+            const [existing] = await connection.execute(
+                'SELECT triageId FROM triage_assessments WHERE triageNumber = ? FOR UPDATE',
                 [triageNumber]
             );
             if (existing.length === 0) {
@@ -178,25 +180,54 @@ router.post('/', async (req, res) => {
             attempts++;
         }
 
-        // Insert triage assessment
-        const [result] = await connection.query(
-            `INSERT INTO triage_assessments (
-                triageNumber, patientId, triageDate, chiefComplaint, triageCategory, 
-                priorityLevel, status, notes, triagedBy, assignedToDoctorId, assignedToDepartment
-            )
-            VALUES (?, ?, NOW(), ?, ?, ?, 'pending', ?, ?, ?, ?)`,
-            [
-                triageNumber,
-                patientId,
-                chiefComplaint,
-                triageCategory,
-                priorityLevel,
-                notes || null,
-                triagedByUserId,
-                assignedToDoctorId || null,
-                assignedToDepartment || null
-            ]
-        );
+        // Insert triage assessment with duplicate key error handling
+        let result;
+        try {
+            [result] = await connection.execute(
+                `INSERT INTO triage_assessments (
+                    triageNumber, patientId, triageDate, chiefComplaint, triageCategory, 
+                    priorityLevel, status, notes, triagedBy, assignedToDoctorId, assignedToDepartment
+                )
+                VALUES (?, ?, NOW(), ?, ?, ?, 'pending', ?, ?, ?, ?)`,
+                [
+                    triageNumber,
+                    patientId,
+                    chiefComplaint,
+                    triageCategory,
+                    priorityLevel,
+                    notes || null,
+                    triagedByUserId,
+                    assignedToDoctorId || null,
+                    assignedToDepartment || null
+                ]
+            );
+        } catch (insertError) {
+            // Handle duplicate key error - retry with next number
+            if (insertError.code === 'ER_DUP_ENTRY' || insertError.errno === 1062) {
+                nextNum++;
+                triageNumber = `TRI-${String(nextNum).padStart(6, '0')}`;
+                [result] = await connection.execute(
+                    `INSERT INTO triage_assessments (
+                        triageNumber, patientId, triageDate, chiefComplaint, triageCategory, 
+                        priorityLevel, status, notes, triagedBy, assignedToDoctorId, assignedToDepartment
+                    )
+                    VALUES (?, ?, NOW(), ?, ?, ?, 'pending', ?, ?, ?, ?)`,
+                    [
+                        triageNumber,
+                        patientId,
+                        chiefComplaint,
+                        triageCategory,
+                        priorityLevel,
+                        notes || null,
+                        triagedByUserId,
+                        assignedToDoctorId || null,
+                        assignedToDepartment || null
+                    ]
+                );
+            } else {
+                throw insertError; // Re-throw if it's not a duplicate key error
+            }
+        }
 
         const triageId = result.insertId;
 
@@ -224,10 +255,15 @@ router.post('/', async (req, res) => {
             );
         }
 
-        // Create invoice for consultation charges
+        // Determine queue priority based on triage category
+        let queuePriority = 'normal';
+        if (triageCategory === 'red') queuePriority = 'emergency';
+        else if (triageCategory === 'yellow') queuePriority = 'urgent';
+
+        // Create invoice for consultation charges and cashier queue entry
         try {
             // Get consultation charge (General Consultation)
-            const [consultationCharges] = await connection.query(
+            const [consultationCharges] = await connection.execute(
                 `SELECT chargeId, cost, name 
                  FROM service_charges 
                  WHERE name LIKE '%Consultation%' AND status = 'Active' 
@@ -241,14 +277,14 @@ router.post('/', async (req, res) => {
 
                 if (consultationCost > 0) {
                     // Generate invoice number
-                    const [invoiceCount] = await connection.query(
+                    const [invoiceCount] = await connection.execute(
                         'SELECT COUNT(*) as count FROM invoices WHERE DATE(createdAt) = CURDATE()'
                     );
                     const invoiceNum = invoiceCount[0].count + 1;
                     const invoiceNumber = `INV-${new Date().toISOString().split('T')[0].replace(/-/g, '')}-${String(invoiceNum).padStart(4, '0')}`;
 
                     // Create invoice
-                    const [invoiceResult] = await connection.query(
+                    const [invoiceResult] = await connection.execute(
                         `INSERT INTO invoices (invoiceNumber, patientId, invoiceDate, totalAmount, balance, status, notes, createdBy)
                          VALUES (?, ?, CURDATE(), ?, ?, 'pending', ?, ?)`,
                         [
@@ -264,7 +300,7 @@ router.post('/', async (req, res) => {
                     const invoiceId = invoiceResult.insertId;
 
                     // Add invoice item
-                    await connection.query(
+                    await connection.execute(
                         `INSERT INTO invoice_items (invoiceId, chargeId, description, quantity, unitPrice, totalPrice)
                          VALUES (?, ?, ?, 1, ?, ?)`,
                         [
@@ -275,6 +311,40 @@ router.post('/', async (req, res) => {
                             consultationCost
                         ]
                     );
+
+                    // Create cashier queue entry for consultation fees payment
+                    // Check if cashier queue entry already exists for this consultation invoice
+                    const [existingCashier] = await connection.execute(
+                        `SELECT queueId FROM queue_entries 
+                         WHERE patientId = ? AND servicePoint = 'cashier' 
+                         AND DATE(arrivalTime) = CURDATE() 
+                         AND notes LIKE ?
+                         AND status NOT IN ('completed', 'cancelled')`,
+                        [patientId, `%Triage: ${triageNumber}%`]
+                    );
+
+                    if (existingCashier.length === 0) {
+                        // Generate ticket number for cashier queue
+                        const [cashierCount] = await connection.execute(
+                            'SELECT COUNT(*) as count FROM queue_entries WHERE DATE(arrivalTime) = CURDATE() AND servicePoint = "cashier"'
+                        );
+                        const cashierTicketNum = cashierCount[0].count + 1;
+                        const cashierTicketNumber = `C-${String(cashierTicketNum).padStart(3, '0')}`;
+
+                        // Create queue entry for cashier (consultation fees payment)
+                        await connection.execute(
+                            `INSERT INTO queue_entries 
+                            (patientId, ticketNumber, servicePoint, priority, status, notes, createdBy)
+                            VALUES (?, ?, 'cashier', ?, 'waiting', ?, ?)`,
+                            [
+                                patientId,
+                                cashierTicketNumber,
+                                queuePriority,
+                                `Consultation fees payment - Triage: ${triageNumber}`,
+                                triagedByUserId
+                            ]
+                        );
+                    }
                 }
             }
         } catch (invoiceError) {
@@ -285,34 +355,8 @@ router.post('/', async (req, res) => {
             // return res.status(500).json({ message: 'Error creating invoice', error: invoiceError.message });
         }
 
-        // After triage completion, create queue entry for cashier (consultation fees payment)
-        if (servicePoint) {
-            // Determine queue priority based on triage category
-            let queuePriority = 'normal';
-            if (triageCategory === 'red') queuePriority = 'emergency';
-            else if (triageCategory === 'yellow') queuePriority = 'urgent';
-
-            // Generate ticket number for cashier queue
-            const [cashierCount] = await connection.query(
-                'SELECT COUNT(*) as count FROM queue_entries WHERE DATE(arrivalTime) = CURDATE() AND servicePoint = "cashier"'
-            );
-            const cashierTicketNum = cashierCount[0].count + 1;
-            const cashierTicketNumber = `C-${String(cashierTicketNum).padStart(3, '0')}`;
-
-            // Create queue entry for cashier (consultation fees payment)
-            await connection.query(
-                `INSERT INTO queue_entries 
-                (patientId, ticketNumber, servicePoint, priority, status, notes, createdBy)
-                VALUES (?, ?, 'cashier', ?, 'waiting', ?, ?)`,
-                [
-                    patientId,
-                    cashierTicketNumber,
-                    queuePriority,
-                    `Consultation fees payment - Service: ${servicePoint}`,
-                    triagedByUserId
-                ]
-            );
-        }
+        // Note: Consultation queue entry will be created automatically when consultation fee invoice is paid
+        // See billingRoutes.js payment endpoint for consultation queue creation logic
 
         await connection.commit();
 
@@ -486,6 +530,9 @@ router.put('/:id', async (req, res) => {
                 values
             );
         }
+
+        // Note: Consultation queue entry will be created automatically when consultation fee invoice is paid
+        // See billingRoutes.js payment endpoint for consultation queue creation logic
 
         await connection.commit();
 

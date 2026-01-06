@@ -602,6 +602,128 @@ router.post('/invoices/:id/payment', async (req, res) => {
             [newPaid, outstanding, newStatus, paymentMethod || invoice.paymentMethod, id]
         );
 
+        // If invoice is fully paid, check if we need to create queue entries
+        if (newStatus === 'paid') {
+            // Check if it's a prescription invoice - create pharmacy queue entry
+            if (invoice.notes && invoice.notes.includes('Drug payment - Prescription:')) {
+                try {
+                    // Extract prescription number from notes (format: "Drug payment - Prescription: PRESC-XXXXX")
+                    const prescMatch = invoice.notes.match(/Prescription:\s*([A-Z0-9-]+)/);
+                    if (prescMatch && prescMatch[1]) {
+                        const prescriptionNumber = prescMatch[1].trim();
+                        
+                        // Find the prescription
+                        const [prescriptions] = await connection.execute(
+                            'SELECT prescriptionId, patientId FROM prescriptions WHERE prescriptionNumber = ?',
+                            [prescriptionNumber]
+                        );
+                        
+                        if (prescriptions.length > 0) {
+                            const prescription = prescriptions[0];
+                            
+                            // Check if pharmacy queue entry already exists for this prescription
+                            const [existingQueue] = await connection.execute(
+                                `SELECT queueId FROM queue_entries 
+                                 WHERE patientId = ? AND servicePoint = 'pharmacy' 
+                                 AND notes LIKE ? AND status NOT IN ('completed', 'cancelled')`,
+                                [prescription.patientId, `%Prescription: ${prescriptionNumber}%`]
+                            );
+                            
+                            if (existingQueue.length === 0) {
+                                // Generate ticket number for pharmacy queue
+                                const [pharmacyCount] = await connection.execute(
+                                    'SELECT COUNT(*) as count FROM queue_entries WHERE DATE(arrivalTime) = CURDATE() AND servicePoint = "pharmacy"'
+                                );
+                                const pharmacyTicketNum = pharmacyCount[0].count + 1;
+                                const pharmacyTicketNumber = `P-${String(pharmacyTicketNum).padStart(3, '0')}`;
+                                
+                                // Create pharmacy queue entry
+                                await connection.execute(
+                                    `INSERT INTO queue_entries 
+                                    (patientId, ticketNumber, servicePoint, priority, status, notes, createdBy)
+                                    VALUES (?, ?, 'pharmacy', 'normal', 'waiting', ?, ?)`,
+                                    [
+                                        prescription.patientId,
+                                        pharmacyTicketNumber,
+                                        `Prescription: ${prescriptionNumber}`,
+                                        userId || null
+                                    ]
+                                );
+                            }
+                        }
+                    }
+                } catch (pharmacyQueueError) {
+                    console.error('Error creating pharmacy queue entry:', pharmacyQueueError);
+                    // Don't fail the payment if pharmacy queue creation fails
+                }
+            }
+            
+            // Check if it's a consultation fee invoice from triage - create consultation queue entry
+            if (invoice.notes && invoice.notes.includes('Consultation charge from triage')) {
+                try {
+                    // Extract triage number from notes (format: "Consultation charge from triage TRI-XXXXXX")
+                    const triageMatch = invoice.notes.match(/triage\s+([A-Z0-9-]+)/i);
+                    if (triageMatch && triageMatch[1]) {
+                        const triageNumber = triageMatch[1].trim();
+                        
+                        // Find the triage assessment to get assigned doctor and priority
+                        const [triageAssessments] = await connection.execute(
+                            `SELECT triageId, patientId, assignedToDoctorId, assignedToDepartment, 
+                             triageCategory, triagedBy 
+                             FROM triage_assessments 
+                             WHERE triageNumber = ?`,
+                            [triageNumber]
+                        );
+                        
+                        if (triageAssessments.length > 0) {
+                            const triage = triageAssessments[0];
+                            
+                            // Determine queue priority based on triage category
+                            let queuePriority = 'normal';
+                            if (triage.triageCategory === 'red') queuePriority = 'emergency';
+                            else if (triage.triageCategory === 'yellow') queuePriority = 'urgent';
+                            
+                            // Check if consultation queue entry already exists for this patient today
+                            const [existingConsultation] = await connection.execute(
+                                `SELECT queueId FROM queue_entries 
+                                 WHERE patientId = ? AND servicePoint = 'consultation' 
+                                 AND DATE(arrivalTime) = CURDATE() 
+                                 AND status NOT IN ('completed', 'cancelled')`,
+                                [triage.patientId]
+                            );
+                            
+                            if (existingConsultation.length === 0) {
+                                // Generate ticket number for consultation queue
+                                const [consultationCount] = await connection.execute(
+                                    'SELECT COUNT(*) as count FROM queue_entries WHERE DATE(arrivalTime) = CURDATE() AND servicePoint = "consultation"'
+                                );
+                                const consultationTicketNum = consultationCount[0].count + 1;
+                                const consultationTicketNumber = `CON-${String(consultationTicketNum).padStart(3, '0')}`;
+                                
+                                // Create consultation queue entry
+                                await connection.execute(
+                                    `INSERT INTO queue_entries 
+                                    (patientId, doctorId, ticketNumber, servicePoint, priority, status, notes, createdBy)
+                                    VALUES (?, ?, ?, 'consultation', ?, 'waiting', ?, ?)`,
+                                    [
+                                        triage.patientId,
+                                        triage.assignedToDoctorId || null,
+                                        consultationTicketNumber,
+                                        queuePriority,
+                                        `Triage: ${triageNumber}${triage.assignedToDepartment ? ` - ${triage.assignedToDepartment}` : ''}`,
+                                        userId || triage.triagedBy || null
+                                    ]
+                                );
+                            }
+                        }
+                    }
+                } catch (consultationQueueError) {
+                    console.error('Error creating consultation queue entry:', consultationQueueError);
+                    // Don't fail the payment if consultation queue creation fails
+                }
+            }
+        }
+
         await connection.commit();
 
         // Get updated invoice
