@@ -7,7 +7,9 @@
     "dev": "next dev --turbo -H 0.0.0.0",
     "dev:legacy": "next dev",
     "lint": "next lint",
-    "start": "next start"
+    "start": "next start",
+    "start:prod": "next start -H 0.0.0.0",
+    "build:prod": "npm run build && npm run start:prod"
   },
   "dependencies": {
     "@emotion/is-prop-valid": "1.4.0",

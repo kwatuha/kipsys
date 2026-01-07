@@ -1319,6 +1319,32 @@ export const revenueShareApi = {
     apiRequest<any>('/api/revenue-share/stats/summary'),
 };
 
+// Diagnoses API (ICD-10)
+export const diagnosesApi = {
+  getAll: (search?: string, page = 1, limit = 100) => {
+    const params = new URLSearchParams({
+      page: page.toString(),
+      limit: limit.toString(),
+    });
+    if (search && search.trim()) {
+      params.append('search', search.trim());
+    }
+    return apiRequest<any[]>(`/api/diagnoses?${params.toString()}`);
+  },
+  
+  getById: (id: string) =>
+    apiRequest<any>(`/api/diagnoses/${id}`),
+  
+  create: (data: any) =>
+    apiRequest<any>('/api/diagnoses', { method: 'POST', body: data }),
+  
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/diagnoses/${id}`, { method: 'PUT', body: data }),
+  
+  delete: (id: string) =>
+    apiRequest<any>(`/api/diagnoses/${id}`, { method: 'DELETE' }),
+};
+
 // User API
 export const userApi = {
   getAll: () =>

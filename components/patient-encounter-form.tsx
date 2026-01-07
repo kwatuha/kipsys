@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useForm, useFieldArray } from "react-hook-form"
 import { z } from "zod"
@@ -40,6 +40,8 @@ import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { PatientCombobox } from "@/components/patient-combobox"
 import { MedicationCombobox } from "@/components/medication-combobox"
+import { DiagnosisCombobox } from "@/components/diagnosis-combobox"
+import { SymptomsAutocomplete } from "@/components/symptoms-autocomplete"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -182,6 +184,7 @@ export function PatientEncounterForm({
   const [patientVitals, setPatientVitals] = useState<any[]>([])
   const [todayVitals, setTodayVitals] = useState<any | null>(null)
   const [loadingPatientData, setLoadingPatientData] = useState(false)
+  const [selectedDiagnoses, setSelectedDiagnoses] = useState<any[]>([])
 
   const form = useForm<EncounterFormValues>({
     resolver: zodResolver(encounterFormSchema),
@@ -277,6 +280,13 @@ export function PatientEncounterForm({
 
     return () => subscription.unsubscribe()
   }, [form, open])
+
+  // Reset selected diagnoses when diagnosis sheet closes
+  useEffect(() => {
+    if (!diagnosisSheetOpen) {
+      setSelectedDiagnoses([])
+    }
+  }, [diagnosisSheetOpen])
 
   // Load patient data when patient is selected
   useEffect(() => {
@@ -1743,17 +1753,18 @@ export function PatientEncounterForm({
             </SheetHeader>
             <div className="flex flex-1 overflow-hidden min-h-0">
               <ScrollArea className="flex-1 px-6">
-                <div className="space-y-4 mt-4 pb-4">
+                <div className="space-y-6 mt-4 pb-4">
+                  {/* Chief Complaint - Most important, placed first */}
                   <FormField
                     control={form.control}
                     name="chiefComplaint"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Chief Complaint *</FormLabel>
+                        <FormLabel className="text-base font-semibold">Chief Complaint *</FormLabel>
                         <FormControl>
                           <Textarea 
-                            placeholder="Patient's main complaint or reason for visit (e.g., 'Headache for 3 days', 'Chest pain')" 
-                            className="min-h-[80px]"
+                            placeholder="Patient's main complaint or reason for visit (e.g., 'Headache for 3 days', 'Chest pain since morning')" 
+                            className="min-h-[80px] text-base"
                             {...field} 
                           />
                         </FormControl>
@@ -1765,63 +1776,82 @@ export function PatientEncounterForm({
                     )}
                   />
 
+                  <Separator />
+
+                  {/* Symptoms with autocomplete */}
                   <FormField
                     control={form.control}
                     name="symptoms"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Presenting Symptoms</FormLabel>
+                        <FormLabel className="text-base font-semibold">Presenting Symptoms</FormLabel>
                         <FormControl>
-                          <Textarea 
-                            placeholder="Describe the symptoms in detail (e.g., 'Severe headache, nausea, photophobia for 3 days')" 
-                            className="min-h-[120px]"
-                            {...field} 
+                          <SymptomsAutocomplete
+                            value={field.value || ""}
+                            onChange={field.onChange}
+                            placeholder="Type symptoms or click suggestions below to add (e.g., Fever, Headache, Nausea)"
+                            disabled={isSubmitting}
                           />
                         </FormControl>
                         <FormDescription>
-                          Detailed description of current symptoms, their onset, duration, and characteristics
+                          Select or type symptoms. You can add multiple symptoms separated by commas.
                         </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
 
+                  <Separator />
+
+                  {/* History of Present Illness */}
                   <FormField
                     control={form.control}
                     name="historyOfPresentIllness"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>History of Present Illness (HOPI)</FormLabel>
+                        <FormLabel className="text-base font-semibold">History of Present Illness (HOPI)</FormLabel>
                         <FormControl>
                           <Textarea 
-                            placeholder="Chronological narrative of the illness, including progression, associated symptoms, and relevant details" 
-                            className="min-h-[150px]"
+                            placeholder="Chronological narrative: When did symptoms start? How have they progressed? What makes them better or worse? Any associated symptoms? (e.g., 'Patient reports headache started 3 days ago, initially mild, now severe. Associated with nausea and photophobia. Worse in morning, better with rest.')" 
+                            className="min-h-[120px]"
                             {...field} 
                           />
                         </FormControl>
                         <FormDescription>
-                          A detailed chronological account of the patient's current illness
+                          Detailed chronological account: onset, progression, aggravating/relieving factors, associated symptoms
                         </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
 
+                  <Separator />
+
+                  {/* Physical Examination */}
                   <FormField
                     control={form.control}
                     name="physicalExamination"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Physical Examination Findings</FormLabel>
+                        <FormLabel className="text-base font-semibold">Physical Examination Findings</FormLabel>
                         <FormControl>
                           <Textarea 
-                            placeholder="Document physical examination findings (e.g., 'BP: 120/80, HR: 72, Temp: 98.6°F. General appearance: Well-appearing. HEENT: Normal. Cardiovascular: Regular rhythm, no murmurs')" 
-                            className="min-h-[150px]"
+                            placeholder="Document objective findings systematically:
+• Vital Signs: BP, HR, RR, Temp, SpO2
+• General Appearance: 
+• HEENT: 
+• Cardiovascular: 
+• Respiratory: 
+• Abdominal: 
+• Neurological: 
+• Musculoskeletal: 
+• Skin:"
+                            className="min-h-[150px] font-mono text-sm"
                             {...field} 
                           />
                         </FormControl>
                         <FormDescription>
-                          Objective findings from the physical examination
+                          Document objective findings systematically by system. Use abbreviations as appropriate.
                         </FormDescription>
                         <FormMessage />
                       </FormItem>
@@ -1878,59 +1908,130 @@ export function PatientEncounterForm({
             </SheetHeader>
             <div className="flex flex-1 overflow-hidden min-h-0">
               <ScrollArea className="flex-1 px-6">
-                <div className="space-y-4 mt-4 pb-4">
+                <div className="space-y-6 mt-4 pb-4">
+                  {/* Diagnosis with ICD-10 autocomplete */}
                   <FormField
                     control={form.control}
                     name="diagnosis"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Diagnosis *</FormLabel>
-                        <FormControl>
-                          <Textarea 
-                            placeholder="Primary and secondary diagnoses (e.g., '1. Migraine headache 2. Hypertension')" 
-                            className="min-h-[120px]"
-                            {...field} 
-                          />
-                        </FormControl>
-                        <FormDescription>
-                          Clinical diagnosis based on symptoms, history, and examination findings
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
+                    render={({ field }) => {
+                      // Sync selected diagnoses with field value
+                      useEffect(() => {
+                        if (selectedDiagnoses.length > 0) {
+                          const diagnosisText = selectedDiagnoses
+                            .map((d, idx) => {
+                              const prefix = idx === 0 ? "1. Primary" : idx === 1 ? "2. Secondary" : `${idx + 1}.`;
+                              return d.icd10Code 
+                                ? `${prefix} ${d.icd10Code} - ${d.diagnosisName}`
+                                : `${prefix} ${d.diagnosisName}`;
+                            })
+                            .join("\n");
+                          field.onChange(diagnosisText);
+                        }
+                      }, [selectedDiagnoses, field]);
+
+                      return (
+                        <FormItem>
+                          <FormLabel className="text-base font-semibold">Diagnosis *</FormLabel>
+                          <FormControl>
+                            <div className="space-y-3">
+                              <DiagnosisCombobox
+                                value=""
+                                onValueChange={(value, diagnosis) => {
+                                  if (diagnosis && !selectedDiagnoses.find(d => d.diagnosisId === diagnosis.diagnosisId)) {
+                                    const updated = [...selectedDiagnoses, diagnosis];
+                                    setSelectedDiagnoses(updated);
+                                  }
+                                }}
+                                placeholder="Search ICD-10 diagnosis code or name..."
+                                disabled={isSubmitting}
+                                allowMultiple={true}
+                                selectedDiagnoses={selectedDiagnoses}
+                                onRemoveDiagnosis={(diagnosisId) => {
+                                  setSelectedDiagnoses(prev => prev.filter(d => d.diagnosisId !== diagnosisId));
+                                }}
+                              />
+                              {selectedDiagnoses.length === 0 && (
+                                <Textarea 
+                                  placeholder="Or enter diagnosis manually (e.g., '1. Primary: Migraine headache\n2. Secondary: Hypertension')" 
+                                  className="min-h-[100px]"
+                                  value={field.value || ""}
+                                  onChange={field.onChange}
+                                />
+                              )}
+                              {selectedDiagnoses.length > 0 && (
+                                <div className="rounded-md border p-3 bg-muted/30">
+                                  <p className="text-sm font-medium mb-2">Selected Diagnoses:</p>
+                                  <div className="space-y-1">
+                                    {selectedDiagnoses.map((d, idx) => {
+                                      const prefix = idx === 0 ? "1. Primary" : idx === 1 ? "2. Secondary" : `${idx + 1}.`;
+                                      return (
+                                        <p key={d.diagnosisId} className="text-sm">
+                                          <span className="font-semibold">{prefix}:</span>{" "}
+                                          {d.icd10Code && (
+                                            <span className="font-mono font-semibold text-primary">{d.icd10Code}</span>
+                                          )}
+                                          {d.icd10Code && " - "}
+                                          {d.diagnosisName}
+                                        </p>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </FormControl>
+                          <FormDescription>
+                            Search and select from ICD-10 diagnosis codes, or enter manually. First diagnosis will be marked as Primary.
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      );
+                    }}
                   />
 
+                  <Separator />
+
+                  {/* Treatment Plan */}
                   <FormField
                     control={form.control}
                     name="treatment"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Treatment Plan</FormLabel>
+                        <FormLabel className="text-base font-semibold">Treatment Plan</FormLabel>
                         <FormControl>
                           <Textarea 
-                            placeholder="Detailed treatment plan including medications, procedures, lifestyle modifications, and follow-up instructions" 
+                            placeholder="Detailed treatment plan:
+• Medications: (prescribed via Prescription tab)
+• Procedures: 
+• Lifestyle modifications: 
+• Follow-up instructions: 
+• Patient education:
+• Referrals:" 
                             className="min-h-[150px]"
                             {...field} 
                           />
                         </FormControl>
                         <FormDescription>
-                          Comprehensive treatment plan and management strategy
+                          Comprehensive treatment plan including medications, procedures, lifestyle modifications, and follow-up instructions
                         </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
 
+                  <Separator />
+
+                  {/* Additional Notes */}
                   <FormField
                     control={form.control}
                     name="notes"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Additional Notes</FormLabel>
+                        <FormLabel className="text-base font-semibold">Additional Clinical Notes</FormLabel>
                         <FormControl>
                           <Textarea 
                             placeholder="Any additional clinical notes, observations, patient counseling points, or special instructions" 
-                            className="min-h-[120px]"
+                            className="min-h-[100px]"
                             {...field} 
                           />
                         </FormControl>
