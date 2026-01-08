@@ -26,3 +26,4 @@ ENTRYPOINT ["/usr/local/bin/docker-entrypoint-frontend.sh"]
 CMD ["npm", "run", "dev:legacy"]
 
 
+

@@ -1,6 +1,6 @@
 "use client"
 
-import { createContext, useContext, useState, type ReactNode } from "react"
+import { createContext, useContext, useState, useEffect, type ReactNode } from "react"
 import type { UserRole } from "./permissions"
 import { AuthService, type User } from "./auth-service"
 
@@ -18,9 +18,96 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined)
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [isAuthenticated, setIsAuthenticated] = useState(false)
-  const [isLoading, setIsLoading] = useState(false)
+  const [isLoading, setIsLoading] = useState(true) // Start with true to check auth on mount
 
   const userRole = user?.role || "registration"
+
+  // Check for existing authentication on mount
+  useEffect(() => {
+    const checkAuth = async () => {
+      if (typeof window === 'undefined') {
+        setIsLoading(false)
+        return
+      }
+
+      try {
+        // Check for JWT token in localStorage
+        const token = localStorage.getItem('token') || localStorage.getItem('jwt_token')
+        
+        if (token) {
+          // Verify token with backend
+          const apiUrl = process.env.NEXT_PUBLIC_API_URL || ''
+          try {
+            const response = await fetch(`${apiUrl}/api/auth/verify`, {
+              method: 'GET',
+              headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json',
+              },
+            })
+
+            if (response.ok) {
+              const data = await response.json()
+              if (data.user) {
+                setUser({
+                  id: data.user.id?.toString() || data.user.userId?.toString() || '',
+                  username: data.user.username,
+                  role: data.user.role?.toLowerCase() || 'registration',
+                  name: `${data.user.firstName || ''} ${data.user.lastName || ''}`.trim(),
+                  email: data.user.email,
+                  department: data.user.department || '',
+                })
+                setIsAuthenticated(true)
+              }
+            } else {
+              // Token invalid, clear it
+              localStorage.removeItem('token')
+              localStorage.removeItem('jwt_token')
+              localStorage.removeItem('auth_token')
+            }
+          } catch (error) {
+            // If verify endpoint doesn't exist, try to decode JWT token
+            try {
+              // Simple JWT decode (without verification for now)
+              const payload = JSON.parse(atob(token.split('.')[1]))
+              if (payload.user && payload.exp && payload.exp * 1000 > Date.now()) {
+                // Token not expired, use stored user data
+                setUser({
+                  id: payload.user.id?.toString() || '',
+                  username: payload.user.username,
+                  role: payload.user.roleName?.toLowerCase() || payload.user.role?.toLowerCase() || 'registration',
+                  name: `${payload.user.firstName || ''} ${payload.user.lastName || ''}`.trim(),
+                  email: payload.user.email,
+                  department: payload.user.department || '',
+                })
+                setIsAuthenticated(true)
+              } else {
+                // Token expired
+                localStorage.removeItem('token')
+                localStorage.removeItem('jwt_token')
+                localStorage.removeItem('auth_token')
+              }
+            } catch (decodeError) {
+              // Token decode failed, clear it
+              localStorage.removeItem('token')
+              localStorage.removeItem('jwt_token')
+              localStorage.removeItem('auth_token')
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Auth check failed:', error)
+        // Clear invalid tokens
+        localStorage.removeItem('token')
+        localStorage.removeItem('jwt_token')
+        localStorage.removeItem('auth_token')
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    checkAuth()
+  }, [])
 
   const login = async (username: string, password: string) => {
     try {
@@ -28,7 +115,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       
       // Try backend API login first
       try {
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/api/auth/login`, {
+        // Use relative URL in browser, or public URL if set
+        const apiUrl = typeof window !== 'undefined' 
+          ? (process.env.NEXT_PUBLIC_API_URL || '')
+          : (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001');
+        const response = await fetch(`${apiUrl}/api/auth/login`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

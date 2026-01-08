@@ -25,6 +25,11 @@ import { toast } from "@/components/ui/use-toast"
 import { vendorApi } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
+// Check if File is available (browser environment)
+const FileSchema = typeof File !== 'undefined' 
+  ? z.instanceof(File).optional()
+  : z.any().optional()
+
 const documentFormSchema = z.object({
   documentName: z.string().min(2, {
     message: "Document name must be at least 2 characters.",
@@ -35,7 +40,7 @@ const documentFormSchema = z.object({
   }),
   expiryDate: z.date().optional(),
   notes: z.string().optional(),
-  file: z.instanceof(File).optional(),
+  file: FileSchema,
 })
 
 type DocumentFormValues = z.infer<typeof documentFormSchema>

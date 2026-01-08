@@ -153,36 +153,59 @@ router.post('/', async (req, res) => {
             priorityLevel = 4;
         }
 
-        // Generate triage number with proper locking to avoid race conditions
-        // Use SELECT FOR UPDATE to lock rows and prevent concurrent access
-        const [maxResult] = await connection.execute(
-            `SELECT MAX(CAST(SUBSTRING(triageNumber, 5) AS UNSIGNED)) as maxNum 
-             FROM triage_assessments 
-             WHERE DATE(triageDate) = CURDATE() AND triageNumber LIKE 'TRI-%'
-             FOR UPDATE`
-        );
-        let nextNum = (maxResult[0]?.maxNum || 0) + 1;
-        let triageNumber = `TRI-${String(nextNum).padStart(6, '0')}`;
-        
-        // Double-check the number doesn't exist (handle edge cases)
-        let attempts = 0;
-        while (attempts < 10) {
-            const [existing] = await connection.execute(
-                'SELECT triageId FROM triage_assessments WHERE triageNumber = ? FOR UPDATE',
-                [triageNumber]
-            );
-            if (existing.length === 0) {
-                break; // Number is available
-            }
-            // Number exists, try next one
-            nextNum++;
-            triageNumber = `TRI-${String(nextNum).padStart(6, '0')}`;
-            attempts++;
-        }
-
-        // Insert triage assessment with duplicate key error handling
+        // Generate triage number using sequence table with proper locking
+        // Since triageNumber has a GLOBAL UNIQUE constraint, we need to find the next available number
+        // that doesn't exist in the entire table, not just for today
         let result;
+        let triageNumber;
+        const today = new Date().toISOString().split('T')[0];
+        
         try {
+            // Get the maximum triage number across ALL dates (due to global UNIQUE constraint)
+            const [maxResult] = await connection.execute(
+                `SELECT MAX(CAST(SUBSTRING(triageNumber, 5) AS UNSIGNED)) as maxNum 
+                 FROM triage_assessments 
+                 WHERE triageNumber LIKE 'TRI-%'`
+            );
+            
+            let nextNum = (maxResult[0]?.maxNum || 0) + 1;
+            triageNumber = `TRI-${String(nextNum).padStart(6, '0')}`;
+            
+            // Check if this number already exists (safety check)
+            let attempts = 0;
+            while (attempts < 100) {
+                const [existing] = await connection.execute(
+                    'SELECT triageId FROM triage_assessments WHERE triageNumber = ?',
+                    [triageNumber]
+                );
+                
+                if (existing.length === 0) {
+                    break; // Number is available
+                }
+                // Number exists, try next one
+                nextNum++;
+                triageNumber = `TRI-${String(nextNum).padStart(6, '0')}`;
+                attempts++;
+            }
+            
+            if (attempts >= 100) {
+                await connection.rollback();
+                connection.release();
+                return res.status(500).json({ 
+                    message: 'Failed to generate unique triage number',
+                    error: 'Please try again.'
+                });
+            }
+            
+            // Update sequence table for today (for tracking purposes)
+            await connection.execute(
+                `INSERT INTO triage_sequence (date_key, last_number) 
+                 VALUES (?, ?)
+                 ON DUPLICATE KEY UPDATE last_number = ?`,
+                [today, nextNum, nextNum]
+            );
+            
+            // Insert triage assessment
             [result] = await connection.execute(
                 `INSERT INTO triage_assessments (
                     triageNumber, patientId, triageDate, chiefComplaint, triageCategory, 
@@ -201,34 +224,88 @@ router.post('/', async (req, res) => {
                     assignedToDepartment || null
                 ]
             );
+            
         } catch (insertError) {
-            // Handle duplicate key error - retry with next number
+            // Handle duplicate key error - find next available number
             if (insertError.code === 'ER_DUP_ENTRY' || insertError.errno === 1062) {
-                nextNum++;
-                triageNumber = `TRI-${String(nextNum).padStart(6, '0')}`;
-                [result] = await connection.execute(
-                    `INSERT INTO triage_assessments (
-                        triageNumber, patientId, triageDate, chiefComplaint, triageCategory, 
-                        priorityLevel, status, notes, triagedBy, assignedToDoctorId, assignedToDepartment
-                    )
-                    VALUES (?, ?, NOW(), ?, ?, ?, 'pending', ?, ?, ?, ?)`,
-                    [
-                        triageNumber,
-                        patientId,
-                        chiefComplaint,
-                        triageCategory,
-                        priorityLevel,
-                        notes || null,
-                        triagedByUserId,
-                        assignedToDoctorId || null,
-                        assignedToDepartment || null
-                    ]
-                );
+                try {
+                    // Get max number and find next available
+                    const [maxResult] = await connection.execute(
+                        `SELECT MAX(CAST(SUBSTRING(triageNumber, 5) AS UNSIGNED)) as maxNum 
+                         FROM triage_assessments 
+                         WHERE triageNumber LIKE 'TRI-%'`
+                    );
+                    
+                    let retryNum = (maxResult[0]?.maxNum || 0) + 1;
+                    let foundAvailable = false;
+                    let retryAttempts = 0;
+                    
+                    while (!foundAvailable && retryAttempts < 100) {
+                        const testNumber = `TRI-${String(retryNum).padStart(6, '0')}`;
+                        const [existing] = await connection.execute(
+                            'SELECT triageId FROM triage_assessments WHERE triageNumber = ?',
+                            [testNumber]
+                        );
+                        
+                        if (existing.length === 0) {
+                            triageNumber = testNumber;
+                            foundAvailable = true;
+                        } else {
+                            retryNum++;
+                            retryAttempts++;
+                        }
+                    }
+                    
+                    if (!foundAvailable) {
+                        await connection.rollback();
+                        connection.release();
+                        return res.status(500).json({ 
+                            message: 'Failed to generate unique triage number',
+                            error: 'Please try again.'
+                        });
+                    }
+                    
+                    // Update sequence
+                    await connection.execute(
+                        `INSERT INTO triage_sequence (date_key, last_number) 
+                         VALUES (?, ?)
+                         ON DUPLICATE KEY UPDATE last_number = ?`,
+                        [today, retryNum, retryNum]
+                    );
+                    
+                    // Retry insert
+                    [result] = await connection.execute(
+                        `INSERT INTO triage_assessments (
+                            triageNumber, patientId, triageDate, chiefComplaint, triageCategory, 
+                            priorityLevel, status, notes, triagedBy, assignedToDoctorId, assignedToDepartment
+                        )
+                        VALUES (?, ?, NOW(), ?, ?, ?, 'pending', ?, ?, ?, ?)`,
+                        [
+                            triageNumber,
+                            patientId,
+                            chiefComplaint,
+                            triageCategory,
+                            priorityLevel,
+                            notes || null,
+                            triagedByUserId,
+                            assignedToDoctorId || null,
+                            assignedToDepartment || null
+                        ]
+                    );
+                } catch (retryError) {
+                    await connection.rollback();
+                    connection.release();
+                    console.error('Error retrying triage number generation:', retryError);
+                    return res.status(500).json({ 
+                        message: 'Failed to generate unique triage number',
+                        error: 'Please try again.'
+                    });
+                }
             } else {
-                throw insertError; // Re-throw if it's not a duplicate key error
+                throw insertError;
             }
         }
-
+        
         const triageId = result.insertId;
 
         // Insert vital signs

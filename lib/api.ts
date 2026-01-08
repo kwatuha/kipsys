@@ -1,6 +1,10 @@
 // API utility functions for making requests to the backend
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+// Use relative URLs when in browser (same origin), or use NEXT_PUBLIC_API_URL if set
+// This allows the API to work both in development and production behind nginx
+const API_BASE_URL = typeof window !== 'undefined' 
+  ? (process.env.NEXT_PUBLIC_API_URL || '')  // Empty string = relative URLs (same origin)
+  : (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001');  // Server-side needs absolute URL
 
 interface ApiOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
@@ -769,11 +773,16 @@ export const vendorApi = {
   getDocuments: (vendorId: string) =>
     apiRequest<any[]>(`/api/procurement/vendors/${vendorId}/documents`),
   
-  createDocument: (vendorId: string, formData: FormData) =>
-    fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/api/procurement/vendors/${vendorId}/documents`, {
+  createDocument: (vendorId: string, formData: FormData) => {
+    // Use relative URL in browser, or public URL if set
+    const baseUrl = typeof window !== 'undefined' 
+      ? (process.env.NEXT_PUBLIC_API_URL || '')
+      : (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001');
+    return fetch(`${baseUrl}/api/procurement/vendors/${vendorId}/documents`, {
       method: 'POST',
       body: formData,
-    }).then(res => res.ok ? res.json() : Promise.reject(res)),
+    }).then(res => res.ok ? res.json() : Promise.reject(res));
+  },
   
   updateDocument: (vendorId: string, documentId: string, data: any) =>
     apiRequest<any>(`/api/procurement/vendors/${vendorId}/documents/${documentId}`, { method: 'PUT', body: data }),
@@ -781,8 +790,13 @@ export const vendorApi = {
   deleteDocument: (vendorId: string, documentId: string) =>
     apiRequest<any>(`/api/procurement/vendors/${vendorId}/documents/${documentId}`, { method: 'DELETE' }),
   
-  downloadDocument: (vendorId: string, documentId: string) =>
-    `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/api/procurement/vendors/${vendorId}/documents/${documentId}/download`,
+  downloadDocument: (vendorId: string, documentId: string) => {
+    // Use relative URL in browser, or public URL if set
+    const baseUrl = typeof window !== 'undefined' 
+      ? (process.env.NEXT_PUBLIC_API_URL || '')
+      : (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001');
+    return `${baseUrl}/api/procurement/vendors/${vendorId}/documents/${documentId}/download`;
+  },
   
   // Vendor Issues
   getIssues: (vendorId: string, status?: string, priority?: string) =>

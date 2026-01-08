@@ -6,6 +6,7 @@ import { ThemeProvider } from "@/components/theme-provider"
 import { AuthProvider } from "@/lib/auth/auth-context"
 import { NavigationProvider } from "@/lib/navigation-context"
 import { MainLayoutContent } from "@/components/main-layout-content"
+import { ProtectedRoute } from "@/components/protected-route"
 
 const inter = Inter({ subsets: ["latin"] })
 
@@ -30,9 +31,11 @@ export default function MainLayout({
           disableTransitionOnChange
         >
           <AuthProvider>
-            <NavigationProvider>
-              <MainLayoutContent>{children}</MainLayoutContent>
-            </NavigationProvider>
+            <ProtectedRoute>
+              <NavigationProvider>
+                <MainLayoutContent>{children}</MainLayoutContent>
+              </NavigationProvider>
+            </ProtectedRoute>
           </AuthProvider>
         </ThemeProvider>
       </body>

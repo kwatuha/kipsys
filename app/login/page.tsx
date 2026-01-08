@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useAuth } from "@/lib/auth/auth-context"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
@@ -10,11 +10,18 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { AlertCircle, Loader2, Heart } from "lucide-react"
 
 export default function LoginPage() {
-  const { login, isLoading } = useAuth()
+  const { login, isLoading, isAuthenticated } = useAuth()
   const router = useRouter()
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState("")
+
+  // Redirect if already authenticated
+  useEffect(() => {
+    if (isAuthenticated) {
+      router.push("/")
+    }
+  }, [isAuthenticated, router])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
