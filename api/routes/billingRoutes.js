@@ -10,7 +10,7 @@ const pool = require('../config/db');
  */
 router.get('/charges', async (req, res) => {
     try {
-        const { status, category, department, search } = req.query;
+        const { status, category, department, search, chargeType } = req.query;
         let query = 'SELECT * FROM service_charges WHERE 1=1';
         const params = [];
 
@@ -30,6 +30,11 @@ router.get('/charges', async (req, res) => {
         if (department) {
             query += ' AND department = ?';
             params.push(department);
+        }
+
+        if (chargeType) {
+            query += ' AND chargeType = ?';
+            params.push(chargeType);
         }
 
         if (search) {
@@ -74,7 +79,7 @@ router.get('/charges/:id', async (req, res) => {
  */
 router.post('/charges', async (req, res) => {
     try {
-        const { chargeCode, name, category, department, cost, description, status = 'Active' } = req.body;
+        const { chargeCode, name, category, department, cost, description, status = 'Active', chargeType = 'Service', duration, unit } = req.body;
         
         if (!name || !cost) {
             return res.status(400).json({ error: 'Name and cost are required' });
@@ -104,8 +109,8 @@ router.post('/charges', async (req, res) => {
         }
 
         const [result] = await pool.query(
-            'INSERT INTO service_charges (chargeCode, name, category, department, cost, description, status) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            [finalChargeCode, name, category || null, department || null, cost, description || null, status]
+            'INSERT INTO service_charges (chargeCode, name, category, department, cost, description, status, chargeType, duration, unit) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [finalChargeCode, name, category || null, department || null, cost, description || null, status, chargeType, duration || null, unit || null]
         );
         
         const [newCharge] = await pool.query('SELECT * FROM service_charges WHERE chargeId = ?', [result.insertId]);
@@ -126,7 +131,7 @@ router.post('/charges', async (req, res) => {
 router.put('/charges/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        const { chargeCode, name, category, department, cost, description, status } = req.body;
+        const { chargeCode, name, category, department, cost, description, status, chargeType, duration, unit } = req.body;
 
         // Check if charge exists
         const [existing] = await pool.query('SELECT chargeId FROM service_charges WHERE chargeId = ?', [id]);
@@ -156,6 +161,9 @@ router.put('/charges/:id', async (req, res) => {
         if (cost !== undefined) { updates.push('cost = ?'); values.push(cost); }
         if (description !== undefined) { updates.push('description = ?'); values.push(description); }
         if (status !== undefined) { updates.push('status = ?'); values.push(status); }
+        if (chargeType !== undefined) { updates.push('chargeType = ?'); values.push(chargeType); }
+        if (duration !== undefined) { updates.push('duration = ?'); values.push(duration); }
+        if (unit !== undefined) { updates.push('unit = ?'); values.push(unit); }
 
         if (updates.length === 0) {
             return res.status(400).json({ error: 'No fields to update' });

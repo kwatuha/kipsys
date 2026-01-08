@@ -933,12 +933,13 @@ export const analyticsApi = {
 
 // Service Charges API
 export const serviceChargeApi = {
-  getAll: (status?: string, category?: string, department?: string, search?: string) => {
+  getAll: (status?: string, category?: string, department?: string, search?: string, chargeType?: string) => {
     const params = new URLSearchParams();
     if (status) params.append('status', status);
     if (category) params.append('category', category);
     if (department) params.append('department', department);
     if (search) params.append('search', search);
+    if (chargeType) params.append('chargeType', chargeType);
     return apiRequest<any[]>(`/api/billing/charges?${params.toString()}`);
   },
   
@@ -1357,6 +1358,42 @@ export const diagnosesApi = {
   
   delete: (id: string) =>
     apiRequest<any>(`/api/diagnoses/${id}`, { method: 'DELETE' }),
+};
+
+// Procedures API
+export const proceduresApi = {
+  getAll: (search?: string, category?: string, isActive?: boolean, chargeId?: string) => {
+    const params = new URLSearchParams();
+    if (search) params.append('search', search);
+    if (category) params.append('category', category);
+    if (isActive !== undefined) params.append('isActive', isActive.toString());
+    if (chargeId) params.append('chargeId', chargeId);
+    return apiRequest<any[]>(`/api/procedures?${params.toString()}`);
+  },
+  
+  getById: (id: string) =>
+    apiRequest<any>(`/api/procedures/${id}`),
+  
+  create: (data: any) =>
+    apiRequest<any>('/api/procedures', { method: 'POST', body: data }),
+  
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/procedures/${id}`, { method: 'PUT', body: data }),
+  
+  delete: (id: string) =>
+    apiRequest<any>(`/api/procedures/${id}`, { method: 'DELETE' }),
+  
+  // Patient procedures
+  getPatientProcedures: (patientId: string, date?: string, procedureId?: string) => {
+    const params = new URLSearchParams();
+    if (date) params.append('date', date);
+    if (procedureId) params.append('procedureId', procedureId);
+    const queryString = params.toString();
+    return apiRequest<any[]>(`/api/procedures/patient/${patientId}${queryString ? `?${queryString}` : ''}`);
+  },
+  
+  createPatientProcedure: (data: any) =>
+    apiRequest<any>('/api/procedures/patient', { method: 'POST', body: data }),
 };
 
 // User API

@@ -50,6 +50,7 @@ const insuranceRoutes = require('./routes/insuranceRoutes');
 const revenueShareRoutes = require('./routes/revenueShareRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const diagnosesRoutes = require('./routes/diagnosesRoutes');
+const proceduresRoutes = require('./routes/proceduresRoutes');
 
 const authenticate = require('./middleware/authenticate');
 
@@ -139,6 +140,7 @@ app.use('/api/clinical-services', clinicalServicesRoutes);
 app.use('/api/doctors', doctorsRoutes);
 app.use('/api/medical-records', medicalRecordsRoutes);
 app.use('/api/diagnoses', diagnosesRoutes);
+app.use('/api/procedures', proceduresRoutes);
 app.use('/api/ledger', ledgerRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/procurement/purchase-orders', purchaseOrderRoutes);

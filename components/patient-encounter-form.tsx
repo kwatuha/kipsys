@@ -19,7 +19,8 @@ import {
   CheckCircle2,
   Clock,
   Eye,
-  Activity
+  Activity,
+  Stethoscope
 } from "lucide-react"
 import { format } from "date-fns"
 
@@ -67,7 +68,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { patientApi, doctorsApi, pharmacyApi, laboratoryApi, medicalRecordsApi, billingApi } from "@/lib/api"
+import { patientApi, doctorsApi, pharmacyApi, laboratoryApi, medicalRecordsApi, billingApi, proceduresApi, serviceChargeApi } from "@/lib/api"
 
 // Schema definitions
 const medicationSchema = z.object({
@@ -95,6 +96,24 @@ const labTestSchema = z.object({
   clinicalIndication: z.string().optional(),
 })
 
+const procedureSchema = z.object({
+  procedureId: z.string({
+    required_error: "Please select a procedure.",
+  }),
+  notes: z.string().optional(),
+  complications: z.string().optional(),
+})
+
+const orderSchema = z.object({
+  chargeId: z.string({
+    required_error: "Please select a consumable/order.",
+  }),
+  quantity: z.coerce.number().min(1, {
+    message: "Quantity must be at least 1.",
+  }),
+  notes: z.string().optional(),
+})
+
 const encounterFormSchema = z.object({
   patientId: z.string({
     required_error: "Please select a patient.",
@@ -116,10 +135,14 @@ const encounterFormSchema = z.object({
   notes: z.string().optional(),
   medications: z.array(medicationSchema).optional(),
   labTests: z.array(labTestSchema).optional(),
+  procedures: z.array(procedureSchema).optional(),
+  orders: z.array(orderSchema).optional(),
 })
 
 type MedicationValues = z.infer<typeof medicationSchema>
 type LabTestValues = z.infer<typeof labTestSchema>
+type ProcedureValues = z.infer<typeof procedureSchema>
+type OrderValues = z.infer<typeof orderSchema>
 type EncounterFormValues = z.infer<typeof encounterFormSchema>
 
 const defaultMedication: MedicationValues = {
@@ -135,6 +158,18 @@ const defaultLabTest: LabTestValues = {
   testTypeId: "",
   priority: "routine",
   clinicalIndication: "",
+}
+
+const defaultProcedure: ProcedureValues = {
+  procedureId: "",
+  notes: "",
+  complications: "",
+}
+
+const defaultOrder: OrderValues = {
+  chargeId: "",
+  quantity: 1,
+  notes: "",
 }
 
 interface PatientEncounterFormProps {
@@ -165,6 +200,16 @@ export function PatientEncounterForm({
   const [showCloseConfirm, setShowCloseConfirm] = useState(false)
   const [activeTab, setActiveTab] = useState("encounter")
   const [prescriptionSheetOpen, setPrescriptionSheetOpen] = useState(false)
+  const [proceduresSheetOpen, setProceduresSheetOpen] = useState(false)
+  const [ordersSheetOpen, setOrdersSheetOpen] = useState(false)
+  const [procedures, setProcedures] = useState<any[]>([])
+  const [consumables, setConsumables] = useState<any[]>([])
+  const [addProcedureDialogOpen, setAddProcedureDialogOpen] = useState(false)
+  const [addOrderDialogOpen, setAddOrderDialogOpen] = useState(false)
+  const [editingProcedureIndex, setEditingProcedureIndex] = useState<number | null>(null)
+  const [editingOrderIndex, setEditingOrderIndex] = useState<number | null>(null)
+  const [tempProcedure, setTempProcedure] = useState<ProcedureValues>(defaultProcedure)
+  const [tempOrder, setTempOrder] = useState<OrderValues>(defaultOrder)
   const [labTestsSheetOpen, setLabTestsSheetOpen] = useState(false)
   const [symptomsSheetOpen, setSymptomsSheetOpen] = useState(false)
   const [diagnosisSheetOpen, setDiagnosisSheetOpen] = useState(false)
@@ -204,6 +249,8 @@ export function PatientEncounterForm({
       notes: "",
       medications: [],
       labTests: [],
+      procedures: [],
+      orders: [],
     },
   })
 
@@ -215,6 +262,16 @@ export function PatientEncounterForm({
   const { fields: labTestFields, append: appendLabTest, remove: removeLabTest } = useFieldArray({
     control: form.control,
     name: "labTests",
+  })
+
+  const { fields: procedureFields, append: appendProcedure, remove: removeProcedure } = useFieldArray({
+    control: form.control,
+    name: "procedures",
+  })
+
+  const { fields: orderFields, append: appendOrder, remove: removeOrder } = useFieldArray({
+    control: form.control,
+    name: "orders",
   })
 
   const patientId = form.watch("patientId")
@@ -232,6 +289,18 @@ export function PatientEncounterForm({
         if (savedDraft.medications) {
           savedDraft.medications = savedDraft.medications.filter((med: any) => 
             med?.medicationId && med.medicationId.trim() !== ""
+          )
+        }
+        // Clean up empty procedure entries
+        if (savedDraft.procedures) {
+          savedDraft.procedures = savedDraft.procedures.filter((proc: any) => 
+            proc?.procedureId && proc.procedureId.trim() !== ""
+          )
+        }
+        // Clean up empty order entries
+        if (savedDraft.orders) {
+          savedDraft.orders = savedDraft.orders.filter((order: any) => 
+            order?.chargeId && order.chargeId.trim() !== ""
           )
         }
         form.reset(savedDraft)
@@ -252,6 +321,8 @@ export function PatientEncounterForm({
           notes: "",
           medications: [],
           labTests: [],
+          procedures: [],
+          orders: [],
         })
         setHasUnsavedChanges(false)
       }
@@ -268,7 +339,9 @@ export function PatientEncounterForm({
                       value.symptoms || value.historyOfPresentIllness || value.physicalExamination ||
                       value.diagnosis || value.treatment || value.notes ||
                       (value.medications && value.medications.length > 0) ||
-                      (value.labTests && value.labTests.length > 0)
+                      (value.labTests && value.labTests.length > 0) ||
+                      (value.procedures && value.procedures.length > 0) ||
+                      (value.orders && value.orders.length > 0)
       
       if (hasData) {
         saveDraftToStorage(value as any)
@@ -428,14 +501,18 @@ export function PatientEncounterForm({
     try {
       setLoading(true)
       setError(null)
-      const [doctorsData, testTypesData, medicationsData] = await Promise.all([
+      const [doctorsData, testTypesData, medicationsData, proceduresData, consumablesData] = await Promise.all([
         doctorsApi.getAll(),
         laboratoryApi.getTestTypes(),
         pharmacyApi.getMedications(undefined, 1, 1000), // Get all medications for lookup
+        proceduresApi.getAll(undefined, undefined, true), // Get active procedures
+        serviceChargeApi.getAll(undefined, undefined, undefined, undefined, 'Consumable'), // Get consumables
       ])
       setDoctors(doctorsData)
       setTestTypes(testTypesData)
       setMedications(medicationsData)
+      setProcedures(proceduresData || [])
+      setConsumables(consumablesData || [])
       await loadInventoryData()
     } catch (err: any) {
       setError(err.message || 'Failed to load data')
@@ -691,6 +768,86 @@ export function PatientEncounterForm({
             status: 'pending',
             items: invoiceItems,
             notes: `Lab tests ordered during encounter on ${format(data.encounterDate, 'PPP')}. Order numbers: ${createdOrders.map((o: any) => o.order.orderNumber || o.order.orderId).join(', ')}`,
+          }
+
+          await billingApi.createInvoice(invoiceData)
+        }
+      }
+
+      // 4. Create patient procedures if any
+      if (data.procedures && data.procedures.length > 0) {
+        const procedurePromises = data.procedures.map((procedure: any) => {
+          const procedureData = {
+            patientId: parseInt(data.patientId),
+            procedureId: parseInt(procedure.procedureId),
+            procedureDate: format(data.encounterDate, 'yyyy-MM-dd'),
+            performedBy: parseInt(data.doctorId),
+            notes: procedure.notes || null,
+            complications: procedure.complications || null,
+          }
+          return proceduresApi.createPatientProcedure(procedureData)
+        })
+        await Promise.all(procedurePromises)
+
+        // Create invoice items for procedures
+        const procedureInvoiceItems = data.procedures.map((procedure: any) => {
+          const proc = procedures.find((p: any) => p.procedureId?.toString() === procedure.procedureId)
+          const procedureCost = proc?.cost ? parseFloat(proc.cost) : (proc?.chargeCost ? parseFloat(proc.chargeCost) : 0)
+          const procedureName = proc?.procedureName || 'Procedure'
+          
+          return {
+            description: procedureName,
+            quantity: 1,
+            unitPrice: procedureCost,
+            totalPrice: procedureCost,
+            chargeId: proc?.chargeId || null,
+          }
+        }).filter(item => item.unitPrice > 0)
+
+        if (procedureInvoiceItems.length > 0) {
+          const totalAmount = procedureInvoiceItems.reduce((sum: number, item: any) => sum + item.totalPrice, 0)
+          
+          const invoiceData = {
+            patientId: parseInt(data.patientId),
+            invoiceDate: format(data.encounterDate, 'yyyy-MM-dd'),
+            dueDate: format(new Date(data.encounterDate.getTime() + 30 * 24 * 60 * 60 * 1000), 'yyyy-MM-dd'),
+            status: 'pending',
+            items: procedureInvoiceItems,
+            notes: `Procedures performed during encounter on ${format(data.encounterDate, 'PPP')}.`,
+          }
+
+          await billingApi.createInvoice(invoiceData)
+        }
+      }
+
+      // 5. Create orders/consumables invoice if any
+      if (data.orders && data.orders.length > 0) {
+        const orderInvoiceItems = data.orders.map((order: any) => {
+          const consumable = consumables.find((c: any) => c.chargeId?.toString() === order.chargeId)
+          const unitPrice = consumable?.cost ? parseFloat(consumable.cost) : 0
+          const quantity = order.quantity || 1
+          const totalPrice = unitPrice * quantity
+          const itemName = consumable?.name || 'Consumable'
+          
+          return {
+            description: itemName,
+            quantity: quantity,
+            unitPrice: unitPrice,
+            totalPrice: totalPrice,
+            chargeId: consumable?.chargeId || null,
+          }
+        }).filter(item => item.unitPrice > 0)
+
+        if (orderInvoiceItems.length > 0) {
+          const totalAmount = orderInvoiceItems.reduce((sum: number, item: any) => sum + item.totalPrice, 0)
+          
+          const invoiceData = {
+            patientId: parseInt(data.patientId),
+            invoiceDate: format(data.encounterDate, 'yyyy-MM-dd'),
+            dueDate: format(new Date(data.encounterDate.getTime() + 30 * 24 * 60 * 60 * 1000), 'yyyy-MM-dd'),
+            status: 'pending',
+            items: orderInvoiceItems,
+            notes: `Consumables ordered during encounter on ${format(data.encounterDate, 'PPP')}.`,
           }
 
           await billingApi.createInvoice(invoiceData)
@@ -1253,6 +1410,14 @@ export function PatientEncounterForm({
                         <Pills className="h-4 w-4 mr-2" />
                         Prescription
                       </TabsTrigger>
+                      <TabsTrigger value="procedures" onClick={() => setProceduresSheetOpen(true)}>
+                        <Stethoscope className="h-4 w-4 mr-2" />
+                        Procedures
+                      </TabsTrigger>
+                      <TabsTrigger value="orders" onClick={() => setOrdersSheetOpen(true)}>
+                        <Package className="h-4 w-4 mr-2" />
+                        Orders
+                      </TabsTrigger>
                       <TabsTrigger value="history">
                         <History className="h-4 w-4 mr-2" />
                         History
@@ -1595,6 +1760,24 @@ export function PatientEncounterForm({
                       <div className="text-center text-muted-foreground">
                         <Pills className="h-12 w-12 mx-auto mb-4 opacity-50" />
                         <p className="text-sm">Click "Prescription" tab to open medication prescribing</p>
+                      </div>
+                    </div>
+                  </TabsContent>
+
+                  <TabsContent value="procedures" className="flex-1 overflow-hidden min-h-0">
+                    <div className="flex items-center justify-center h-full">
+                      <div className="text-center text-muted-foreground">
+                        <Stethoscope className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                        <p className="text-sm">Click "Procedures" tab to open procedure recording</p>
+                      </div>
+                    </div>
+                  </TabsContent>
+
+                  <TabsContent value="orders" className="flex-1 overflow-hidden min-h-0">
+                    <div className="flex items-center justify-center h-full">
+                      <div className="text-center text-muted-foreground">
+                        <Package className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                        <p className="text-sm">Click "Orders" tab to open consumables ordering</p>
                       </div>
                     </div>
                   </TabsContent>
@@ -2321,6 +2504,273 @@ export function PatientEncounterForm({
         </SheetContent>
       </Sheet>
 
+      {/* Procedures Sheet */}
+      <Sheet open={proceduresSheetOpen} onOpenChange={setProceduresSheetOpen}>
+        <SheetContent side="right" className="w-full sm:w-[90vw] sm:max-w-5xl p-0 flex flex-col overflow-hidden">
+          <SheetHeader className="px-6 pt-6 pb-4 border-b flex-shrink-0">
+            <SheetTitle className="flex items-center gap-2">
+              <Stethoscope className="h-5 w-5" />
+              Record Procedures
+            </SheetTitle>
+            <SheetDescription>
+              Record medical procedures performed during this patient encounter
+            </SheetDescription>
+          </SheetHeader>
+          <ScrollArea className="flex-1 px-6">
+            <div className="space-y-4 mt-4 pb-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-md font-medium">Procedures</h3>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setEditingProcedureIndex(null)
+                    setTempProcedure(defaultProcedure)
+                    setAddProcedureDialogOpen(true)
+                  }}
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Procedure
+                </Button>
+              </div>
+              {procedureFields.length === 0 ? (
+                <Card>
+                  <CardContent className="py-8 text-center text-muted-foreground">
+                    No procedures recorded. Click "Add Procedure" to record a procedure.
+                  </CardContent>
+                </Card>
+              ) : (
+                <div className="rounded-md border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Procedure</TableHead>
+                        <TableHead>Notes</TableHead>
+                        <TableHead>Complications</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {procedureFields.map((field, index) => {
+                        const procedureId = form.watch(`procedures.${index}.procedureId`)
+                        const procedure = procedures.find((p: any) => p.procedureId?.toString() === procedureId)
+                        const procedureName = procedure?.procedureName || "Unknown Procedure"
+                        return (
+                          <TableRow key={field.id}>
+                            <TableCell className="font-medium">{procedureName}</TableCell>
+                            <TableCell>{form.watch(`procedures.${index}.notes`) || "-"}</TableCell>
+                            <TableCell>{form.watch(`procedures.${index}.complications`) || "-"}</TableCell>
+                            <TableCell className="text-right">
+                              <div className="flex items-center justify-end gap-2">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    setEditingProcedureIndex(index)
+                                    const procData = form.getValues(`procedures.${index}`)
+                                    setTempProcedure(procData || defaultProcedure)
+                                    setAddProcedureDialogOpen(true)
+                                  }}
+                                  className="h-8 w-8 p-0"
+                                >
+                                  <Eye className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => removeProcedure(index)}
+                                  className="h-8 w-8 p-0 text-destructive hover:text-destructive"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </div>
+          </ScrollArea>
+          <SheetFooter className="px-6 py-4 border-t bg-background flex-shrink-0">
+            <div className="flex items-center justify-between w-full">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setProceduresSheetOpen(false)}
+              >
+                Close
+              </Button>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground">
+                  Procedures will be saved with the encounter
+                </span>
+                <Button
+                  type="button"
+                  onClick={() => {
+                    setProceduresSheetOpen(false)
+                    form.handleSubmit(onSubmit)()
+                  }}
+                  disabled={isSubmitting}
+                >
+                  {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Save Encounter
+                </Button>
+              </div>
+            </div>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
+
+      {/* Orders/Consumables Sheet */}
+      <Sheet open={ordersSheetOpen} onOpenChange={setOrdersSheetOpen}>
+        <SheetContent side="right" className="w-full sm:w-[90vw] sm:max-w-5xl p-0 flex flex-col overflow-hidden">
+          <SheetHeader className="px-6 pt-6 pb-4 border-b flex-shrink-0">
+            <SheetTitle className="flex items-center gap-2">
+              <Package className="h-5 w-5" />
+              Order Consumables
+            </SheetTitle>
+            <SheetDescription>
+              Order medical consumables and supplies for this patient encounter
+            </SheetDescription>
+          </SheetHeader>
+          <ScrollArea className="flex-1 px-6">
+            <div className="space-y-4 mt-4 pb-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-md font-medium">Orders</h3>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setEditingOrderIndex(null)
+                    setTempOrder(defaultOrder)
+                    setAddOrderDialogOpen(true)
+                  }}
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Order
+                </Button>
+              </div>
+              {orderFields.length === 0 ? (
+                <Card>
+                  <CardContent className="py-8 text-center text-muted-foreground">
+                    No orders placed. Click "Add Order" to order consumables.
+                  </CardContent>
+                </Card>
+              ) : (
+                <div className="rounded-md border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Item</TableHead>
+                        <TableHead>Quantity</TableHead>
+                        <TableHead>Unit Price</TableHead>
+                        <TableHead className="text-right">Total</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {orderFields.map((field, index) => {
+                        const chargeId = form.watch(`orders.${index}.chargeId`)
+                        const quantity = form.watch(`orders.${index}.quantity`) || 1
+                        const consumable = consumables.find((c: any) => c.chargeId?.toString() === chargeId)
+                        const itemName = consumable?.name || "Unknown Item"
+                        const unitPrice = consumable?.cost ? parseFloat(consumable.cost) : 0
+                        const total = unitPrice * quantity
+                        return (
+                          <TableRow key={field.id}>
+                            <TableCell className="font-medium">{itemName}</TableCell>
+                            <TableCell>{quantity}</TableCell>
+                            <TableCell>KES {unitPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
+                            <TableCell className="text-right font-medium">
+                              KES {total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <div className="flex items-center justify-end gap-2">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    setEditingOrderIndex(index)
+                                    const orderData = form.getValues(`orders.${index}`)
+                                    setTempOrder(orderData || defaultOrder)
+                                    setAddOrderDialogOpen(true)
+                                  }}
+                                  className="h-8 w-8 p-0"
+                                >
+                                  <Eye className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => removeOrder(index)}
+                                  className="h-8 w-8 p-0 text-destructive hover:text-destructive"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+              {orderFields.length > 0 && (
+                <div className="flex justify-end items-center gap-4 pt-2 border-t">
+                  <div className="text-sm text-muted-foreground">Total Cost:</div>
+                  <div className="text-lg font-semibold">
+                    KES {orderFields.reduce((sum, field, index) => {
+                      const chargeId = form.watch(`orders.${index}.chargeId`)
+                      const quantity = form.watch(`orders.${index}.quantity`) || 1
+                      const consumable = consumables.find((c: any) => c.chargeId?.toString() === chargeId)
+                      const unitPrice = consumable?.cost ? parseFloat(consumable.cost) : 0
+                      return sum + (unitPrice * quantity)
+                    }, 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </div>
+                </div>
+              )}
+            </div>
+          </ScrollArea>
+          <SheetFooter className="px-6 py-4 border-t bg-background flex-shrink-0">
+            <div className="flex items-center justify-between w-full">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setOrdersSheetOpen(false)}
+              >
+                Close
+              </Button>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground">
+                  Orders will be saved with the encounter
+                </span>
+                <Button
+                  type="button"
+                  onClick={() => {
+                    setOrdersSheetOpen(false)
+                    form.handleSubmit(onSubmit)()
+                  }}
+                  disabled={isSubmitting}
+                >
+                  {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Save Encounter
+                </Button>
+              </div>
+            </div>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
+
       {/* History Sheet */}
       <Sheet open={historySheetOpen} onOpenChange={setHistorySheetOpen}>
         <SheetContent side="right" className="w-full sm:w-[90vw] sm:max-w-5xl p-0 flex flex-col overflow-hidden">
@@ -2735,6 +3185,204 @@ export function PatientEncounterForm({
                   {editingLabTestIndex !== null ? "Update" : "Add"} Test
                 </Button>
               </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add/Edit Procedure Dialog */}
+      <Dialog open={addProcedureDialogOpen} onOpenChange={setAddProcedureDialogOpen}>
+        <DialogContent className="sm:max-w-[600px] z-[121]" overlayClassName="z-[120]">
+          <DialogHeader>
+            <DialogTitle>
+              {editingProcedureIndex !== null ? "Edit Procedure" : "Add Procedure"}
+            </DialogTitle>
+            <DialogDescription>
+              {editingProcedureIndex !== null ? "Update the procedure details" : "Record a medical procedure performed during this encounter"}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                Procedure *
+              </label>
+              <Select 
+                onValueChange={(value) => setTempProcedure({ ...tempProcedure, procedureId: value })} 
+                value={tempProcedure.procedureId || ""}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select procedure" />
+                </SelectTrigger>
+                <SelectContent>
+                  {procedures.length > 0 ? (
+                    procedures.map((procedure: any) => (
+                      <SelectItem key={procedure.procedureId} value={procedure.procedureId.toString()}>
+                        {procedure.procedureName}
+                        {procedure.category && ` (${procedure.category})`}
+                        {procedure.cost && ` - KES ${parseFloat(procedure.cost).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                        {procedure.duration && ` - ${procedure.duration} min`}
+                      </SelectItem>
+                    ))
+                  ) : (
+                    <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                      No procedures available
+                    </div>
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                Notes
+              </label>
+              <Textarea 
+                placeholder="Procedure notes and details" 
+                value={tempProcedure.notes || ""}
+                onChange={(e) => setTempProcedure({ ...tempProcedure, notes: e.target.value })}
+              />
+              <p className="text-sm text-muted-foreground">Optional</p>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                Complications
+              </label>
+              <Textarea 
+                placeholder="Any complications or adverse events" 
+                value={tempProcedure.complications || ""}
+                onChange={(e) => setTempProcedure({ ...tempProcedure, complications: e.target.value })}
+              />
+              <p className="text-sm text-muted-foreground">Optional</p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setAddProcedureDialogOpen(false)
+                setEditingProcedureIndex(null)
+                setTempProcedure(defaultProcedure)
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={() => {
+                if (!tempProcedure.procedureId) {
+                  return
+                }
+                if (editingProcedureIndex !== null) {
+                  form.setValue(`procedures.${editingProcedureIndex}`, tempProcedure)
+                } else {
+                  appendProcedure(tempProcedure)
+                }
+                setAddProcedureDialogOpen(false)
+                setEditingProcedureIndex(null)
+                setTempProcedure(defaultProcedure)
+              }}
+              disabled={!tempProcedure.procedureId}
+            >
+              {editingProcedureIndex !== null ? "Update" : "Add"} Procedure
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add/Edit Order Dialog */}
+      <Dialog open={addOrderDialogOpen} onOpenChange={setAddOrderDialogOpen}>
+        <DialogContent className="sm:max-w-[600px] z-[121]" overlayClassName="z-[120]">
+          <DialogHeader>
+            <DialogTitle>
+              {editingOrderIndex !== null ? "Edit Order" : "Add Order"}
+            </DialogTitle>
+            <DialogDescription>
+              {editingOrderIndex !== null ? "Update the order details" : "Order medical consumables and supplies"}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                Consumable/Item *
+              </label>
+              <Select 
+                onValueChange={(value) => setTempOrder({ ...tempOrder, chargeId: value })} 
+                value={tempOrder.chargeId || ""}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select consumable" />
+                </SelectTrigger>
+                <SelectContent>
+                  {consumables.length > 0 ? (
+                    consumables.map((consumable: any) => (
+                      <SelectItem key={consumable.chargeId} value={consumable.chargeId.toString()}>
+                        {consumable.name}
+                        {consumable.unit && ` (${consumable.unit})`}
+                        {consumable.cost && ` - KES ${parseFloat(consumable.cost).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                      </SelectItem>
+                    ))
+                  ) : (
+                    <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                      No consumables available
+                    </div>
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                Quantity *
+              </label>
+              <Input
+                type="number"
+                min="1"
+                placeholder="Enter quantity"
+                value={tempOrder.quantity || 1}
+                onChange={(e) => setTempOrder({ ...tempOrder, quantity: parseInt(e.target.value) || 1 })}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                Notes
+              </label>
+              <Textarea 
+                placeholder="Additional notes about this order" 
+                value={tempOrder.notes || ""}
+                onChange={(e) => setTempOrder({ ...tempOrder, notes: e.target.value })}
+              />
+              <p className="text-sm text-muted-foreground">Optional</p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setAddOrderDialogOpen(false)
+                setEditingOrderIndex(null)
+                setTempOrder(defaultOrder)
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={() => {
+                if (!tempOrder.chargeId || !tempOrder.quantity || tempOrder.quantity < 1) {
+                  return
+                }
+                if (editingOrderIndex !== null) {
+                  form.setValue(`orders.${editingOrderIndex}`, tempOrder)
+                } else {
+                  appendOrder(tempOrder)
+                }
+                setAddOrderDialogOpen(false)
+                setEditingOrderIndex(null)
+                setTempOrder(defaultOrder)
+              }}
+              disabled={!tempOrder.chargeId || !tempOrder.quantity || tempOrder.quantity < 1}
+            >
+              {editingOrderIndex !== null ? "Update" : "Add"} Order
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
