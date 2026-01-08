@@ -1383,13 +1383,19 @@ export function PatientEncounterForm({
                   } else if (value === "history") {
                     setHistorySheetOpen(true)
                     setActiveTab("encounter") // Keep encounter tab active
+                  } else if (value === "procedures") {
+                    setProceduresSheetOpen(true)
+                    setActiveTab("encounter") // Keep encounter tab active
+                  } else if (value === "orders") {
+                    setOrdersSheetOpen(true)
+                    setActiveTab("encounter") // Keep encounter tab active
                   } else {
                     setActiveTab(value)
                   }
                 }} className="flex-1 flex flex-col overflow-hidden min-h-0">
                   {/* Sticky Tabs Navigation */}
                   <div className="px-6 py-3 border-b bg-background flex-shrink-0">
-                    <TabsList className="grid w-full grid-cols-6">
+                    <TabsList className="grid w-full grid-cols-8">
                       <TabsTrigger value="encounter">
                         <FileText className="h-4 w-4 mr-2" />
                         Encounter
@@ -1410,11 +1416,17 @@ export function PatientEncounterForm({
                         <Pills className="h-4 w-4 mr-2" />
                         Prescription
                       </TabsTrigger>
-                      <TabsTrigger value="procedures" onClick={() => setProceduresSheetOpen(true)}>
+                      <TabsTrigger value="procedures" onClick={() => {
+                        setProceduresSheetOpen(true)
+                        setActiveTab("encounter") // Keep encounter tab active
+                      }}>
                         <Stethoscope className="h-4 w-4 mr-2" />
                         Procedures
                       </TabsTrigger>
-                      <TabsTrigger value="orders" onClick={() => setOrdersSheetOpen(true)}>
+                      <TabsTrigger value="orders" onClick={() => {
+                        setOrdersSheetOpen(true)
+                        setActiveTab("encounter") // Keep encounter tab active
+                      }}>
                         <Package className="h-4 w-4 mr-2" />
                         Orders
                       </TabsTrigger>
