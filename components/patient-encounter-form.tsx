@@ -42,6 +42,7 @@ import { PatientCombobox } from "@/components/patient-combobox"
 import { MedicationCombobox } from "@/components/medication-combobox"
 import { DiagnosisCombobox } from "@/components/diagnosis-combobox"
 import { SymptomsAutocomplete } from "@/components/symptoms-autocomplete"
+import { ChiefComplaintCombobox } from "@/components/chief-complaint-combobox"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -303,7 +304,7 @@ export function PatientEncounterForm({
     }
   }, [patientId, open])
 
-  // Populate form with today's orders when patient data is loaded
+  // Populate form with today's encounter data when patient data is loaded
   useEffect(() => {
     if (!open || !patientId) return
     
@@ -313,6 +314,54 @@ export function PatientEncounterForm({
     const encounterDateStr = format(encounterDate, 'yyyy-MM-dd')
     const currentLabTests = form.getValues("labTests") || []
     const currentMedications = form.getValues("medications") || []
+    
+    // Get today's medical record (most recent one for this date)
+    const todayRecord = patientHistory.find((record: any) => {
+      const recordDateStr = format(new Date(record.visitDate), 'yyyy-MM-dd')
+      return recordDateStr === encounterDateStr
+    })
+
+    // Prepopulate Symptoms & History and Diagnosis & Treatment Plan from today's record
+    if (todayRecord) {
+      const currentValues = form.getValues()
+      const updates: any = {}
+      
+      // Only populate if fields are empty (to avoid overwriting user input)
+      if (!currentValues.chiefComplaint && todayRecord.chiefComplaint) {
+        updates.chiefComplaint = todayRecord.chiefComplaint
+      }
+      if (!currentValues.symptoms && todayRecord.symptoms) {
+        updates.symptoms = todayRecord.symptoms
+      }
+      if (!currentValues.historyOfPresentIllness && todayRecord.historyOfPresentIllness) {
+        updates.historyOfPresentIllness = todayRecord.historyOfPresentIllness
+      }
+      if (!currentValues.physicalExamination && todayRecord.physicalExamination) {
+        updates.physicalExamination = todayRecord.physicalExamination
+      }
+      if (!currentValues.diagnosis && todayRecord.diagnosis) {
+        updates.diagnosis = todayRecord.diagnosis
+      }
+      if (!currentValues.treatment && todayRecord.treatment) {
+        updates.treatment = todayRecord.treatment
+      }
+      if (!currentValues.notes && todayRecord.notes) {
+        updates.notes = todayRecord.notes
+      }
+      
+      // Apply updates if any
+      if (Object.keys(updates).length > 0) {
+        setTimeout(() => {
+          form.setValue("chiefComplaint", updates.chiefComplaint || currentValues.chiefComplaint || "")
+          form.setValue("symptoms", updates.symptoms || currentValues.symptoms || "")
+          form.setValue("historyOfPresentIllness", updates.historyOfPresentIllness || currentValues.historyOfPresentIllness || "")
+          form.setValue("physicalExamination", updates.physicalExamination || currentValues.physicalExamination || "")
+          form.setValue("diagnosis", updates.diagnosis || currentValues.diagnosis || "")
+          form.setValue("treatment", updates.treatment || currentValues.treatment || "")
+          form.setValue("notes", updates.notes || currentValues.notes || "")
+        }, 0)
+      }
+    }
 
     // Only populate if form arrays are empty (to avoid overwriting user input)
     if (currentLabTests.length === 0 && patientLabResults.length > 0) {
@@ -373,7 +422,7 @@ export function PatientEncounterForm({
         }
       }
     }
-  }, [patientLabResults, patientMedications, open, patientId, appendLabTest, appendMedication, form])
+  }, [patientLabResults, patientMedications, patientHistory, open, patientId, appendLabTest, appendMedication, form])
 
   const loadData = async () => {
     try {
@@ -1762,14 +1811,15 @@ export function PatientEncounterForm({
                       <FormItem>
                         <FormLabel className="text-base font-semibold">Chief Complaint *</FormLabel>
                         <FormControl>
-                          <Textarea 
-                            placeholder="Patient's main complaint or reason for visit (e.g., 'Headache for 3 days', 'Chest pain since morning')" 
-                            className="min-h-[80px] text-base"
-                            {...field} 
+                          <ChiefComplaintCombobox
+                            value={field.value || ""}
+                            onChange={field.onChange}
+                            placeholder="Patient's main complaint or reason for visit. Type to search ICD-10 symptoms (e.g., R51 Headache, R50.9 Fever)..."
+                            disabled={false}
                           />
                         </FormControl>
                         <FormDescription>
-                          The primary reason the patient is seeking medical attention
+                          The primary reason the patient is seeking medical attention. Use ICD-10 button to search symptoms.
                         </FormDescription>
                         <FormMessage />
                       </FormItem>

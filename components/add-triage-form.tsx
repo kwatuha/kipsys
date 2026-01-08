@@ -20,6 +20,7 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { PatientCombobox } from "@/components/patient-combobox"
+import { ChiefComplaintCombobox } from "@/components/chief-complaint-combobox"
 import { triageApi, doctorsApi } from "@/lib/api"
 import { toast } from "@/components/ui/use-toast"
 import { useAuth } from "@/lib/auth/auth-context"
@@ -245,8 +246,15 @@ export function AddTriageForm({
                 <FormItem>
                   <FormLabel>Chief Complaint</FormLabel>
                   <FormControl>
-                    <Textarea placeholder="Patient's main complaint or reason for visit" {...field} />
+                    <ChiefComplaintCombobox
+                      value={field.value || ""}
+                      onChange={field.onChange}
+                      placeholder="Patient's main complaint or reason for visit. Type to search ICD-10 symptoms..."
+                    />
                   </FormControl>
+                  <FormDescription>
+                    Use the ICD-10 button to search for symptoms and complaints from the ICD-10 database
+                  </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
