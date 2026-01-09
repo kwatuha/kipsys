@@ -17,3 +17,6 @@ CREATE INDEX idx_charge_type ON service_charges(chargeType);
 CREATE INDEX idx_procedure_charge ON procedures(chargeId);
 
 
+
+
+

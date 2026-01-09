@@ -21,9 +21,11 @@ import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { PatientCombobox } from "@/components/patient-combobox"
 import { ChiefComplaintCombobox } from "@/components/chief-complaint-combobox"
-import { triageApi, doctorsApi } from "@/lib/api"
+import { triageApi, doctorsApi, patientApi } from "@/lib/api"
 import { toast } from "@/components/ui/use-toast"
 import { useAuth } from "@/lib/auth/auth-context"
+import { useCriticalNotifications } from "@/lib/critical-notifications-context"
+import { checkAndNotifyCriticalVitals } from "@/lib/critical-vitals-utils"
 
 const triageFormSchema = z.object({
   patientId: z.string({
@@ -91,13 +93,55 @@ export function AddTriageForm({
   const [error, setError] = useState<string | null>(null)
   const [doctors, setDoctors] = useState<any[]>([])
   const [loadingDoctors, setLoadingDoctors] = useState(false)
+  const [patientName, setPatientName] = useState<string | undefined>(undefined)
   const isEditing = !!triage
   const { user } = useAuth()
+  const { addNotification } = useCriticalNotifications()
 
   const form = useForm<TriageFormValues>({
     resolver: zodResolver(triageFormSchema),
     defaultValues,
   })
+
+  // Watch vital signs to check for critical values
+  const watchedVitals = form.watch(['temperature', 'bloodPressure', 'heartRate', 'respiratoryRate', 'oxygenSaturation', 'patientId'])
+  
+  // Convert form values to vitals object for critical alert
+  const getVitalsFromForm = (): any => {
+    const temp = watchedVitals[0]
+    const bp = watchedVitals[1]
+    const hr = watchedVitals[2]
+    const rr = watchedVitals[3]
+    const spo2 = watchedVitals[4]
+    
+    const vitals: any = {}
+    
+    if (temp && !isNaN(parseFloat(temp))) {
+      vitals.temperature = parseFloat(temp)
+    }
+    
+    if (bp) {
+      const bpMatch = bp.match(/(\d+)\s*\/\s*(\d+)/)
+      if (bpMatch) {
+        vitals.systolicBP = parseInt(bpMatch[1])
+        vitals.diastolicBP = parseInt(bpMatch[2])
+      }
+    }
+    
+    if (hr && !isNaN(parseFloat(hr))) {
+      vitals.heartRate = parseFloat(hr)
+    }
+    
+    if (rr && !isNaN(parseFloat(rr))) {
+      vitals.respiratoryRate = parseFloat(rr)
+    }
+    
+    if (spo2 && !isNaN(parseFloat(spo2))) {
+      vitals.oxygenSaturation = parseFloat(spo2)
+    }
+    
+    return Object.keys(vitals).length > 0 ? vitals : null
+  }
 
   // Load doctors when form opens
   useEffect(() => {
@@ -105,6 +149,32 @@ export function AddTriageForm({
       loadDoctors()
     }
   }, [open])
+
+  // Removed: No longer checking critical values during typing
+  // Critical values are now checked only after form is saved
+
+  // Load patient name when patientId changes
+  useEffect(() => {
+    const patientId = watchedVitals[5]
+    if (patientId) {
+      loadPatientName(patientId)
+    } else {
+      setPatientName(undefined)
+    }
+  }, [watchedVitals[5]])
+
+  const loadPatientName = async (patientId: string) => {
+    try {
+      const patient = await patientApi.getById(patientId)
+      if (patient) {
+        const name = `${patient.firstName || ''} ${patient.lastName || ''}`.trim()
+        setPatientName(name || undefined)
+      }
+    } catch (err) {
+      console.error('Error loading patient name:', err)
+      setPatientName(undefined)
+    }
+  }
 
   const loadDoctors = async () => {
     try {
@@ -177,6 +247,17 @@ export function AddTriageForm({
           title: "Triage created",
           description: "Triage assessment has been created successfully.",
         })
+      }
+
+      // Check for critical values AFTER saving
+      const vitals = getVitalsFromForm()
+      if (vitals && data.patientId) {
+        await checkAndNotifyCriticalVitals(
+          vitals,
+          data.patientId,
+          patientName,
+          addNotification
+        )
       }
 
       form.reset()
@@ -454,6 +535,8 @@ export function AddTriageForm({
             </DialogFooter>
           </form>
         </Form>
+
+        {/* Critical alerts are now shown in the floating component after form is saved */}
       </DialogContent>
     </Dialog>
   )

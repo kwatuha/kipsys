@@ -69,6 +69,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { patientApi, doctorsApi, pharmacyApi, laboratoryApi, medicalRecordsApi, billingApi, proceduresApi, serviceChargeApi } from "@/lib/api"
+import { useCriticalNotifications } from "@/lib/critical-notifications-context"
+import { checkAndNotifyCriticalVitals } from "@/lib/critical-vitals-utils"
 
 // Schema definitions
 const medicationSchema = z.object({
@@ -231,6 +233,7 @@ export function PatientEncounterForm({
   const [todayVitals, setTodayVitals] = useState<any | null>(null)
   const [loadingPatientData, setLoadingPatientData] = useState(false)
   const [selectedDiagnoses, setSelectedDiagnoses] = useState<any[]>([])
+  const { addNotification } = useCriticalNotifications()
 
   const form = useForm<EncounterFormValues>({
     resolver: zodResolver(encounterFormSchema),
@@ -858,9 +861,39 @@ export function PatientEncounterForm({
       clearDraftFromStorage()
       setHasUnsavedChanges(false)
       
-      // Reload patient data to reflect new lab tests and other changes
+      // Check for critical values AFTER saving encounter
       if (data.patientId) {
+        // Reload patient data to get latest vitals
         await loadPatientData(data.patientId)
+        
+        // Get the most recent vitals after reload
+        // We need to fetch vitals again to check for critical values
+        try {
+          const vitals = await patientApi.getVitals(data.patientId, true)
+          if (vitals && vitals.length > 0) {
+            const latestVitals = vitals[0]
+            const vitalsForCheck = {
+              systolicBP: latestVitals.systolicBP,
+              diastolicBP: latestVitals.diastolicBP,
+              heartRate: latestVitals.heartRate,
+              respiratoryRate: latestVitals.respiratoryRate,
+              temperature: latestVitals.temperature,
+              oxygenSaturation: latestVitals.oxygenSaturation,
+              glasgowComaScale: latestVitals.glasgowComaScale,
+              bloodGlucose: latestVitals.bloodGlucose,
+            }
+            
+            const patientName = patientData ? getPatientName(patientData) : undefined
+            await checkAndNotifyCriticalVitals(
+              vitalsForCheck,
+              data.patientId,
+              patientName,
+              addNotification
+            )
+          }
+        } catch (err) {
+          console.error('Error checking critical vitals after encounter save:', err)
+        }
       }
       
       if (onSuccess) {
@@ -3414,6 +3447,8 @@ export function PatientEncounterForm({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Critical alerts are now shown in the floating component after form is saved */}
     </>
   )
 }
