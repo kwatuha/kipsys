@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { useCriticalNotifications } from "@/lib/critical-notifications-context"
+import { useAuth } from "@/lib/auth/auth-context"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -10,7 +11,17 @@ import { cn } from "@/lib/utils"
 
 export function FloatingCriticalNotifications() {
   const { notifications, removeNotification } = useCriticalNotifications()
+  const { user } = useAuth()
   const [isMinimized, setIsMinimized] = useState(true) // Start minimized by default
+
+  // Only show notifications to doctors and system administrators
+  const userRole = user?.role?.toLowerCase() || ""
+  const canViewNotifications = userRole === "doctor" || userRole === "admin" || userRole === "administrator"
+
+  // Don't render if user doesn't have permission
+  if (!canViewNotifications) {
+    return null
+  }
 
   if (notifications.length === 0) {
     return null
