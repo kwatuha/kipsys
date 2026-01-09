@@ -35,6 +35,36 @@ router.get('/', async (req, res) => {
 });
 
 /**
+ * @route GET /api/patients/vitals/today
+ * @description Get all vital signs recorded today
+ */
+router.get('/vitals/today', async (req, res) => {
+    try {
+        const query = `
+            SELECT vs.*, 
+                   p.patientId,
+                   p.patientNumber,
+                   p.firstName as patientFirstName, 
+                   p.lastName as patientLastName,
+                   CONCAT(p.firstName, ' ', p.lastName) as patientName,
+                   u.firstName as recordedByFirstName, 
+                   u.lastName as recordedByLastName
+            FROM vital_signs vs
+            LEFT JOIN patients p ON vs.patientId = p.patientId
+            LEFT JOIN users u ON vs.recordedBy = u.userId
+            WHERE DATE(vs.recordedDate) = CURDATE()
+            ORDER BY vs.recordedDate DESC
+        `;
+
+        const [rows] = await pool.execute(query);
+        res.status(200).json(rows);
+    } catch (error) {
+        console.error('Error fetching today\'s vital signs:', error);
+        res.status(500).json({ message: 'Error fetching today\'s vital signs', error: error.message });
+    }
+});
+
+/**
  * @route GET /api/patients/:id
  * @description Get a single patient by ID
  */

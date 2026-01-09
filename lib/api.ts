@@ -101,6 +101,10 @@ export const patientApi = {
           return apiRequest<any[]>(`/api/patients/${patientId}/vitals${params.toString() ? `?${params.toString()}` : ''}`);
         },
         
+        // Get all vital signs from today
+        getTodayVitals: () =>
+          apiRequest<any[]>(`/api/patients/vitals/today`),
+        
         // Patient family history
         getFamilyHistory: (patientId: string) =>
           apiRequest<any[]>(`/api/patients/${patientId}/family-history`),

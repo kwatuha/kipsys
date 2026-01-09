@@ -3,7 +3,6 @@ import type { Metadata } from "next"
 import { Inter } from "next/font/google"
 import "../globals.css"
 import { ThemeProvider } from "@/components/theme-provider"
-import { AuthProvider } from "@/lib/auth/auth-context"
 import { NavigationProvider } from "@/lib/navigation-context"
 import { MainLayoutContent } from "@/components/main-layout-content"
 import { ProtectedRoute } from "@/components/protected-route"
@@ -22,23 +21,17 @@ export default function MainLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
-      <body className={inter.className}>
-        <ThemeProvider
-          attribute="class"
-          defaultTheme="system"
-          enableSystem
-          disableTransitionOnChange
-        >
-          <AuthProvider>
-            <ProtectedRoute>
-              <NavigationProvider>
-                <MainLayoutContent>{children}</MainLayoutContent>
-              </NavigationProvider>
-            </ProtectedRoute>
-          </AuthProvider>
-        </ThemeProvider>
-      </body>
-    </html>
+    <ThemeProvider
+      attribute="class"
+      defaultTheme="system"
+      enableSystem
+      disableTransitionOnChange
+    >
+      <ProtectedRoute>
+        <NavigationProvider>
+          <MainLayoutContent>{children}</MainLayoutContent>
+        </NavigationProvider>
+      </ProtectedRoute>
+    </ThemeProvider>
   )
 } 

@@ -132,8 +132,10 @@ router.post('/', async (req, res) => {
         let diastolicBP = null;
         if (bloodPressure && bloodPressure.includes('/')) {
             const bpParts = bloodPressure.split('/');
-            systolicBP = parseInt(bpParts[0]);
-            diastolicBP = parseInt(bpParts[1]);
+            const sys = parseInt(bpParts[0]);
+            const dia = parseInt(bpParts[1]);
+            systolicBP = !isNaN(sys) ? sys : null;
+            diastolicBP = !isNaN(dia) ? dia : null;
         }
 
         // Map priority to triage category
@@ -309,6 +311,19 @@ router.post('/', async (req, res) => {
         const triageId = result.insertId;
 
         // Insert vital signs
+        // Helper function to safely parse numbers, returning null for invalid values
+        const safeParseInt = (value) => {
+            if (!value || value === '' || value === null || value === undefined) return null;
+            const parsed = parseInt(value);
+            return !isNaN(parsed) ? parsed : null;
+        };
+        
+        const safeParseFloat = (value) => {
+            if (!value || value === '' || value === null || value === undefined) return null;
+            const parsed = parseFloat(value);
+            return !isNaN(parsed) ? parsed : null;
+        };
+        
         if (temperature || systolicBP || heartRate || respiratoryRate || oxygenSaturation || painLevel) {
             await connection.query(
                 `INSERT INTO vital_signs (
@@ -321,11 +336,11 @@ router.post('/', async (req, res) => {
                     patientId,
                     systolicBP,
                     diastolicBP,
-                    heartRate ? parseInt(heartRate) : null,
-                    respiratoryRate ? parseInt(respiratoryRate) : null,
-                    temperature ? parseFloat(temperature) : null,
-                    oxygenSaturation ? parseFloat(oxygenSaturation) : null,
-                    painLevel ? parseInt(painLevel) : null,
+                    safeParseInt(heartRate),
+                    safeParseInt(respiratoryRate),
+                    safeParseFloat(temperature),
+                    safeParseFloat(oxygenSaturation),
+                    safeParseInt(painLevel),
                     triageId,
                     triagedByUserId
                 ]
@@ -493,8 +508,10 @@ router.put('/:id', async (req, res) => {
         let diastolicBP = existing[0].diastolicBP;
         if (bloodPressure && bloodPressure.includes('/')) {
             const bpParts = bloodPressure.split('/');
-            systolicBP = parseInt(bpParts[0]);
-            diastolicBP = parseInt(bpParts[1]);
+            const sys = parseInt(bpParts[0]);
+            const dia = parseInt(bpParts[1]);
+            systolicBP = !isNaN(sys) ? sys : null;
+            diastolicBP = !isNaN(dia) ? dia : null;
         }
 
         // Build update query for triage_assessments
@@ -524,11 +541,24 @@ router.put('/:id', async (req, res) => {
 
             if (vitalExists.length > 0) {
                 // Update existing vital signs
+                // Helper functions to safely parse numbers
+                const safeParseInt = (value) => {
+                    if (!value || value === '' || value === null || value === undefined) return null;
+                    const parsed = parseInt(value);
+                    return !isNaN(parsed) ? parsed : null;
+                };
+                
+                const safeParseFloat = (value) => {
+                    if (!value || value === '' || value === null || value === undefined) return null;
+                    const parsed = parseFloat(value);
+                    return !isNaN(parsed) ? parsed : null;
+                };
+                
                 const vitalUpdates = [];
                 const vitalValues = [];
                 if (temperature !== undefined) {
                     vitalUpdates.push('temperature = ?');
-                    vitalValues.push(temperature ? parseFloat(temperature) : null);
+                    vitalValues.push(safeParseFloat(temperature));
                 }
                 if (bloodPressure !== undefined) {
                     vitalUpdates.push('systolicBP = ?, diastolicBP = ?');
@@ -536,19 +566,19 @@ router.put('/:id', async (req, res) => {
                 }
                 if (heartRate !== undefined) {
                     vitalUpdates.push('heartRate = ?');
-                    vitalValues.push(heartRate ? parseInt(heartRate) : null);
+                    vitalValues.push(safeParseInt(heartRate));
                 }
                 if (respiratoryRate !== undefined) {
                     vitalUpdates.push('respiratoryRate = ?');
-                    vitalValues.push(respiratoryRate ? parseInt(respiratoryRate) : null);
+                    vitalValues.push(safeParseInt(respiratoryRate));
                 }
                 if (oxygenSaturation !== undefined) {
                     vitalUpdates.push('oxygenSaturation = ?');
-                    vitalValues.push(oxygenSaturation ? parseFloat(oxygenSaturation) : null);
+                    vitalValues.push(safeParseFloat(oxygenSaturation));
                 }
                 if (painLevel !== undefined) {
                     vitalUpdates.push('painScore = ?');
-                    vitalValues.push(painLevel ? parseInt(painLevel) : null);
+                    vitalValues.push(safeParseInt(painLevel));
                 }
                 if (vitalUpdates.length > 0) {
                     vitalValues.push(id);
@@ -559,6 +589,19 @@ router.put('/:id', async (req, res) => {
                 }
             } else {
                 // Insert new vital signs
+                // Helper functions to safely parse numbers
+                const safeParseInt = (value) => {
+                    if (!value || value === '' || value === null || value === undefined) return null;
+                    const parsed = parseInt(value);
+                    return !isNaN(parsed) ? parsed : null;
+                };
+                
+                const safeParseFloat = (value) => {
+                    if (!value || value === '' || value === null || value === undefined) return null;
+                    const parsed = parseFloat(value);
+                    return !isNaN(parsed) ? parsed : null;
+                };
+                
                 await connection.query(
                     `INSERT INTO vital_signs (
                         patientId, recordedDate, systolicBP, diastolicBP, heartRate,
@@ -570,11 +613,11 @@ router.put('/:id', async (req, res) => {
                         existing[0].patientId,
                         systolicBP,
                         diastolicBP,
-                        heartRate ? parseInt(heartRate) : null,
-                        respiratoryRate ? parseInt(respiratoryRate) : null,
-                        temperature ? parseFloat(temperature) : null,
-                        oxygenSaturation ? parseFloat(oxygenSaturation) : null,
-                        painLevel ? parseInt(painLevel) : null,
+                        safeParseInt(heartRate),
+                        safeParseInt(respiratoryRate),
+                        safeParseFloat(temperature),
+                        safeParseFloat(oxygenSaturation),
+                        safeParseInt(painLevel),
                         id,
                         existing[0].triagedBy
                     ]

@@ -1,5 +1,4 @@
 import { triageApi } from "@/lib/api"
-import { useCriticalNotifications } from "@/lib/critical-notifications-context"
 
 export interface PatientVitals {
   systolicBP?: number | null
@@ -55,15 +54,21 @@ export async function checkAndNotifyCriticalVitals(
   addNotification: (notification: any) => void
 ): Promise<CriticalAlert[]> {
   if (!vitals) {
+    console.log(`checkAndNotifyCriticalVitals: No vitals provided for patient ${patientId}`)
     return []
   }
 
   try {
+    console.log(`checkAndNotifyCriticalVitals: Checking patient ${patientId} (${patientName})`, vitals)
+    
     // Load critical ranges
     const ranges = await triageApi.getCriticalVitalRanges()
     const criticalRanges = ranges.filter((r: any) => r.isActive !== false) as CriticalVitalRange[]
 
+    console.log(`Found ${criticalRanges.length} active critical ranges`)
+
     if (criticalRanges.length === 0) {
+      console.log('No active critical ranges configured')
       return []
     }
 
@@ -137,6 +142,7 @@ export async function checkAndNotifyCriticalVitals(
 
     // Add to global notifications if there are critical alerts
     if (alerts.length > 0) {
+      console.log(`Adding ${alerts.length} critical alerts for patient ${patientId}`)
       addNotification({
         patientId: patientId.toString(),
         patientName: patientName,
@@ -150,11 +156,17 @@ export async function checkAndNotifyCriticalVitals(
           severity: alert.severity,
         })),
       })
+      console.log(`Successfully added notification for patient ${patientId}`)
+    } else {
+      console.log(`No critical alerts found for patient ${patientId}`)
     }
 
     return alerts
   } catch (err: any) {
     console.error('Error checking critical vitals:', err)
+    if (err instanceof Error) {
+      console.error('Error details:', err.message, err.stack)
+    }
     return []
   }
 }

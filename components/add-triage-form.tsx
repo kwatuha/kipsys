@@ -55,6 +55,8 @@ const triageFormSchema = z.object({
 
 type TriageFormValues = z.infer<typeof triageFormSchema>
 
+const TRIAGE_STORAGE_KEY = 'triage_form_draft'
+
 const SERVICE_POINTS = [
   { value: "consultation", label: "Consultation" },
   { value: "laboratory", label: "Laboratory" },
@@ -100,7 +102,23 @@ export function AddTriageForm({
 
   const form = useForm<TriageFormValues>({
     resolver: zodResolver(triageFormSchema),
-    defaultValues,
+    defaultValues: {
+      ...defaultValues,
+      // Ensure all values are explicitly set to empty strings, not undefined
+      patientId: "",
+      chiefComplaint: "",
+      temperature: "",
+      bloodPressure: "",
+      heartRate: "",
+      respiratoryRate: "",
+      oxygenSaturation: "",
+      painLevel: "",
+      priority: "",
+      assignedToDoctorId: "",
+      assignedToDepartment: "",
+      servicePoint: "consultation",
+      notes: "",
+    },
   })
 
   // Watch vital signs to check for critical values
@@ -150,6 +168,26 @@ export function AddTriageForm({
     }
   }, [open])
 
+  // Auto-save form data to localStorage
+  useEffect(() => {
+    if (!open || isEditing) return
+
+    const subscription = form.watch((value) => {
+      const hasData = value.patientId || value.chiefComplaint || 
+                      value.temperature || value.bloodPressure || value.heartRate ||
+                      value.respiratoryRate || value.oxygenSaturation || value.painLevel ||
+                      value.priority || value.assignedToDoctorId || value.notes
+      
+      if (hasData) {
+        saveDraftToStorage(value as any)
+      } else {
+        clearDraftFromStorage()
+      }
+    })
+
+    return () => subscription.unsubscribe()
+  }, [form, open, isEditing])
+
   // Removed: No longer checking critical values during typing
   // Critical values are now checked only after form is saved
 
@@ -188,30 +226,87 @@ export function AddTriageForm({
     }
   }
 
-  // Populate form when editing
-  useEffect(() => {
-    if (open && triage) {
-      const bloodPressure = triage.systolicBP && triage.diastolicBP 
-        ? `${triage.systolicBP}/${triage.diastolicBP}` 
-        : ""
-      form.reset({
-        patientId: triage.patientId?.toString() || "",
-        chiefComplaint: triage.chiefComplaint || "",
-        temperature: triage.temperature?.toString() || "",
-        bloodPressure: bloodPressure,
-        heartRate: triage.heartRate?.toString() || "",
-        respiratoryRate: triage.respiratoryRate?.toString() || "",
-        oxygenSaturation: triage.oxygenSaturation?.toString() || "",
-        painLevel: triage.painLevel?.toString() || "",
-        priority: triage.triageCategory === 'red' ? 'Emergency' : 
-                  triage.triageCategory === 'yellow' ? (triage.priorityLevel === 2 ? 'Urgent' : 'Semi-urgent') : 
-                  'Non-urgent',
-        notes: triage.notes || "",
-      })
-    } else if (open && !triage) {
-      form.reset(defaultValues)
+  // Draft management functions
+  const saveDraftToStorage = (data: Partial<TriageFormValues>) => {
+    if (typeof window === 'undefined') return
+    try {
+      localStorage.setItem(TRIAGE_STORAGE_KEY, JSON.stringify(data))
+    } catch (error) {
+      console.error('Error saving draft to localStorage:', error)
     }
-  }, [open, triage, form])
+  }
+
+  const loadDraftFromStorage = (): Partial<TriageFormValues> | null => {
+    if (typeof window === 'undefined') return null
+    try {
+      const saved = localStorage.getItem(TRIAGE_STORAGE_KEY)
+      if (saved) {
+        return JSON.parse(saved)
+      }
+    } catch (error) {
+      console.error('Error loading draft from localStorage:', error)
+    }
+    return null
+  }
+
+  const clearDraftFromStorage = () => {
+    if (typeof window === 'undefined') return
+    try {
+      localStorage.removeItem(TRIAGE_STORAGE_KEY)
+    } catch (error) {
+      console.error('Error clearing draft from localStorage:', error)
+    }
+  }
+
+  // Populate form when editing or load draft
+  useEffect(() => {
+    if (open) {
+      if (isEditing && triage) {
+        // If editing, populate from triage data
+        const bloodPressure = triage.systolicBP && triage.diastolicBP 
+          ? `${triage.systolicBP}/${triage.diastolicBP}` 
+          : ""
+        form.reset({
+          patientId: triage.patientId?.toString() || "",
+          chiefComplaint: triage.chiefComplaint || "",
+          temperature: triage.temperature?.toString() || "",
+          bloodPressure: bloodPressure,
+          heartRate: triage.heartRate?.toString() || "",
+          respiratoryRate: triage.respiratoryRate?.toString() || "",
+          oxygenSaturation: triage.oxygenSaturation?.toString() || "",
+          painLevel: triage.painLevel?.toString() || "",
+          priority: triage.triageCategory === 'red' ? 'Emergency' : 
+                    triage.triageCategory === 'yellow' ? (triage.priorityLevel === 2 ? 'Urgent' : 'Semi-urgent') : 
+                    'Non-urgent',
+          notes: triage.notes || "",
+        })
+      } else {
+        // Load saved draft if available
+        const savedDraft = loadDraftFromStorage()
+        if (savedDraft) {
+          // Normalize draft values to ensure all fields are defined (not undefined)
+          const normalizedDraft = {
+            patientId: savedDraft.patientId ?? "",
+            chiefComplaint: savedDraft.chiefComplaint ?? "",
+            temperature: savedDraft.temperature ?? "",
+            bloodPressure: savedDraft.bloodPressure ?? "",
+            heartRate: savedDraft.heartRate ?? "",
+            respiratoryRate: savedDraft.respiratoryRate ?? "",
+            oxygenSaturation: savedDraft.oxygenSaturation ?? "",
+            painLevel: savedDraft.painLevel ?? "",
+            priority: savedDraft.priority ?? "",
+            assignedToDoctorId: savedDraft.assignedToDoctorId ?? "",
+            assignedToDepartment: savedDraft.assignedToDepartment ?? "",
+            servicePoint: savedDraft.servicePoint ?? "consultation",
+            notes: savedDraft.notes ?? "",
+          }
+          form.reset(normalizedDraft)
+        } else {
+          form.reset(defaultValues)
+        }
+      }
+    }
+  }, [open, isEditing, triage, form])
 
   async function onSubmit(data: TriageFormValues) {
     try {
@@ -260,6 +355,8 @@ export function AddTriageForm({
         )
       }
 
+      // Clear draft after successful submission
+      clearDraftFromStorage()
       form.reset()
       onOpenChange(false)
       if (onSuccess) {
@@ -304,7 +401,7 @@ export function AddTriageForm({
                   <FormLabel>Patient</FormLabel>
                   <FormControl>
                     <PatientCombobox
-                      value={field.value}
+                      value={field.value || ""}
                       onValueChange={(value) => {
                         field.onChange(value)
                       }}
@@ -434,7 +531,7 @@ export function AddTriageForm({
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Priority Level</FormLabel>
-                  <Select onValueChange={field.onChange} defaultValue={field.value || ""}>
+                  <Select onValueChange={field.onChange} value={field.value || ""}>
                     <FormControl>
                       <SelectTrigger>
                         <SelectValue placeholder="Select priority level" />
@@ -459,7 +556,7 @@ export function AddTriageForm({
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Service Point *</FormLabel>
-                  <Select onValueChange={field.onChange} defaultValue={field.value || "consultation"}>
+                  <Select onValueChange={field.onChange} value={field.value || "consultation"}>
                     <FormControl>
                       <SelectTrigger>
                         <SelectValue placeholder="Select service point" />

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useForm } from "react-hook-form"
 import { z } from "zod"
@@ -51,6 +51,8 @@ const patientFormSchema = z.object({
 
 type PatientFormValues = z.infer<typeof patientFormSchema>
 
+const PATIENT_STORAGE_KEY = 'patient_registration_form_draft'
+
 const defaultValues: Partial<PatientFormValues> = {
   firstName: "",
   lastName: "",
@@ -76,15 +78,111 @@ export function AddPatientForm({ open, onOpenChange }: { open: boolean; onOpenCh
     defaultValues,
   })
 
+  // Load saved draft when form opens
+  useEffect(() => {
+    if (open) {
+      const savedDraft = loadDraftFromStorage()
+      if (savedDraft) {
+        // Normalize draft values to ensure all fields are defined (not undefined)
+        // Convert date string back to Date object if present
+        const normalizedDraft = {
+          firstName: savedDraft.firstName ?? "",
+          lastName: savedDraft.lastName ?? "",
+          dateOfBirth: savedDraft.dateOfBirth 
+            ? (typeof savedDraft.dateOfBirth === 'string' 
+                ? new Date(savedDraft.dateOfBirth) 
+                : savedDraft.dateOfBirth)
+            : undefined,
+          gender: savedDraft.gender ?? "",
+          idNumber: savedDraft.idNumber ?? "",
+          phone: savedDraft.phone ?? "",
+          email: savedDraft.email ?? "",
+          address: savedDraft.address ?? "",
+          emergencyContact: savedDraft.emergencyContact ?? "",
+          emergencyPhone: savedDraft.emergencyPhone ?? "",
+          bloodGroup: savedDraft.bloodGroup ?? "",
+          allergies: savedDraft.allergies ?? "",
+          medicalHistory: savedDraft.medicalHistory ?? "",
+          insuranceProvider: savedDraft.insuranceProvider ?? "",
+          insuranceNumber: savedDraft.insuranceNumber ?? "",
+        }
+        form.reset(normalizedDraft)
+      } else {
+        form.reset(defaultValues)
+      }
+    }
+  }, [open, form])
+
+  // Auto-save form data to localStorage
+  useEffect(() => {
+    if (!open) return
+
+    const subscription = form.watch((value) => {
+      const hasData = value.firstName || value.lastName || value.phone ||
+                      value.email || value.address || value.idNumber ||
+                      value.emergencyContact || value.emergencyPhone ||
+                      value.bloodGroup || value.allergies || value.medicalHistory ||
+                      value.insuranceProvider || value.insuranceNumber
+      
+      if (hasData) {
+        saveDraftToStorage(value as any)
+      } else {
+        clearDraftFromStorage()
+      }
+    })
+
+    return () => subscription.unsubscribe()
+  }, [form, open])
+
   function onSubmit(data: PatientFormValues) {
     setIsSubmitting(true)
     // Simulate API call
     setTimeout(() => {
       console.log(data)
+      // Clear draft after successful submission
+      clearDraftFromStorage()
       setIsSubmitting(false)
       onOpenChange(false)
       form.reset()
     }, 1000)
+  }
+
+  // Draft management functions
+  const saveDraftToStorage = (data: Partial<PatientFormValues>) => {
+    if (typeof window === 'undefined') return
+    try {
+      const dataToSave = {
+        ...data,
+        dateOfBirth: data.dateOfBirth instanceof Date 
+          ? data.dateOfBirth.toISOString() 
+          : data.dateOfBirth,
+      }
+      localStorage.setItem(PATIENT_STORAGE_KEY, JSON.stringify(dataToSave))
+    } catch (error) {
+      console.error('Error saving draft to localStorage:', error)
+    }
+  }
+
+  const loadDraftFromStorage = (): Partial<PatientFormValues> | null => {
+    if (typeof window === 'undefined') return null
+    try {
+      const saved = localStorage.getItem(PATIENT_STORAGE_KEY)
+      if (saved) {
+        return JSON.parse(saved)
+      }
+    } catch (error) {
+      console.error('Error loading draft from localStorage:', error)
+    }
+    return null
+  }
+
+  const clearDraftFromStorage = () => {
+    if (typeof window === 'undefined') return
+    try {
+      localStorage.removeItem(PATIENT_STORAGE_KEY)
+    } catch (error) {
+      console.error('Error clearing draft from localStorage:', error)
+    }
   }
 
   return (

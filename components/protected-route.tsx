@@ -16,7 +16,7 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
   useEffect(() => {
     // Only redirect if not loading and not authenticated
     if (!isLoading && !isAuthenticated) {
-      router.push("/login")
+      router.replace("/login")
     }
   }, [isAuthenticated, isLoading, router])
 
