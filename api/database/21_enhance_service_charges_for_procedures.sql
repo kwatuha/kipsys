@@ -20,3 +20,5 @@ CREATE INDEX idx_procedure_charge ON procedures(chargeId);
 
 
 
+
+

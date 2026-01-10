@@ -291,6 +291,7 @@ CREATE TABLE IF NOT EXISTS medical_records (
     physicalExamination TEXT,
     diagnosis TEXT,
     treatment TEXT,
+    outcome TEXT,
     prescription TEXT,
     notes TEXT,
     doctorId INT,

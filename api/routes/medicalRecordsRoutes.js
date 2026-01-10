@@ -125,6 +125,7 @@ router.post('/', async (req, res) => {
             physicalExamination,
             diagnosis,
             treatment,
+            outcome,
             prescription,
             notes,
             doctorId,
@@ -139,8 +140,8 @@ router.post('/', async (req, res) => {
             `INSERT INTO medical_records (
                 patientId, visitDate, visitType, department, chiefComplaint,
                 symptoms, historyOfPresentIllness, physicalExamination,
-                diagnosis, treatment, prescription, notes, doctorId, createdBy
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                diagnosis, treatment, outcome, prescription, notes, doctorId, createdBy
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 patientId,
                 visitDate,
@@ -152,6 +153,7 @@ router.post('/', async (req, res) => {
                 physicalExamination || null,
                 diagnosis || null,
                 treatment || null,
+                outcome || null,
                 prescription || null,
                 notes || null,
                 doctorId || null,
@@ -207,6 +209,7 @@ router.put('/:id', async (req, res) => {
             physicalExamination,
             diagnosis,
             treatment,
+            outcome,
             prescription,
             notes,
             doctorId
@@ -235,6 +238,7 @@ router.put('/:id', async (req, res) => {
                 physicalExamination = ?,
                 diagnosis = ?,
                 treatment = ?,
+                outcome = ?,
                 prescription = ?,
                 notes = ?,
                 doctorId = ?
@@ -250,6 +254,7 @@ router.put('/:id', async (req, res) => {
                 physicalExamination !== undefined ? physicalExamination : (existing[0].physicalExamination || null),
                 diagnosis !== undefined ? diagnosis : existing[0].diagnosis,
                 treatment !== undefined ? treatment : existing[0].treatment,
+                outcome !== undefined ? outcome : (existing[0].outcome || null),
                 prescription !== undefined ? prescription : existing[0].prescription,
                 notes !== undefined ? notes : existing[0].notes,
                 doctorId !== undefined ? doctorId : existing[0].doctorId,

@@ -1,8 +1,8 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useLayoutEffect } from "react"
 import { useAuth } from "@/lib/auth/auth-context"
-import { useRouter } from "next/navigation"
+import { useRouter, usePathname } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -12,26 +12,58 @@ import { AlertCircle, Loader2, Heart } from "lucide-react"
 export default function LoginPage() {
   const { login, isLoading, isAuthenticated } = useAuth()
   const router = useRouter()
+  const pathname = usePathname()
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState("")
+  const [isRedirecting, setIsRedirecting] = useState(false)
 
-  // Redirect if already authenticated
-  useEffect(() => {
-    if (isAuthenticated) {
-      router.push("/")
+  // Only redirect if already authenticated and we're on the login page
+  // Use useLayoutEffect to prevent flickering (runs synchronously before paint)
+  useLayoutEffect(() => {
+    if (!isLoading && isAuthenticated && pathname === "/login" && !isRedirecting) {
+      setIsRedirecting(true)
+      // Immediate redirect
+      router.replace("/")
     }
-  }, [isAuthenticated, router])
+  }, [isAuthenticated, isLoading, router, pathname, isRedirecting])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError("")
     const result = await login(username, password)
     if (result.success) {
-      router.push("/")
+      router.replace("/")
     } else {
       setError(result.error || "Login failed")
     }
+  }
+
+  // Early return: Show loading state while checking authentication OR if authenticated/redirecting
+  // This prevents flickering by showing loading during both auth check and redirect
+  // Check isRedirecting first to prevent any flicker during redirect
+  if (isRedirecting) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-blue-100">
+        <div className="text-center">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground mx-auto mb-4" />
+          <p className="text-sm text-muted-foreground">Redirecting...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (isLoading || isAuthenticated) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-blue-100">
+        <div className="text-center">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground mx-auto mb-4" />
+          <p className="text-sm text-muted-foreground">
+            {isAuthenticated ? "Redirecting..." : "Loading..."}
+          </p>
+        </div>
+      </div>
+    )
   }
 
   return (

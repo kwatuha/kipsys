@@ -31,68 +31,88 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       try {
-        // Check for JWT token in localStorage
-        const token = localStorage.getItem('token') || localStorage.getItem('jwt_token')
+        // Check for JWT token in localStorage (check all possible token keys)
+        const token = localStorage.getItem('token') || localStorage.getItem('jwt_token') || localStorage.getItem('auth_token')
         
-        if (token) {
-          // Verify token with backend
-          const apiUrl = process.env.NEXT_PUBLIC_API_URL || ''
-          try {
-            const response = await fetch(`${apiUrl}/api/auth/verify`, {
-              method: 'GET',
-              headers: {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json',
-              },
-            })
+        // If no token, immediately set loading to false (no async operations needed)
+        if (!token) {
+          setIsLoading(false)
+          setIsAuthenticated(false)
+          return
+        }
+        
+        // Verify token with backend (with timeout)
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || ''
+        try {
+          const controller = new AbortController()
+          const timeoutId = setTimeout(() => controller.abort(), 3000) // 3 second timeout
+          
+          const response = await fetch(`${apiUrl}/api/auth/verify`, {
+            method: 'GET',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            signal: controller.signal,
+          })
+          
+          clearTimeout(timeoutId)
 
-            if (response.ok) {
-              const data = await response.json()
-              if (data.user) {
-                setUser({
-                  id: data.user.id?.toString() || data.user.userId?.toString() || '',
-                  username: data.user.username,
-                  role: data.user.role?.toLowerCase() || 'registration',
-                  name: `${data.user.firstName || ''} ${data.user.lastName || ''}`.trim(),
-                  email: data.user.email,
-                  department: data.user.department || '',
-                })
-                setIsAuthenticated(true)
-              }
+          if (response.ok) {
+            const data = await response.json()
+            if (data.user) {
+              setUser({
+                id: data.user.id?.toString() || data.user.userId?.toString() || '',
+                username: data.user.username,
+                role: data.user.role?.toLowerCase() || 'registration',
+                name: `${data.user.firstName || ''} ${data.user.lastName || ''}`.trim(),
+                email: data.user.email,
+                department: data.user.department || '',
+              })
+              setIsAuthenticated(true)
             } else {
-              // Token invalid, clear it
+              // No user data in response, token invalid
               localStorage.removeItem('token')
               localStorage.removeItem('jwt_token')
               localStorage.removeItem('auth_token')
+              setIsAuthenticated(false)
             }
-          } catch (error) {
-            // If verify endpoint doesn't exist, try to decode JWT token
-            try {
-              // Simple JWT decode (without verification for now)
-              const payload = JSON.parse(atob(token.split('.')[1]))
-              if (payload.user && payload.exp && payload.exp * 1000 > Date.now()) {
-                // Token not expired, use stored user data
-                setUser({
-                  id: payload.user.id?.toString() || '',
-                  username: payload.user.username,
-                  role: payload.user.roleName?.toLowerCase() || payload.user.role?.toLowerCase() || 'registration',
-                  name: `${payload.user.firstName || ''} ${payload.user.lastName || ''}`.trim(),
-                  email: payload.user.email,
-                  department: payload.user.department || '',
-                })
-                setIsAuthenticated(true)
-              } else {
-                // Token expired
-                localStorage.removeItem('token')
-                localStorage.removeItem('jwt_token')
-                localStorage.removeItem('auth_token')
-              }
-            } catch (decodeError) {
-              // Token decode failed, clear it
+          } else {
+            // Token invalid, clear it
+            localStorage.removeItem('token')
+            localStorage.removeItem('jwt_token')
+            localStorage.removeItem('auth_token')
+            setIsAuthenticated(false)
+          }
+        } catch (error) {
+          // If verify endpoint doesn't exist, try to decode JWT token
+          try {
+            // Simple JWT decode (without verification for now)
+            const payload = JSON.parse(atob(token.split('.')[1]))
+            if (payload.user && payload.exp && payload.exp * 1000 > Date.now()) {
+              // Token not expired, use stored user data
+              setUser({
+                id: payload.user.id?.toString() || '',
+                username: payload.user.username,
+                role: payload.user.roleName?.toLowerCase() || payload.user.role?.toLowerCase() || 'registration',
+                name: `${payload.user.firstName || ''} ${payload.user.lastName || ''}`.trim(),
+                email: payload.user.email,
+                department: payload.user.department || '',
+              })
+              setIsAuthenticated(true)
+            } else {
+              // Token expired
               localStorage.removeItem('token')
               localStorage.removeItem('jwt_token')
               localStorage.removeItem('auth_token')
+              setIsAuthenticated(false)
             }
+          } catch (decodeError) {
+            // Token decode failed, clear it
+            localStorage.removeItem('token')
+            localStorage.removeItem('jwt_token')
+            localStorage.removeItem('auth_token')
+            setIsAuthenticated(false)
           }
         }
       } catch (error) {
@@ -101,8 +121,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         localStorage.removeItem('token')
         localStorage.removeItem('jwt_token')
         localStorage.removeItem('auth_token')
+        setIsAuthenticated(false)
       } finally {
+        // Ensure loading is set to false
         setIsLoading(false)
+        // If we have no token at this point and no user was set, ensure authenticated is false
+        const hasToken = localStorage.getItem('token') || localStorage.getItem('jwt_token') || localStorage.getItem('auth_token')
+        if (!hasToken && !user) {
+          setIsAuthenticated(false)
+        }
       }
     }
 

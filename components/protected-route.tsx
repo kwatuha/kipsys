@@ -1,7 +1,7 @@
 "use client"
 
-import { useEffect } from "react"
-import { useRouter } from "next/navigation"
+import { useEffect, useRef } from "react"
+import { useRouter, usePathname } from "next/navigation"
 import { useAuth } from "@/lib/auth/auth-context"
 import { Loader2 } from "lucide-react"
 
@@ -12,13 +12,16 @@ interface ProtectedRouteProps {
 export function ProtectedRoute({ children }: ProtectedRouteProps) {
   const { isAuthenticated, isLoading } = useAuth()
   const router = useRouter()
+  const pathname = usePathname()
+  const redirectingRef = useRef(false)
 
   useEffect(() => {
-    // Only redirect if not loading and not authenticated
-    if (!isLoading && !isAuthenticated) {
+    // Only redirect if not loading, not authenticated, not already on login page, and not already redirecting
+    if (!isLoading && !isAuthenticated && pathname !== "/login" && !redirectingRef.current) {
+      redirectingRef.current = true
       router.replace("/login")
     }
-  }, [isAuthenticated, isLoading, router])
+  }, [isAuthenticated, isLoading, router, pathname])
 
   // Show loading state while checking authentication
   if (isLoading) {

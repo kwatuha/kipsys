@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react"
 import { zodResolver } from "@hookform/resolvers/zod"
-import { useForm, useFieldArray } from "react-hook-form"
+import { useForm, useFieldArray, useWatch } from "react-hook-form"
 import { z } from "zod"
 import { 
   CalendarIcon, 
@@ -68,9 +68,10 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { patientApi, doctorsApi, pharmacyApi, laboratoryApi, medicalRecordsApi, billingApi, proceduresApi, serviceChargeApi } from "@/lib/api"
+import { patientApi, doctorsApi, pharmacyApi, laboratoryApi, medicalRecordsApi, billingApi, proceduresApi, serviceChargeApi, appointmentsApi } from "@/lib/api"
 import { useCriticalNotifications } from "@/lib/critical-notifications-context"
 import { checkAndNotifyCriticalVitals } from "@/lib/critical-vitals-utils"
+import { toast } from "@/components/ui/use-toast"
 
 // Schema definitions
 const medicationSchema = z.object({
@@ -134,7 +135,13 @@ const encounterFormSchema = z.object({
   physicalExamination: z.string().optional(),
   diagnosis: z.string().optional(),
   treatment: z.string().optional(),
+  outcome: z.string().optional(),
   notes: z.string().optional(),
+  nextAppointmentDate: z.date().optional(),
+  nextAppointmentTime: z.string().optional(),
+  nextAppointmentDoctorId: z.string().optional(),
+  nextAppointmentDepartment: z.string().optional(),
+  nextAppointmentReason: z.string().optional(),
   medications: z.array(medicationSchema).optional(),
   labTests: z.array(labTestSchema).optional(),
   procedures: z.array(procedureSchema).optional(),
@@ -233,7 +240,7 @@ export function PatientEncounterForm({
   const [todayVitals, setTodayVitals] = useState<any | null>(null)
   const [loadingPatientData, setLoadingPatientData] = useState(false)
   const [selectedDiagnoses, setSelectedDiagnoses] = useState<any[]>([])
-  const { addNotification } = useCriticalNotifications()
+  const { addNotification, notifications } = useCriticalNotifications()
 
   const form = useForm<EncounterFormValues>({
     resolver: zodResolver(encounterFormSchema),
@@ -249,13 +256,22 @@ export function PatientEncounterForm({
       physicalExamination: "",
       diagnosis: "",
       treatment: "",
+      outcome: "",
       notes: "",
+      nextAppointmentDate: undefined,
+      nextAppointmentTime: "",
+      nextAppointmentDoctorId: "",
+      nextAppointmentDepartment: "",
+      nextAppointmentReason: "",
       medications: [],
       labTests: [],
       procedures: [],
       orders: [],
     },
   })
+
+  // Watch outcome to conditionally show appointment fields (prevents flickering)
+  const outcome = useWatch({ control: form.control, name: "outcome" })
 
   const { fields: medicationFields, append: appendMedication, remove: removeMedication } = useFieldArray({
     control: form.control,
@@ -278,6 +294,20 @@ export function PatientEncounterForm({
   })
 
   const patientId = form.watch("patientId")
+
+  // Debug: Log when patientId or notifications change
+  useEffect(() => {
+    if (open && patientId) {
+      console.log('🔍 [ENCOUNTER FORM] Patient ID or notifications changed:', {
+        patientId,
+        patientIdType: typeof patientId,
+        notificationsCount: notifications.length,
+        matchingNotifications: notifications.filter(n => 
+          n.patientId === patientId.toString() || n.patientId === String(patientId)
+        ).length
+      })
+    }
+  }, [open, patientId, notifications])
 
   // Load saved draft when form opens
   useEffect(() => {
@@ -321,6 +351,7 @@ export function PatientEncounterForm({
           physicalExamination: "",
           diagnosis: "",
           treatment: "",
+          outcome: "",
           notes: "",
           medications: [],
           labTests: [],
@@ -364,6 +395,13 @@ export function PatientEncounterForm({
       setSelectedDiagnoses([])
     }
   }, [diagnosisSheetOpen])
+
+  // Reset tempLabTest when dialog opens for adding a new test (not editing)
+  useEffect(() => {
+    if (addTestDialogOpen && editingLabTestIndex === null) {
+      setTempLabTest(defaultLabTest)
+    }
+  }, [addTestDialogOpen, editingLabTestIndex])
 
   // Load patient data when patient is selected
   useEffect(() => {
@@ -420,6 +458,9 @@ export function PatientEncounterForm({
       }
       if (!currentValues.treatment && todayRecord.treatment) {
         updates.treatment = todayRecord.treatment
+      }
+      if (!currentValues.outcome && todayRecord.outcome) {
+        updates.outcome = todayRecord.outcome
       }
       if (!currentValues.notes && todayRecord.notes) {
         updates.notes = todayRecord.notes
@@ -678,6 +719,7 @@ export function PatientEncounterForm({
         physicalExamination: data.physicalExamination || null,
         diagnosis: data.diagnosis || null,
         treatment: data.treatment || null,
+        outcome: data.outcome || null,
         prescription: null, // Will be handled separately
         notes: data.notes || null,
       }
@@ -854,6 +896,33 @@ export function PatientEncounterForm({
           }
 
           await billingApi.createInvoice(invoiceData)
+        }
+      }
+
+      // 6. Create next appointment if outcome is "Follow-up Scheduled" and appointment details are provided
+      if (data.outcome === "Follow-up Scheduled" && data.nextAppointmentDate && data.nextAppointmentTime) {
+        try {
+          const appointmentData = {
+            patientId: parseInt(data.patientId),
+            doctorId: data.nextAppointmentDoctorId ? parseInt(data.nextAppointmentDoctorId) : (data.doctorId ? parseInt(data.doctorId) : null),
+            appointmentDate: format(data.nextAppointmentDate, "yyyy-MM-dd"),
+            appointmentTime: data.nextAppointmentTime,
+            department: data.nextAppointmentDepartment || data.department || null,
+            reason: data.nextAppointmentReason || `Follow-up from encounter on ${format(data.encounterDate, 'PPP')}`,
+            status: "scheduled",
+            notes: `Follow-up appointment scheduled during encounter on ${format(data.encounterDate, 'PPP')}. ${data.diagnosis ? `Diagnosis: ${data.diagnosis.substring(0, 200)}` : ''}`,
+          }
+
+          await appointmentsApi.create(appointmentData)
+        } catch (error: any) {
+          console.error("Error creating follow-up appointment:", error)
+          // Don't fail the entire encounter save if appointment creation fails
+          // Just log the error - the encounter is already saved successfully
+          toast({
+            title: "Warning",
+            description: "Encounter saved successfully, but failed to create follow-up appointment. You may need to create it manually.",
+            variant: "destructive",
+          })
         }
       }
       
@@ -1111,7 +1180,14 @@ export function PatientEncounterForm({
         )
         .filter(Boolean)
     )
-    return testTypes.filter(test => !usedTestTypeIds.has(test.testTypeId.toString()))
+    // Don't filter out the currently selected test in tempLabTest (when adding new test)
+    // This allows the user to keep their selection even if it would normally be filtered
+    const currentlySelectedId = editingLabTestIndex === null ? tempLabTest.testTypeId : null
+    return testTypes.filter(test => {
+      const testIdStr = test.testTypeId.toString()
+      // Include the test if it's not used, OR if it's the currently selected one (when adding)
+      return !usedTestTypeIds.has(testIdStr) || (currentlySelectedId && testIdStr === currentlySelectedId)
+    })
   }
 
   const isTestTypeAlreadyAdded = (testTypeId: string) => {
@@ -1383,6 +1459,96 @@ export function PatientEncounterForm({
               Comprehensive patient consultation, documentation, and treatment planning
             </DialogDescription>
           </DialogHeader>
+
+          {/* Critical Alerts Banner for Current Patient */}
+          {(() => {
+            // Normalize patientId to string for comparison
+            const currentPatientId = patientId ? String(patientId).trim() : null
+            
+            if (!currentPatientId) {
+              return null
+            }
+            
+            // Debug logging
+            console.log('🔍 [ENCOUNTER FORM] Checking for critical alerts:', {
+              patientId: currentPatientId,
+              patientIdType: typeof patientId,
+              notificationsCount: notifications.length,
+              notifications: notifications.map(n => ({
+                patientId: n.patientId,
+                patientIdType: typeof n.patientId,
+                patientName: n.patientName,
+                alertsCount: n.alerts.length
+              }))
+            })
+            
+            // Find matching notifications - compare as strings
+            const patientNotifications = notifications.filter(n => {
+              const notificationPatientId = String(n.patientId).trim()
+              const match = notificationPatientId === currentPatientId
+              
+              if (match) {
+                console.log('✅ [ENCOUNTER FORM] Found matching notification:', {
+                  notificationPatientId,
+                  formPatientId: currentPatientId,
+                  alerts: n.alerts.length,
+                  patientName: n.patientName
+                })
+              }
+              
+              return match
+            })
+            
+            if (patientNotifications.length === 0) {
+              console.log('⚠️ [ENCOUNTER FORM] No notifications found for patient:', currentPatientId)
+              return null
+            }
+            
+            const patientAlert = patientNotifications[0]
+            const criticalAlerts = patientAlert.alerts.filter(a => a.severity === 'critical')
+            const urgentAlerts = patientAlert.alerts.filter(a => a.severity === 'urgent')
+            
+            console.log('✅ [ENCOUNTER FORM] Displaying critical alerts banner:', {
+              criticalCount: criticalAlerts.length,
+              urgentCount: urgentAlerts.length,
+              totalAlerts: patientAlert.alerts.length,
+              patientName: patientAlert.patientName
+            })
+            
+            return (
+              <div className="mx-6 mt-4 mb-0 border-2 border-red-500 bg-red-50 dark:bg-red-950/20 rounded-lg p-4 flex-shrink-0">
+                <div className="flex items-start gap-3">
+                  <div className="rounded-full bg-red-600 dark:bg-red-700 p-2 flex-shrink-0">
+                    <AlertTriangle className="h-5 w-5 text-white" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-bold text-red-900 dark:text-red-100 mb-1">
+                      ⚠️ CRITICAL ALERTS DETECTED
+                    </div>
+                    <div className="text-sm text-red-800 dark:text-red-200 mb-2">
+                      This patient has {criticalAlerts.length} critical and {urgentAlerts.length} urgent alert{patientAlert.alerts.length > 1 ? 's' : ''}
+                    </div>
+                    <div className="space-y-1.5">
+                      {patientAlert.alerts.slice(0, 3).map((alert, idx) => (
+                        <div key={idx} className="text-xs bg-white dark:bg-red-900/30 p-2 rounded border border-red-200 dark:border-red-800">
+                          <span className="font-semibold">{alert.parameter}:</span> {alert.value} {alert.unit} 
+                          {alert.range && <span className="text-red-600 dark:text-red-400"> ({alert.range})</span>}
+                          <Badge variant={alert.severity === 'critical' ? 'destructive' : 'secondary'} className="ml-2 text-xs">
+                            {alert.severity}
+                          </Badge>
+                        </div>
+                      ))}
+                      {patientAlert.alerts.length > 3 && (
+                        <div className="text-xs text-red-700 dark:text-red-300 italic">
+                          +{patientAlert.alerts.length - 3} more alert{patientAlert.alerts.length - 3 > 1 ? 's' : ''}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )
+          })()}
 
           <div className="flex-1 overflow-hidden flex flex-col min-h-0">
             {error && (
@@ -2299,6 +2465,160 @@ export function PatientEncounterForm({
 
                   <Separator />
 
+                  {/* Outcome */}
+                  <FormField
+                    control={form.control}
+                    name="outcome"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-base font-semibold">Outcome</FormLabel>
+                        <Select onValueChange={field.onChange} value={field.value || ""}>
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select encounter outcome" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="Discharged - Recovered">Discharged - Recovered</SelectItem>
+                            <SelectItem value="Discharged - Improved">Discharged - Improved</SelectItem>
+                            <SelectItem value="Discharged - Stable">Discharged - Stable</SelectItem>
+                            <SelectItem value="Follow-up Scheduled">Follow-up Scheduled</SelectItem>
+                            <SelectItem value="Admitted">Admitted</SelectItem>
+                            <SelectItem value="Referred">Referred</SelectItem>
+                            <SelectItem value="No Show">No Show</SelectItem>
+                            <SelectItem value="Cancelled">Cancelled</SelectItem>
+                            <SelectItem value="Other">Other</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        
+                        <FormDescription>
+                          Select the outcome of this encounter. If "Follow-up Scheduled" is selected, you can schedule the next appointment below.
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  {/* Next Appointment Details - Show when outcome is "Follow-up Scheduled" */}
+                  {outcome === "Follow-up Scheduled" && (
+                    <div className="space-y-4 p-4 bg-blue-50 dark:bg-blue-950/20 rounded-md border border-blue-200 dark:border-blue-800">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                        <h4 className="text-base font-semibold">Schedule Next Appointment</h4>
+                      </div>
+                      
+                      <div className="grid grid-cols-2 gap-4">
+                        <FormField
+                          control={form.control}
+                          name="nextAppointmentDate"
+                          render={({ field }) => (
+                            <FormItem className="flex flex-col">
+                              <FormLabel>Appointment Date *</FormLabel>
+                              <Popover>
+                                <PopoverTrigger asChild>
+                                  <FormControl>
+                                    <Button
+                                      variant={"outline"}
+                                      className={`w-full pl-3 text-left font-normal ${!field.value ? "text-muted-foreground" : ""}`}
+                                    >
+                                      {field.value ? format(field.value, "PPP") : <span>Select date</span>}
+                                      <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
+                                    </Button>
+                                  </FormControl>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-auto p-0" align="start">
+                                  <Calendar 
+                                    mode="single" 
+                                    selected={field.value} 
+                                    onSelect={field.onChange}
+                                    disabled={(date) => date < new Date(new Date().setHours(0, 0, 0, 0))}
+                                    initialFocus 
+                                  />
+                                </PopoverContent>
+                              </Popover>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={form.control}
+                          name="nextAppointmentTime"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Appointment Time *</FormLabel>
+                              <FormControl>
+                                <Input type="time" {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <FormField
+                          control={form.control}
+                          name="nextAppointmentDoctorId"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Doctor (Optional)</FormLabel>
+                              <Select onValueChange={field.onChange} value={field.value || ""}>
+                                <FormControl>
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Select doctor (optional)" />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  {doctors.map((doctor) => (
+                                    <SelectItem key={doctor.userId} value={doctor.userId.toString()}>
+                                      {getDoctorName(doctor)} {doctor.department && ` - ${doctor.department}`}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={form.control}
+                          name="nextAppointmentDepartment"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Department (Optional)</FormLabel>
+                              <FormControl>
+                                <Input placeholder="e.g., Cardiology" {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+
+                      <FormField
+                        control={form.control}
+                        name="nextAppointmentReason"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Reason for Follow-up (Optional)</FormLabel>
+                            <FormControl>
+                              <Textarea 
+                                placeholder="Reason for follow-up appointment, review instructions, etc." 
+                                className="min-h-[80px]"
+                                {...field} 
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                  )}
+
+                  <Separator />
+
                   {/* Additional Notes */}
                   <FormField
                     control={form.control}
@@ -3130,9 +3450,8 @@ export function PatientEncounterForm({
                   </label>
                   <Select 
                     onValueChange={(value) => {
-                      if (isTestTypeAlreadyAdded(value) && editingLabTestIndex === null) {
-                        return // Prevent selecting duplicate
-                      }
+                      // Always update the state, even if it's a duplicate
+                      // The validation will show a warning, but we allow the selection
                       setTempLabTest({ ...tempLabTest, testTypeId: value })
                     }} 
                     value={tempLabTest.testTypeId || ""}

@@ -31,7 +31,6 @@ export function MainLayoutContent({ children }: MainLayoutContentProps) {
             </main>
           </div>
         </div>
-        <FloatingCriticalNotifications />
       </SidebarProvider>
     </CriticalNotificationsProvider>
   )

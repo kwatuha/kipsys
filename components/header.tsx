@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Search, LogOut } from "lucide-react"
 import { BreadcrumbsEnhanced } from "@/components/breadcrumbs-enhanced"
+import { CriticalAlertsHeaderBadge } from "@/components/critical-alerts-header-badge"
 import { memo } from "react"
 import { useRouter } from "next/navigation"
 
@@ -21,6 +22,7 @@ export const Header = memo(function Header() {
         </div>
       </div>
       <div className="flex items-center gap-3">
+        <CriticalAlertsHeaderBadge />
         <ModeToggle />
         
         {/* Logout Button - More Visible */}

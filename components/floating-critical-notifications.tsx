@@ -83,14 +83,14 @@ export function FloatingCriticalNotifications() {
   return (
     <div
       className={cn(
-        "fixed bottom-4 right-4 z-[9999] transition-all duration-300",
+        "fixed bottom-4 left-4 z-[9999] transition-all duration-300",
         isMinimized ? "w-72" : "w-[380px]", // Narrower to avoid blocking
         "max-w-[calc(100vw-20rem)]" // Ensure it doesn't overlap sidebar + margin
       )}
       style={{ 
-        // Position at bottom right to avoid blocking tabs and form content
+        // Position at bottom left to avoid blocking tabs, form content, and save button
         bottom: '1rem', // 16px from bottom
-        right: '1rem',
+        left: 'calc(16rem + 1rem)', // 16rem (sidebar width) + 1rem margin
         maxHeight: 'calc(100vh - 8rem)', // Ensure it doesn't go above viewport
       }}
     >
