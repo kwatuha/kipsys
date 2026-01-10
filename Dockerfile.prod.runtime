@@ -1,0 +1,33 @@
+# syntax=docker/dockerfile:1.5
+# Production Dockerfile - Install dependencies at runtime to avoid long build times
+# This approach installs dependencies AFTER container creation, not during build
+
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Install bash for scripts (Alpine doesn't have bash by default)
+RUN apk add --no-cache bash curl wget
+
+# Copy package files first (for better caching)
+COPY package*.json ./
+
+# Copy all application code
+COPY . .
+
+# Create entrypoint script
+COPY docker-entrypoint-prod.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Expose port
+EXPOSE 3000
+
+# Set environment
+ENV NODE_ENV=production
+ENV DOCKER_BUILD=false
+
+# Use entrypoint that installs dependencies on first run
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["node", "server.js"]
+
+

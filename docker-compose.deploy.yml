@@ -70,22 +70,19 @@ services:
       start_period: 40s
 
   # Frontend (Next.js) - Production Build
+  # Dependencies are installed AFTER container creation to avoid long build times
   frontend:
     build:
       context: .
       dockerfile: Dockerfile.prod
-      args:
-        # Use public URL for build-time (baked into JS bundle)
-        # If not set, will use relative URLs (empty string) in browser
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
+      # No build args needed - dependencies install at runtime
     container_name: kiplombe_frontend
     restart: unless-stopped
     expose:
       - "3000"
     environment:
       NODE_ENV: production
-      # Runtime env var (for server-side rendering)
-      # If not set, code will use relative URLs in browser
+      # Runtime env var (for server-side rendering and build)
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
       HOSTNAME: "0.0.0.0"
     depends_on:
@@ -93,12 +90,13 @@ services:
         condition: service_healthy
     networks:
       - kiplombe_network
+    # Increased start_period to allow time for dependency installation and build
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:3000/"]
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 60s
+      retries: 5
+      start_period: 600s  # 10 minutes to allow npm install and build
 
   # Nginx Reverse Proxy
   nginx:

@@ -1,46 +1,38 @@
 # syntax=docker/dockerfile:1.5
 # Production Dockerfile for Next.js Frontend
-FROM node:18-alpine AS builder
+# Dependencies are installed AFTER container creation (not during build) to avoid long build times
+# This approach installs dependencies at runtime via the entrypoint script
+
+FROM node:18-alpine
 
 WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
+# Install bash and tools needed for entrypoint script (Alpine doesn't have bash by default)
+RUN apk add --no-cache bash curl wget
 
-# Install dependencies
-RUN --mount=type=cache,target=/root/.npm npm ci --legacy-peer-deps
+# Copy package files first (for better layer caching)
+COPY package*.json ./
 
 # Copy application code
 COPY . .
 
-# Build the application (enable standalone output for Docker)
-ARG NEXT_PUBLIC_API_URL
-ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
-ENV DOCKER_BUILD=true
-RUN npm run build
-
-# Production stage
-FROM node:18-alpine AS runner
-
-WORKDIR /app
-
-ENV NODE_ENV production
-
-# Copy package files for dependency installation
-COPY --from=builder /app/package*.json ./
-
-# Install production dependencies with legacy-peer-deps
-# This ensures all dependencies are available at runtime
-RUN --mount=type=cache,target=/root/.npm npm install --legacy-peer-deps --only=production
-
-# Copy necessary files
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
+# Copy and set up entrypoint script that handles dependency installation
+COPY docker-entrypoint-prod.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 # Expose port
 EXPOSE 3000
 
-# Start the application
+# Set environment
+ENV NODE_ENV=production
+ENV DOCKER_BUILD=false
+
+# Note: Dependencies will be installed by entrypoint.sh AFTER container creation
+# This avoids long build times and allows for faster deployments
+
+# Use entrypoint that installs dependencies on first run
+ENTRYPOINT ["/entrypoint.sh"]
+
+# Default command - entrypoint will handle dependency installation, build, and startup
 CMD ["node", "server.js"]
 

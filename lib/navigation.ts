@@ -266,6 +266,11 @@ export const navigationCategories: NavigationCategory[] = [
         href: "/hr/employees",
       },
       {
+        title: "MOH Reports",
+        icon: FileText,
+        href: "/reports",
+      },
+      {
         title: "System Administration",
         icon: Shield,
         href: "/administration",
