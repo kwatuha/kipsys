@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
+import { useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -41,6 +42,7 @@ import { ViewBillDialog } from "@/components/view-bill-dialog"
 import { MobilePaymentLogsSection } from "@/components/mobile-payment-logs-section"
 
 export default function BillingPage() {
+  const searchParams = useSearchParams()
   const [isMounted, setIsMounted] = useState(false)
   const [invoices, setInvoices] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
@@ -59,6 +61,7 @@ export default function BillingPage() {
   const [recordingPayment, setRecordingPayment] = useState(false)
   const [stats, setStats] = useState<any>(null)
   const [statsLoading, setStatsLoading] = useState(true)
+  const invoiceIdHandledRef = useRef<string | null>(null)
 
   useEffect(() => {
     setIsMounted(true)
@@ -70,6 +73,51 @@ export default function BillingPage() {
       loadStats()
     }
   }, [isMounted, statusFilter])
+
+  // Handle invoiceId query parameter to auto-open invoice dialog
+  useEffect(() => {
+    if (isMounted && invoices.length > 0) {
+      const invoiceIdParam = searchParams.get('invoiceId')
+      if (invoiceIdParam && invoiceIdHandledRef.current !== invoiceIdParam) {
+        invoiceIdHandledRef.current = invoiceIdParam
+        const invoice = invoices.find((inv: any) => inv.invoiceId.toString() === invoiceIdParam)
+        if (invoice) {
+          // Use the handleView function logic directly
+          billingApi.getInvoiceById(invoice.invoiceId.toString())
+            .then((details) => {
+              setSelectedInvoice(details)
+              setViewDialogOpen(true)
+            })
+            .catch((error: any) => {
+              toast({
+                title: "Error",
+                description: error.message || "Failed to load invoice details",
+                variant: "destructive",
+              })
+            })
+        } else {
+          // If invoice not in list, try to fetch it directly
+          billingApi.getInvoiceById(invoiceIdParam)
+            .then((details) => {
+              setSelectedInvoice(details)
+              setViewDialogOpen(true)
+            })
+            .catch((error: any) => {
+              console.error("Error loading invoice:", error)
+              toast({
+                title: "Error",
+                description: "Invoice not found",
+                variant: "destructive",
+              })
+            })
+        }
+      } else if (!invoiceIdParam) {
+        // Reset ref when invoiceId param is removed
+        invoiceIdHandledRef.current = null
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMounted, invoices, searchParams])
 
   const loadInvoices = async () => {
     try {

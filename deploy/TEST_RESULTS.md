@@ -103,3 +103,5 @@ ssh -i ~/.ssh/id_asusme fhir@41.89.173.8 'docker ps --filter "name=kiplombe"'
 - ✅ Ready for full deployment: **YES**
 
 
+
+

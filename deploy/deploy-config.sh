@@ -22,3 +22,5 @@ export NEXT_PUBLIC_API_URL=""  # Leave empty for relative URLs
 export FRONTEND_URL="http://${SERVER_IP}"
 
 
+
+

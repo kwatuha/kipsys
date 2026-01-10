@@ -7,10 +7,12 @@ import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
-import { Search, FileText, Package, Plus, Edit, Loader2, MoreVertical, Eye, CheckCircle, XCircle, Trash2 } from "lucide-react"
+import { Search, FileText, Package, Plus, Edit, Loader2, MoreVertical, Eye, CheckCircle, XCircle, Trash2, History } from "lucide-react"
 import { AddPrescriptionForm } from "@/components/add-prescription-form"
 import { MedicationForm } from "@/components/medication-form"
 import { DrugInventoryForm } from "@/components/drug-inventory-form"
+import { BatchTraceability } from "@/components/batch-traceability"
+import { DrugInventoryHistoryDialog } from "@/components/drug-inventory-history-dialog"
 import { pharmacyApi } from "@/lib/api"
 import {
   DropdownMenu,
@@ -120,6 +122,8 @@ export default function PharmacyPage() {
   const [drugInventoryToDelete, setDrugInventoryToDelete] = useState<DrugInventoryItem | null>(null)
   const [isDeletingDrugInventory, setIsDeletingDrugInventory] = useState(false)
   const [deleteDrugInventoryError, setDeleteDrugInventoryError] = useState<string | null>(null)
+  const [isDrugInventoryHistoryOpen, setIsDrugInventoryHistoryOpen] = useState(false)
+  const [selectedDrugInventoryForHistory, setSelectedDrugInventoryForHistory] = useState<DrugInventoryItem | null>(null)
 
   const loadPrescriptions = async () => {
     try {
@@ -280,6 +284,11 @@ export default function PharmacyPage() {
     setSelectedDrugInventoryItem(null)
   }
 
+  const handleViewDrugInventoryHistory = (item: DrugInventoryItem) => {
+    setSelectedDrugInventoryForHistory(item)
+    setIsDrugInventoryHistoryOpen(true)
+  }
+
   const handleDeleteDrugInventoryClick = (item: DrugInventoryItem) => {
     setDrugInventoryToDelete(item)
     setDeleteDrugInventoryError(null)
@@ -335,10 +344,11 @@ export default function PharmacyPage() {
       </div>
 
       <Tabs defaultValue="prescriptions" className="w-full">
-        <TabsList className="grid w-full grid-cols-3">
+        <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="prescriptions">Prescriptions</TabsTrigger>
           <TabsTrigger value="medications">Medications</TabsTrigger>
           <TabsTrigger value="drug-inventory">Drug Inventory</TabsTrigger>
+          <TabsTrigger value="batch-trace">Batch Trace</TabsTrigger>
         </TabsList>
 
         <TabsContent value="prescriptions" className="space-y-4 mt-4">
@@ -642,6 +652,10 @@ export default function PharmacyPage() {
                                   </Button>
                                 </DropdownMenuTrigger>
                                 <DropdownMenuContent align="end">
+                                  <DropdownMenuItem onClick={() => handleViewDrugInventoryHistory(item)}>
+                                    <History className="h-4 w-4 mr-2" />
+                                    View History
+                                  </DropdownMenuItem>
                                   <DropdownMenuItem onClick={() => handleEditDrugInventoryClick(item)}>
                                     <Edit className="h-4 w-4 mr-2" />
                                     Edit
@@ -672,6 +686,10 @@ export default function PharmacyPage() {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="batch-trace" className="space-y-4 mt-4">
+          <BatchTraceability />
         </TabsContent>
       </Tabs>
 
@@ -965,6 +983,19 @@ export default function PharmacyPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Drug Inventory History Dialog */}
+      <DrugInventoryHistoryDialog
+        open={isDrugInventoryHistoryOpen}
+        onOpenChange={(open) => {
+          setIsDrugInventoryHistoryOpen(open)
+          if (!open) {
+            setSelectedDrugInventoryForHistory(null)
+          }
+        }}
+        drugInventoryId={selectedDrugInventoryForHistory?.drugInventoryId}
+        batchNumber={selectedDrugInventoryForHistory?.batchNumber}
+      />
     </div>
   )
 }

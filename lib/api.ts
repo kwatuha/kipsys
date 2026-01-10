@@ -209,6 +209,28 @@ export const pharmacyApi = {
   
   createDispensation: (data: any) =>
     apiRequest<any>('/api/pharmacy/dispensations', { method: 'POST', body: data }),
+  
+  // Batch Traceability
+  getBatchTrace: (batchNumber: string) =>
+    apiRequest<any>(`/api/pharmacy/batch-trace/${batchNumber}`),
+  
+  getBatchTraceList: (search?: string, medicationId?: string) => {
+    const params = new URLSearchParams();
+    if (search) params.append('search', search);
+    if (medicationId) params.append('medicationId', medicationId);
+    const query = params.toString();
+    return apiRequest<any[]>(`/api/pharmacy/batch-trace${query ? `?${query}` : ''}`);
+  },
+
+  // Drug Inventory Transaction History
+  getDrugInventoryTransactions: (drugInventoryId: string) =>
+    apiRequest<any>(`/api/pharmacy/drug-inventory/${drugInventoryId}/transactions`),
+  
+  getDrugInventoryTransactionsByBatch: (batchNumber: string) =>
+    apiRequest<any>(`/api/pharmacy/drug-inventory/batch/${batchNumber}/transactions`),
+  
+  getMedicationInventoryHistory: (medicationId: string) =>
+    apiRequest<any>(`/api/pharmacy/drug-inventory/medication/${medicationId}/history`),
 };
 
 // Notification API

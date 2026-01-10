@@ -498,5 +498,103 @@ router.delete('/:id', async (req, res) => {
     }
 });
 
+/**
+ * @route POST /api/queue/cashier/check-and-complete
+ * @description Check if all invoices for a patient are paid and complete cashier queue entries
+ * This is useful for fixing cases where payments were recorded before the automatic completion logic was added
+ */
+router.post('/cashier/check-and-complete', async (req, res) => {
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
+
+        const { patientId, patientNumber } = req.body;
+        let targetPatientId = patientId;
+
+        // If patientNumber is provided, find the patientId
+        if (!targetPatientId && patientNumber) {
+            const [patients] = await connection.execute(
+                'SELECT patientId FROM patients WHERE patientNumber = ?',
+                [patientNumber]
+            );
+            if (patients.length === 0) {
+                await connection.rollback();
+                return res.status(404).json({ message: 'Patient not found' });
+            }
+            targetPatientId = patients[0].patientId;
+        }
+
+        if (!targetPatientId) {
+            await connection.rollback();
+            return res.status(400).json({ message: 'patientId or patientNumber is required' });
+        }
+
+        // Get all invoices for this patient (excluding draft and cancelled)
+        const [allPatientInvoices] = await connection.execute(
+            `SELECT invoiceId, invoiceNumber, status, balance, totalAmount, paidAmount
+             FROM invoices 
+             WHERE patientId = ? 
+               AND status NOT IN ('draft', 'cancelled')`,
+            [targetPatientId]
+        );
+
+        // Check if all invoices are fully paid
+        let allInvoicesPaid = false;
+        if (allPatientInvoices.length > 0) {
+            allInvoicesPaid = allPatientInvoices.every((inv) => {
+                const balance = parseFloat(inv.balance || 0);
+                const status = (inv.status || '').toLowerCase();
+                return status === 'paid' || balance <= 0;
+            });
+        } else {
+            // No invoices = nothing to pay
+            allInvoicesPaid = true;
+        }
+
+        // Find all active cashier queue entries for this patient
+        const [cashierQueues] = await connection.execute(
+            `SELECT queueId, ticketNumber, status 
+             FROM queue_entries 
+             WHERE patientId = ? 
+               AND servicePoint = 'cashier' 
+               AND status NOT IN ('completed', 'cancelled')`,
+            [targetPatientId]
+        );
+
+        const completedQueues = [];
+        if (allInvoicesPaid && cashierQueues.length > 0) {
+            for (const queueEntry of cashierQueues) {
+                await connection.execute(
+                    `UPDATE queue_entries 
+                     SET status = 'completed', endTime = NOW(), updatedAt = NOW() 
+                     WHERE queueId = ?`,
+                    [queueEntry.queueId]
+                );
+                completedQueues.push(queueEntry);
+            }
+        }
+
+        await connection.commit();
+
+        res.status(200).json({
+            message: allInvoicesPaid 
+                ? `All ${allPatientInvoices.length} invoice(s) are paid. ${completedQueues.length} cashier queue entry/entries completed.`
+                : `Patient has ${allPatientInvoices.length} invoice(s), but not all are paid. Queue entries not completed.`,
+            patientId: targetPatientId,
+            totalInvoices: allPatientInvoices.length,
+            allInvoicesPaid: allInvoicesPaid,
+            activeCashierQueues: cashierQueues.length,
+            completedQueues: completedQueues.length,
+            completedQueueIds: completedQueues.map(q => q.queueId)
+        });
+    } catch (error) {
+        await connection.rollback();
+        console.error('Error checking and completing cashier queue:', error);
+        res.status(500).json({ message: 'Error checking and completing cashier queue', error: error.message });
+    } finally {
+        connection.release();
+    }
+});
+
 module.exports = router;
 

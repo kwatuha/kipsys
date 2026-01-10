@@ -166,26 +166,119 @@ router.post('/', async (req, res) => {
                 chargeId = newCharge.insertId;
             }
 
-            // Generate invoice number
-            const [invoiceCount] = await connection.execute(
-                'SELECT COUNT(*) as count FROM invoices WHERE DATE(createdAt) = CURDATE()'
+            // Generate invoice number (same approach as triage numbers to avoid duplicates)
+            const today = new Date().toISOString().split('T')[0].replace(/-/g, '');
+            const datePrefix = `INV-${today}-`;
+            
+            // Get the maximum invoice number for today (extract the numeric part after last dash)
+            const [maxResult] = await connection.execute(
+                `SELECT MAX(CAST(SUBSTRING_INDEX(invoiceNumber, '-', -1) AS UNSIGNED)) as maxNum 
+                 FROM invoices 
+                 WHERE invoiceNumber LIKE CONCAT(?, '%')`,
+                [datePrefix]
             );
-            const invoiceNum = invoiceCount[0].count + 1;
-            const invoiceNumber = `INV-${new Date().toISOString().split('T')[0].replace(/-/g, '')}-${String(invoiceNum).padStart(4, '0')}`;
+            
+            let nextNum = (maxResult[0]?.maxNum || 0) + 1;
+            let invoiceNumber = `${datePrefix}${String(nextNum).padStart(4, '0')}`;
+            
+            // Check if this number already exists (safety check for race conditions)
+            let attempts = 0;
+            while (attempts < 100) {
+                const [existing] = await connection.execute(
+                    'SELECT invoiceId FROM invoices WHERE invoiceNumber = ?',
+                    [invoiceNumber]
+                );
+                
+                if (existing.length === 0) {
+                    break; // Number is available
+                }
+                // Number exists, try next one
+                nextNum++;
+                invoiceNumber = `${datePrefix}${String(nextNum).padStart(4, '0')}`;
+                attempts++;
+            }
+            
+            if (attempts >= 100) {
+                await connection.rollback();
+                connection.release();
+                return res.status(500).json({ 
+                    message: 'Failed to generate unique invoice number',
+                    error: 'Please try again.'
+                });
+            }
 
-            // Create invoice for registration fee
-            const [invoiceResult] = await connection.execute(
-                `INSERT INTO invoices (invoiceNumber, patientId, invoiceDate, totalAmount, balance, status, notes, createdBy)
-                 VALUES (?, ?, CURDATE(), ?, ?, 'pending', ?, ?)`,
-                [
-                    invoiceNumber,
-                    patientId,
-                    registrationFeeAmount,
-                    registrationFeeAmount, // balance = totalAmount initially
-                    'Registration fee payment',
-                    userId || null
-                ]
-            );
+            // Create invoice for registration fee (with retry on duplicate key error)
+            let invoiceResult;
+            try {
+                [invoiceResult] = await connection.execute(
+                    `INSERT INTO invoices (invoiceNumber, patientId, invoiceDate, totalAmount, balance, status, notes, createdBy)
+                     VALUES (?, ?, CURDATE(), ?, ?, 'pending', ?, ?)`,
+                    [
+                        invoiceNumber,
+                        patientId,
+                        registrationFeeAmount,
+                        registrationFeeAmount, // balance = totalAmount initially
+                        'Registration fee payment',
+                        userId || null
+                    ]
+                );
+            } catch (insertError) {
+                // Handle duplicate key error - find next available number
+                if (insertError.code === 'ER_DUP_ENTRY' || insertError.errno === 1062) {
+                    // Get max number and find next available
+                    const [retryMaxResult] = await connection.execute(
+                        `SELECT MAX(CAST(SUBSTRING_INDEX(invoiceNumber, '-', -1) AS UNSIGNED)) as maxNum 
+                         FROM invoices 
+                         WHERE invoiceNumber LIKE CONCAT(?, '%')`,
+                        [datePrefix]
+                    );
+                    
+                    let retryNum = (retryMaxResult[0]?.maxNum || 0) + 1;
+                    let foundAvailable = false;
+                    let retryAttempts = 0;
+                    
+                    while (!foundAvailable && retryAttempts < 100) {
+                        const testNumber = `${datePrefix}${String(retryNum).padStart(4, '0')}`;
+                        const [existing] = await connection.execute(
+                            'SELECT invoiceId FROM invoices WHERE invoiceNumber = ?',
+                            [testNumber]
+                        );
+                        
+                        if (existing.length === 0) {
+                            invoiceNumber = testNumber;
+                            foundAvailable = true;
+                        } else {
+                            retryNum++;
+                            retryAttempts++;
+                        }
+                    }
+                    
+                    if (!foundAvailable) {
+                        await connection.rollback();
+                        connection.release();
+                        return res.status(500).json({ 
+                            message: 'Failed to generate unique invoice number',
+                            error: 'Please try again.'
+                        });
+                    }
+                    
+                    // Retry insert with new number
+                    [invoiceResult] = await connection.execute(
+                        `INSERT INTO invoices (invoiceNumber, patientId, invoiceDate, totalAmount, balance, status, notes, createdBy)
+                         VALUES (?, ?, CURDATE(), ?, ?, 'pending', ?, ?)`,
+                        [
+                            invoiceNumber,
+                            patientId,
+                            registrationFeeAmount,
+                            registrationFeeAmount,
+                            'Registration fee payment',
+                            userId || null
+                        ]
+                    );
+                } else {
+                    throw insertError; // Re-throw if it's not a duplicate key error
+                }
+            }
 
             const invoiceId = invoiceResult.insertId;
 

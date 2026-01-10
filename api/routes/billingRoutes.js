@@ -348,32 +348,134 @@ router.post('/invoices', async (req, res) => {
         }
 
         // Generate invoice number if not provided
+        // Use same approach as triage numbers to avoid duplicates in concurrent scenarios
         let finalInvoiceNumber = invoiceNumber;
         if (!finalInvoiceNumber) {
-            const [count] = await connection.execute('SELECT COUNT(*) as count FROM invoices WHERE DATE(createdAt) = CURDATE()');
-            const invoiceNum = count[0].count + 1;
-            finalInvoiceNumber = `INV-${new Date().toISOString().split('T')[0].replace(/-/g, '')}-${String(invoiceNum).padStart(4, '0')}`;
+            const today = new Date().toISOString().split('T')[0].replace(/-/g, '');
+            const datePrefix = `INV-${today}-`;
+            
+            // Get the maximum invoice number for today (extract the numeric part after last dash)
+            const [maxResult] = await connection.execute(
+                `SELECT MAX(CAST(SUBSTRING_INDEX(invoiceNumber, '-', -1) AS UNSIGNED)) as maxNum 
+                 FROM invoices 
+                 WHERE invoiceNumber LIKE CONCAT(?, '%')`,
+                [datePrefix]
+            );
+            
+            let nextNum = (maxResult[0]?.maxNum || 0) + 1;
+            finalInvoiceNumber = `${datePrefix}${String(nextNum).padStart(4, '0')}`;
+            
+            // Check if this number already exists (safety check for race conditions)
+            let attempts = 0;
+            while (attempts < 100) {
+                const [existing] = await connection.execute(
+                    'SELECT invoiceId FROM invoices WHERE invoiceNumber = ?',
+                    [finalInvoiceNumber]
+                );
+                
+                if (existing.length === 0) {
+                    break; // Number is available
+                }
+                // Number exists, try next one
+                nextNum++;
+                finalInvoiceNumber = `${datePrefix}${String(nextNum).padStart(4, '0')}`;
+                attempts++;
+            }
+            
+            if (attempts >= 100) {
+                await connection.rollback();
+                connection.release();
+                return res.status(500).json({ 
+                    message: 'Failed to generate unique invoice number',
+                    error: 'Please try again.'
+                });
+            }
         }
 
         // Calculate total amount
         const totalAmount = items.reduce((sum, item) => sum + (parseFloat(item.totalPrice) || 0), 0);
 
-        // Insert invoice
-        const [result] = await connection.execute(
-            `INSERT INTO invoices (invoiceNumber, patientId, invoiceDate, dueDate, totalAmount, balance, status, notes, createdBy)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-                finalInvoiceNumber,
-                patientId,
-                invoiceDate || new Date().toISOString().split('T')[0],
-                dueDate || null,
-                totalAmount,
-                totalAmount, // balance = totalAmount initially
-                status,
-                notes || null,
-                userId || null
-            ]
-        );
+        // Insert invoice (with retry on duplicate key error)
+        let result;
+        try {
+            [result] = await connection.execute(
+                `INSERT INTO invoices (invoiceNumber, patientId, invoiceDate, dueDate, totalAmount, balance, status, notes, createdBy)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                    finalInvoiceNumber,
+                    patientId,
+                    invoiceDate || new Date().toISOString().split('T')[0],
+                    dueDate || null,
+                    totalAmount,
+                    totalAmount, // balance = totalAmount initially
+                    status,
+                    notes || null,
+                    userId || null
+                ]
+            );
+        } catch (insertError) {
+            // Handle duplicate key error - find next available number
+            if (insertError.code === 'ER_DUP_ENTRY' || insertError.errno === 1062) {
+                const today = new Date().toISOString().split('T')[0].replace(/-/g, '');
+                const datePrefix = `INV-${today}-`;
+                
+                        // Get max number and find next available
+                        const [maxResult] = await connection.execute(
+                            `SELECT MAX(CAST(SUBSTRING_INDEX(invoiceNumber, '-', -1) AS UNSIGNED)) as maxNum 
+                             FROM invoices 
+                             WHERE invoiceNumber LIKE CONCAT(?, '%')`,
+                            [datePrefix]
+                        );
+                
+                let retryNum = (maxResult[0]?.maxNum || 0) + 1;
+                let foundAvailable = false;
+                let retryAttempts = 0;
+                
+                while (!foundAvailable && retryAttempts < 100) {
+                    const testNumber = `${datePrefix}${String(retryNum).padStart(4, '0')}`;
+                    const [existing] = await connection.execute(
+                        'SELECT invoiceId FROM invoices WHERE invoiceNumber = ?',
+                        [testNumber]
+                    );
+                    
+                    if (existing.length === 0) {
+                        finalInvoiceNumber = testNumber;
+                        foundAvailable = true;
+                    } else {
+                        retryNum++;
+                        retryAttempts++;
+                    }
+                }
+                
+                if (!foundAvailable) {
+                    await connection.rollback();
+                    connection.release();
+                    return res.status(500).json({ 
+                        message: 'Failed to generate unique invoice number',
+                        error: 'Please try again.'
+                    });
+                }
+                
+                // Retry insert with new number
+                [result] = await connection.execute(
+                    `INSERT INTO invoices (invoiceNumber, patientId, invoiceDate, dueDate, totalAmount, balance, status, notes, createdBy)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [
+                        finalInvoiceNumber,
+                        patientId,
+                        invoiceDate || new Date().toISOString().split('T')[0],
+                        dueDate || null,
+                        totalAmount,
+                        totalAmount,
+                        status,
+                        notes || null,
+                        userId || null
+                    ]
+                );
+            } else {
+                throw insertError; // Re-throw if it's not a duplicate key error
+            }
+        }
 
         const invoiceId = result.insertId;
 
@@ -730,6 +832,69 @@ router.post('/invoices/:id/payment', async (req, res) => {
                     // Don't fail the payment if consultation queue creation fails
                 }
             }
+        }
+
+        // Check if all pending invoices for this patient are now paid
+        // If so, automatically complete cashier queue entries for this patient
+        try {
+            // Get all invoices for this patient (excluding draft and cancelled)
+            // Only consider invoices that require payment (pending or partial status, or balance > 0)
+            const [allPatientInvoices] = await connection.execute(
+                `SELECT invoiceId, invoiceNumber, status, balance, totalAmount, paidAmount
+                 FROM invoices 
+                 WHERE patientId = ? 
+                   AND status NOT IN ('draft', 'cancelled')`,
+                [invoice.patientId]
+            );
+
+            // Check if all invoices are fully paid (status = 'paid' OR balance <= 0)
+            let allInvoicesPaid = false;
+            if (allPatientInvoices.length > 0) {
+                // Check if every invoice is either:
+                // 1. Status is 'paid', OR
+                // 2. Balance is 0 or negative (fully paid)
+                allInvoicesPaid = allPatientInvoices.every((inv) => {
+                    const balance = parseFloat(inv.balance || 0);
+                    const status = (inv.status || '').toLowerCase();
+                    // Invoice is considered paid if status is 'paid' OR balance is 0 or less
+                    return status === 'paid' || balance <= 0;
+                });
+            }
+
+            // Only complete cashier queue if there were invoices and all are paid
+            // (If no invoices, don't complete queue - might have been added for other reason)
+            if (allPatientInvoices.length > 0 && allInvoicesPaid) {
+                // Find all active cashier queue entries for this patient
+                const [cashierQueues] = await connection.execute(
+                    `SELECT queueId, ticketNumber, status 
+                     FROM queue_entries 
+                     WHERE patientId = ? 
+                       AND servicePoint = 'cashier' 
+                       AND status NOT IN ('completed', 'cancelled')`,
+                    [invoice.patientId]
+                );
+
+                // Complete all cashier queue entries for this patient
+                if (cashierQueues.length > 0) {
+                    for (const queueEntry of cashierQueues) {
+                        try {
+                            await connection.execute(
+                                `UPDATE queue_entries 
+                                 SET status = 'completed', endTime = NOW(), updatedAt = NOW() 
+                                 WHERE queueId = ?`,
+                                [queueEntry.queueId]
+                            );
+                            console.log(`✅ Automatically completed cashier queue entry ${queueEntry.queueId} (ticket: ${queueEntry.ticketNumber}) for patient ${invoice.patientId} - all ${allPatientInvoices.length} invoice(s) paid`);
+                        } catch (queueError) {
+                            console.error(`Error completing cashier queue entry ${queueEntry.queueId}:`, queueError);
+                            // Continue with other queue entries even if one fails
+                        }
+                    }
+                }
+            }
+        } catch (queueCheckError) {
+            console.error('Error checking and completing cashier queue after payment:', queueCheckError);
+            // Don't fail the payment if queue check/completion fails - payment is already recorded
         }
 
         await connection.commit();

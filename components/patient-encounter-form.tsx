@@ -235,6 +235,8 @@ export function PatientEncounterForm({
   const [patientAllergies, setPatientAllergies] = useState<any[]>([])
   const [patientMedications, setPatientMedications] = useState<any[]>([])
   const [patientLabResults, setPatientLabResults] = useState<any[]>([])
+  const [patientProcedures, setPatientProcedures] = useState<any[]>([])
+  const [patientOrders, setPatientOrders] = useState<any[]>([]) // Invoices with consumables/orders
   const [patientHistory, setPatientHistory] = useState<any[]>([])
   const [patientVitals, setPatientVitals] = useState<any[]>([])
   const [todayVitals, setTodayVitals] = useState<any | null>(null)
@@ -539,7 +541,77 @@ export function PatientEncounterForm({
         }
       }
     }
-  }, [patientLabResults, patientMedications, patientHistory, open, patientId, appendLabTest, appendMedication, form])
+
+    // Load existing procedures for the encounter date
+    const currentProcedures = form.getValues("procedures") || []
+    if (currentProcedures.length === 0 && patientProcedures.length > 0 && procedures.length > 0) {
+      // Get procedures from encounter date and convert them to form format
+      const encounterProcedures = patientProcedures.filter((procedure: any) => {
+        const procedureDateStr = format(new Date(procedure.procedureDate), 'yyyy-MM-dd')
+        return procedureDateStr === encounterDateStr && procedure.procedureId
+      })
+
+      if (encounterProcedures.length > 0) {
+        const proceduresToAdd: any[] = []
+        encounterProcedures.forEach((procedure: any) => {
+          // Check if procedure exists in the procedures catalog
+          const existingProc = procedures.find(p => p.procedureId?.toString() === procedure.procedureId?.toString())
+          if (existingProc) {
+            proceduresToAdd.push({
+              procedureId: procedure.procedureId?.toString() || "",
+              notes: procedure.notes || "",
+              complications: procedure.complications || "",
+            })
+          }
+        })
+        
+        if (proceduresToAdd.length > 0) {
+          // Use setTimeout to avoid state updates during render
+          setTimeout(() => {
+            proceduresToAdd.forEach(proc => {
+              appendProcedure(proc)
+            })
+          }, 0)
+        }
+      }
+    }
+
+    // Load existing orders/consumables for the encounter date
+    const currentOrders = form.getValues("orders") || []
+    if (currentOrders.length === 0 && patientOrders.length > 0 && consumables.length > 0) {
+      // Get invoices/orders from encounter date and convert them to form format
+      const encounterOrders = patientOrders.filter((invoice: any) => {
+        const invoiceDateStr = format(new Date(invoice.invoiceDate), 'yyyy-MM-dd')
+        const hasConsumablesNote = invoice.notes && invoice.notes.toLowerCase().includes('consumables ordered')
+        return invoiceDateStr === encounterDateStr && hasConsumablesNote && invoice.items && invoice.items.length > 0
+      })
+
+      if (encounterOrders.length > 0) {
+        const ordersToAdd: any[] = []
+        encounterOrders.forEach((invoice: any) => {
+          invoice.items.forEach((item: any) => {
+            // Find the consumable by chargeId - only add if it exists in consumables catalog
+            const consumable = consumables.find((c: any) => c.chargeId?.toString() === item.chargeId?.toString())
+            if (consumable && item.chargeId) {
+              ordersToAdd.push({
+                chargeId: item.chargeId?.toString() || "",
+                quantity: item.quantity?.toString() || "1",
+              })
+            }
+          })
+        })
+        
+        if (ordersToAdd.length > 0) {
+          // Use setTimeout to avoid state updates during render
+          setTimeout(() => {
+            ordersToAdd.forEach(order => {
+              appendOrder(order)
+            })
+          }, 0)
+        }
+      }
+    }
+  }, [patientLabResults, patientMedications, patientProcedures, patientOrders, patientHistory, open, patientId, appendLabTest, appendMedication, appendProcedure, appendOrder, form, procedures, consumables])
 
   const loadData = async () => {
     try {
@@ -569,13 +641,15 @@ export function PatientEncounterForm({
   const loadPatientData = async (id: string) => {
     try {
       setLoadingPatientData(true)
-      const [patient, allergies, prescriptions, labOrders, records, vitals] = await Promise.all([
+      const [patient, allergies, prescriptions, labOrders, records, vitals, procedures, invoices] = await Promise.all([
         patientApi.getById(id).catch(() => null),
         patientApi.getAllergies(id).catch(() => []),
         pharmacyApi.getPrescriptions(id, undefined, 1, 10).catch(() => []),
         laboratoryApi.getOrders(id, undefined, 1, 10).catch(() => []),
         medicalRecordsApi.getAll(undefined, id, undefined, undefined, undefined, 1, 10).catch(() => []),
         patientApi.getVitals(id, true).catch(() => []),
+        proceduresApi.getPatientProcedures(id).catch(() => []),
+        billingApi.getInvoices(id).catch(() => []), // Get all invoices for the patient
       ])
       
       // Fetch full order details with items for pending/in-progress orders to enable duplicate checking
@@ -615,10 +689,39 @@ export function PatientEncounterForm({
         })
       )
       
+      // Fetch invoice details for invoices that might contain consumables/orders
+      // We'll filter by notes containing "Consumables ordered" and fetch their items
+      let consumablesInvoices: any[] = []
+      if (invoices && invoices.length > 0) {
+        // Filter invoices that have notes containing "Consumables ordered"
+        const potentialConsumableInvoices = invoices.filter((invoice: any) => {
+          return invoice.notes && invoice.notes.toLowerCase().includes('consumables ordered')
+        })
+        
+        // Fetch full invoice details (including items) for these invoices
+        if (potentialConsumableInvoices.length > 0) {
+          const invoicesWithItems = await Promise.all(
+            potentialConsumableInvoices.map(async (invoice: any) => {
+              try {
+                const fullInvoice = await billingApi.getInvoiceById(invoice.invoiceId.toString())
+                return fullInvoice || invoice
+              } catch (err) {
+                console.error(`Error fetching invoice ${invoice.invoiceId} details:`, err)
+                return invoice
+              }
+            })
+          )
+          
+          consumablesInvoices = invoicesWithItems.filter(inv => inv && inv.items && inv.items.length > 0)
+        }
+      }
+
       setPatientData(patient)
       setPatientAllergies(allergies || [])
       setPatientMedications(prescriptionsWithItems || [])
       setPatientLabResults(labOrdersWithItems || [])
+      setPatientProcedures(procedures || [])
+      setPatientOrders(consumablesInvoices || [])
       setPatientHistory(records || [])
       setPatientVitals(vitals || [])
       // Get today's most recent vitals

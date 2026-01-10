@@ -503,26 +503,119 @@ router.post('/prescriptions', async (req, res) => {
 
             // Create invoice if we have items with pricing
             if (invoiceItems.length > 0 && totalAmount > 0) {
-                // Generate invoice number
-                const [invoiceCount] = await connection.execute(
-                    'SELECT COUNT(*) as count FROM invoices WHERE DATE(invoiceDate) = CURDATE()'
+                // Generate invoice number (same approach as triage numbers to avoid duplicates)
+                const today = new Date().toISOString().split('T')[0].replace(/-/g, '');
+                const datePrefix = `INV-${today}-`;
+                
+                // Get the maximum invoice number for today (extract the numeric part after last dash)
+                const [maxResult] = await connection.execute(
+                    `SELECT MAX(CAST(SUBSTRING_INDEX(invoiceNumber, '-', -1) AS UNSIGNED)) as maxNum 
+                     FROM invoices 
+                     WHERE invoiceNumber LIKE CONCAT(?, '%')`,
+                    [datePrefix]
                 );
-                const invoiceNum = invoiceCount[0].count + 1;
-                const invoiceNumber = `INV-${new Date().toISOString().split('T')[0].replace(/-/g, '')}-${String(invoiceNum).padStart(4, '0')}`;
+                
+                let nextNum = (maxResult[0]?.maxNum || 0) + 1;
+                let invoiceNumber = `${datePrefix}${String(nextNum).padStart(4, '0')}`;
+                
+                // Check if this number already exists (safety check for race conditions)
+                let attempts = 0;
+                while (attempts < 100) {
+                    const [existing] = await connection.execute(
+                        'SELECT invoiceId FROM invoices WHERE invoiceNumber = ?',
+                        [invoiceNumber]
+                    );
+                    
+                    if (existing.length === 0) {
+                        break; // Number is available
+                    }
+                    // Number exists, try next one
+                    nextNum++;
+                    invoiceNumber = `${datePrefix}${String(nextNum).padStart(4, '0')}`;
+                    attempts++;
+                }
+                
+                if (attempts >= 100) {
+                    await connection.rollback();
+                    connection.release();
+                    return res.status(500).json({ 
+                        message: 'Failed to generate unique invoice number',
+                        error: 'Please try again.'
+                    });
+                }
 
-                // Create invoice
-                const [invoiceResult] = await connection.execute(
-                    `INSERT INTO invoices (invoiceNumber, patientId, invoiceDate, totalAmount, balance, status, notes, createdBy)
-                     VALUES (?, ?, CURDATE(), ?, ?, 'pending', ?, ?)`,
-                    [
-                        invoiceNumber,
-                        patientId,
-                        totalAmount,
-                        totalAmount, // balance = totalAmount initially
-                        `Drug payment - Prescription: ${prescNumber}`,
-                        userId || null
-                    ]
-                );
+                // Create invoice (with retry on duplicate key error)
+                let invoiceResult;
+                try {
+                    [invoiceResult] = await connection.execute(
+                        `INSERT INTO invoices (invoiceNumber, patientId, invoiceDate, totalAmount, balance, status, notes, createdBy)
+                         VALUES (?, ?, CURDATE(), ?, ?, 'pending', ?, ?)`,
+                        [
+                            invoiceNumber,
+                            patientId,
+                            totalAmount,
+                            totalAmount, // balance = totalAmount initially
+                            `Drug payment - Prescription: ${prescNumber}`,
+                            userId || null
+                        ]
+                    );
+                } catch (insertError) {
+                    // Handle duplicate key error - find next available number
+                    if (insertError.code === 'ER_DUP_ENTRY' || insertError.errno === 1062) {
+                            // Get max number and find next available
+                            const [retryMaxResult] = await connection.execute(
+                                `SELECT MAX(CAST(SUBSTRING_INDEX(invoiceNumber, '-', -1) AS UNSIGNED)) as maxNum 
+                                 FROM invoices 
+                                 WHERE invoiceNumber LIKE CONCAT(?, '%')`,
+                                [datePrefix]
+                            );
+                        
+                        let retryNum = (retryMaxResult[0]?.maxNum || 0) + 1;
+                        let foundAvailable = false;
+                        let retryAttempts = 0;
+                        
+                        while (!foundAvailable && retryAttempts < 100) {
+                            const testNumber = `${datePrefix}${String(retryNum).padStart(4, '0')}`;
+                            const [existing] = await connection.execute(
+                                'SELECT invoiceId FROM invoices WHERE invoiceNumber = ?',
+                                [testNumber]
+                            );
+                            
+                            if (existing.length === 0) {
+                                invoiceNumber = testNumber;
+                                foundAvailable = true;
+                            } else {
+                                retryNum++;
+                                retryAttempts++;
+                            }
+                        }
+                        
+                        if (!foundAvailable) {
+                            await connection.rollback();
+                            connection.release();
+                            return res.status(500).json({ 
+                                message: 'Failed to generate unique invoice number',
+                                error: 'Please try again.'
+                            });
+                        }
+                        
+                        // Retry insert with new number
+                        [invoiceResult] = await connection.execute(
+                            `INSERT INTO invoices (invoiceNumber, patientId, invoiceDate, totalAmount, balance, status, notes, createdBy)
+                             VALUES (?, ?, CURDATE(), ?, ?, 'pending', ?, ?)`,
+                            [
+                                invoiceNumber,
+                                patientId,
+                                totalAmount,
+                                totalAmount,
+                                `Drug payment - Prescription: ${prescNumber}`,
+                                userId || null
+                            ]
+                        );
+                    } else {
+                        throw insertError; // Re-throw if it's not a duplicate key error
+                    }
+                }
 
                 const invoiceId = invoiceResult.insertId;
 
@@ -926,38 +1019,91 @@ router.post('/drug-inventory', async (req, res) => {
             return res.status(400).json({ message: 'Missing required fields: medicationId, batchNumber, expiryDate, sellPrice' });
         }
 
-        const [result] = await pool.execute(
-            `INSERT INTO drug_inventory 
-             (medicationId, batchNumber, quantity, unitPrice, manufactureDate, expiryDate, minPrice, sellPrice, location, notes)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-                medicationId,
-                batchNumber,
-                quantity || 0,
-                unitPrice || 0,
-                manufactureDate || null,
-                expiryDate,
-                minPrice || null,
-                sellPrice,
-                location || null,
-                notes || null
-            ]
-        );
+        const connection = await pool.getConnection();
+        try {
+            await connection.beginTransaction();
+            
+            const userId = req.user?.id || req.user?.userId || null;
+            const receivedQuantity = quantity || 0;
+            const transactionDate = new Date().toISOString().split('T')[0];
 
-        const [newItem] = await pool.execute(
-            `SELECT di.*, 
-                    m.name as medicationName, 
-                    m.medicationCode, 
-                    m.genericName,
-                    m.dosageForm,
-                    m.strength
-             FROM drug_inventory di
-             LEFT JOIN medications m ON di.medicationId = m.medicationId
-             WHERE di.drugInventoryId = ?`,
-            [result.insertId]
-        );
+            // Insert new drug inventory record
+            // Store originalQuantity and set status to 'active'
+            const [result] = await connection.execute(
+                `INSERT INTO drug_inventory 
+                 (medicationId, batchNumber, quantity, originalQuantity, unitPrice, manufactureDate, expiryDate, minPrice, sellPrice, location, notes, status)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
+                [
+                    medicationId,
+                    batchNumber,
+                    receivedQuantity,
+                    receivedQuantity, // Store original quantity for history tracking
+                    unitPrice || 0,
+                    manufactureDate || null,
+                    expiryDate,
+                    minPrice || null,
+                    sellPrice,
+                    location || null,
+                    notes || null
+                ]
+            );
 
-        res.status(201).json(newItem[0]);
+            const drugInventoryId = result.insertId;
+
+            // Record RECEIPT transaction for complete history
+            try {
+                const unitPriceForTransaction = unitPrice || 0;
+                const totalValue = receivedQuantity * unitPriceForTransaction;
+                
+                await connection.execute(
+                    `INSERT INTO drug_inventory_transactions 
+                     (drugInventoryId, transactionType, transactionDate, quantityChange, quantityBefore, quantityAfter, balanceAfter,
+                      unitPrice, totalValue, referenceType, referenceId, referenceNumber, performedBy, notes)
+                     VALUES (?, 'RECEIPT', ?, ?, ?, ?, ?, ?, ?, 'purchase_order', ?, ?, ?, ?)`,
+                    [
+                        drugInventoryId,
+                        transactionDate,
+                        receivedQuantity, // Positive for receipt
+                        0, // Quantity before (new batch starts at 0)
+                        receivedQuantity, // Quantity after receipt
+                        receivedQuantity, // Balance after
+                        unitPriceForTransaction,
+                        totalValue,
+                        null, // Reference ID (can be linked to purchase order later)
+                        batchNumber, // Reference number (use batch number for now)
+                        userId,
+                        `Initial stock receipt: ${receivedQuantity} units. Batch: ${batchNumber}${notes ? `. Notes: ${notes}` : ''}`
+                    ]
+                );
+            } catch (transactionError) {
+                console.error('Error recording drug inventory receipt transaction:', transactionError);
+                // Don't fail the transaction if transaction logging fails, but log it
+            }
+
+            await connection.commit();
+
+            // Get the created item with details
+            const [newItem] = await connection.execute(
+                `SELECT di.*, 
+                        m.name as medicationName, 
+                        m.medicationCode, 
+                        m.genericName,
+                        m.dosageForm,
+                        m.strength
+                 FROM drug_inventory di
+                 LEFT JOIN medications m ON di.medicationId = m.medicationId
+                 WHERE di.drugInventoryId = ?`,
+                [drugInventoryId]
+            );
+
+            res.status(201).json(newItem[0]);
+        } catch (error) {
+            await connection.rollback();
+            console.error('Error creating drug inventory item:', error);
+            res.status(500).json({ message: 'Error creating drug inventory item', error: error.message });
+        } finally {
+            connection.release();
+        }
     } catch (error) {
         console.error('Error creating drug inventory item:', error);
         res.status(500).json({ message: 'Error creating drug inventory item', error: error.message });
@@ -1411,15 +1557,67 @@ router.post('/dispensations', async (req, res) => {
             ]
         );
         
+        // Store dispensation ID for transaction record (before updating inventory)
+        const dispensationId = dispensationResult.insertId;
+        
         // Update drug inventory quantity (record is preserved even when quantity reaches 0 for audit purposes)
         const oldQuantity = drugInventory.quantity;
         const newQuantity = oldQuantity - quantityDispensed;
-        await connection.execute(
-            'UPDATE drug_inventory SET quantity = ?, updatedAt = NOW() WHERE drugInventoryId = ?',
-            [newQuantity, drugInventoryId]
-        );
+        const balanceAfter = newQuantity; // Running balance after this transaction
+        
+        // Determine batch status
+        let batchStatus = 'active';
+        let dateExhausted = null;
+        if (newQuantity <= 0) {
+            batchStatus = 'exhausted';
+            dateExhausted = new Date().toISOString().split('T')[0]; // Today's date
+            // Set quantity to 0 if it goes negative (shouldn't happen, but safety check)
+            const finalQuantity = newQuantity < 0 ? 0 : newQuantity;
+            await connection.execute(
+                `UPDATE drug_inventory 
+                 SET quantity = ?, status = ?, dateExhausted = ?, updatedAt = NOW() 
+                 WHERE drugInventoryId = ?`,
+                [finalQuantity, batchStatus, dateExhausted, drugInventoryId]
+            );
+        } else {
+            await connection.execute(
+                'UPDATE drug_inventory SET quantity = ?, updatedAt = NOW() WHERE drugInventoryId = ?',
+                [newQuantity, drugInventoryId]
+            );
+        }
 
-        // Record in audit history for tracking quantity changes
+        // Record transaction in drug_inventory_transactions table for complete history
+        try {
+            const transactionDate = new Date().toISOString().split('T')[0];
+            const unitPrice = drugInventory.sellPrice || drugInventory.unitPrice || 0;
+            const totalValue = quantityDispensed * unitPrice;
+            
+            await connection.execute(
+                `INSERT INTO drug_inventory_transactions 
+                 (drugInventoryId, transactionType, transactionDate, quantityChange, quantityBefore, quantityAfter, balanceAfter,
+                  unitPrice, totalValue, referenceType, referenceId, referenceNumber, performedBy, notes)
+                 VALUES (?, 'DISPENSATION', ?, ?, ?, ?, ?, ?, ?, 'dispensation', ?, ?, ?, ?)`,
+                [
+                    drugInventoryId,
+                    transactionDate,
+                    -quantityDispensed, // Negative for dispensation
+                    oldQuantity,
+                    newQuantity < 0 ? 0 : newQuantity, // Don't allow negative quantities
+                    newQuantity < 0 ? 0 : balanceAfter,
+                    unitPrice,
+                    totalValue,
+                    dispensationId, // Reference to the dispensation record
+                    `DISP-${dispensationId}`, // Human-readable reference
+                    userId,
+                    `Dispensed ${quantityDispensed} units to patient. Batch: ${drugInventory.batchNumber}${notes ? `. Notes: ${notes}` : ''}`
+                ]
+            );
+        } catch (transactionError) {
+            console.error('Error recording drug inventory transaction:', transactionError);
+            // Don't fail the transaction if transaction logging fails, but log it
+        }
+
+        // Also record in audit history for tracking quantity changes (for backward compatibility)
         try {
             await connection.execute(
                 `INSERT INTO drug_inventory_history 
@@ -1428,9 +1626,9 @@ router.post('/dispensations', async (req, res) => {
                 [
                     drugInventoryId,
                     oldQuantity.toString(),
-                    newQuantity.toString(),
+                    (newQuantity < 0 ? 0 : newQuantity).toString(),
                     userId,
-                    `Dispensed ${quantityDispensed} units. Batch: ${drugInventory.batchNumber}`
+                    `Dispensed ${quantityDispensed} units. Batch: ${drugInventory.batchNumber}. Status: ${batchStatus}`
                 ]
             );
         } catch (historyError) {
@@ -1487,6 +1685,534 @@ router.post('/dispensations', async (req, res) => {
         res.status(500).json({ message: 'Error creating dispensation', error: error.message });
     } finally {
         connection.release();
+    }
+});
+
+/**
+ * @route GET /api/pharmacy/batch-trace/:batchNumber
+ * @description Trace all patients who received drugs from a specific batch number
+ */
+router.get('/batch-trace/:batchNumber', async (req, res) => {
+    try {
+        const { batchNumber } = req.params;
+        
+        if (!batchNumber) {
+            return res.status(400).json({ message: 'Batch number is required' });
+        }
+        
+        const [rows] = await pool.execute(
+            `
+            SELECT 
+                d.dispensationId,
+                d.dispensationDate,
+                d.quantityDispensed,
+                d.batchNumber,
+                d.expiryDate,
+                d.notes as dispensationNotes,
+                d.createdAt as dispensedAt,
+                
+                -- Prescription item details
+                pi.itemId as prescriptionItemId,
+                pi.medicationName,
+                pi.dosage,
+                pi.frequency,
+                pi.duration,
+                pi.instructions,
+                
+                -- Prescription details
+                p.prescriptionId,
+                p.prescriptionNumber,
+                p.prescriptionDate,
+                p.status as prescriptionStatus,
+                
+                -- Patient details
+                pt.patientId,
+                pt.patientNumber,
+                pt.firstName as patientFirstName,
+                pt.lastName as patientLastName,
+                pt.phone as patientPhone,
+                pt.dateOfBirth,
+                pt.gender,
+                
+                -- Doctor details
+                dr.firstName as doctorFirstName,
+                dr.lastName as doctorLastName,
+                dr.username as doctorUsername,
+                
+                -- Dispensed by details
+                dispenser.firstName as dispensedByFirstName,
+                dispenser.lastName as dispensedByLastName,
+                dispenser.username as dispensedByUsername,
+                
+                -- Medication details
+                m.medicationId,
+                m.medicationCode,
+                m.name as medicationFullName,
+                m.genericName,
+                m.dosageForm,
+                m.strength,
+                m.manufacturer
+                
+            FROM dispensations d
+            INNER JOIN prescription_items pi ON d.prescriptionItemId = pi.itemId
+            INNER JOIN prescriptions p ON pi.prescriptionId = p.prescriptionId
+            INNER JOIN patients pt ON p.patientId = pt.patientId
+            INNER JOIN users dr ON p.doctorId = dr.userId
+            INNER JOIN users dispenser ON d.dispensedBy = dispenser.userId
+            LEFT JOIN medications m ON pi.medicationId = m.medicationId
+            WHERE d.batchNumber = ?
+            ORDER BY d.dispensationDate DESC, p.prescriptionDate DESC
+            `,
+            [batchNumber]
+        );
+        
+        // Also get batch information from drug_inventory
+        const [batchInfo] = await pool.execute(
+            `
+            SELECT 
+                di.drugInventoryId,
+                di.medicationId,
+                di.batchNumber,
+                di.quantity as currentQuantity,
+                di.unitPrice,
+                di.manufactureDate,
+                di.expiryDate,
+                di.minPrice,
+                di.sellPrice,
+                di.location,
+                di.notes,
+                di.createdAt,
+                m.name as medicationName,
+                m.medicationCode,
+                m.genericName
+            FROM drug_inventory di
+            LEFT JOIN medications m ON di.medicationId = m.medicationId
+            WHERE di.batchNumber = ?
+            LIMIT 1
+            `,
+            [batchNumber]
+        );
+        
+        res.status(200).json({
+            batchNumber: batchNumber,
+            batchInfo: batchInfo.length > 0 ? batchInfo[0] : null,
+            dispensations: rows,
+            totalDispensations: rows.length,
+            totalQuantityDispensed: rows.reduce((sum, row) => sum + (row.quantityDispensed || 0), 0),
+            uniquePatients: [...new Set(rows.map(row => row.patientId))].length
+        });
+    } catch (error) {
+        console.error('Error tracing batch number:', error);
+        res.status(500).json({ message: 'Error tracing batch number', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/pharmacy/batch-trace
+ * @description Get all unique batch numbers with summary information (for search/listing)
+ */
+router.get('/batch-trace', async (req, res) => {
+    try {
+        const { search, medicationId } = req.query;
+        
+        let query = `
+            SELECT DISTINCT
+                d.batchNumber,
+                COUNT(DISTINCT d.dispensationId) as dispensationCount,
+                COUNT(DISTINCT p.patientId) as patientCount,
+                SUM(d.quantityDispensed) as totalQuantityDispensed,
+                MIN(d.dispensationDate) as firstDispensationDate,
+                MAX(d.dispensationDate) as lastDispensationDate,
+                di.expiryDate,
+                di.medicationId,
+                m.name as medicationName,
+                m.medicationCode
+            FROM dispensations d
+            INNER JOIN prescription_items pi ON d.prescriptionItemId = pi.itemId
+            INNER JOIN prescriptions p ON pi.prescriptionId = p.prescriptionId
+            LEFT JOIN drug_inventory di ON d.batchNumber = di.batchNumber
+            LEFT JOIN medications m ON COALESCE(pi.medicationId, di.medicationId) = m.medicationId
+            WHERE d.batchNumber IS NOT NULL AND d.batchNumber != ''
+        `;
+        
+        const params = [];
+        
+        if (search) {
+            query += ` AND (d.batchNumber LIKE ? OR m.name LIKE ? OR m.genericName LIKE ?)`;
+            const searchTerm = `%${search}%`;
+            params.push(searchTerm, searchTerm, searchTerm);
+        }
+        
+        if (medicationId) {
+            query += ` AND (pi.medicationId = ? OR di.medicationId = ?)`;
+            params.push(medicationId, medicationId);
+        }
+        
+        query += ` 
+            GROUP BY d.batchNumber, di.expiryDate, di.medicationId, m.name, m.medicationCode
+            ORDER BY MAX(d.dispensationDate) DESC
+            LIMIT 100
+        `;
+        
+        const [rows] = await pool.execute(query, params);
+        
+        res.status(200).json(rows);
+    } catch (error) {
+        console.error('Error fetching batch trace list:', error);
+        res.status(500).json({ message: 'Error fetching batch trace list', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/pharmacy/drug-inventory/:id/transactions
+ * @description Get complete transaction history for a specific batch (drugInventoryId)
+ * Shows all receipts, dispensations, adjustments, etc. for the batch
+ */
+router.get('/drug-inventory/:id/transactions', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { startDate, endDate, transactionType } = req.query;
+
+        let query = `
+            SELECT 
+                dit.transactionId,
+                dit.drugInventoryId,
+                di.batchNumber,
+                di.medicationId,
+                m.name as medicationName,
+                m.medicationCode,
+                dit.transactionType,
+                dit.transactionDate,
+                dit.transactionTime,
+                dit.quantityChange,
+                dit.quantityBefore,
+                dit.quantityAfter,
+                dit.balanceAfter,
+                dit.unitPrice,
+                dit.totalValue,
+                dit.referenceType,
+                dit.referenceId,
+                dit.referenceNumber,
+                u.firstName as performedByFirstName,
+                u.lastName as performedByLastName,
+                dit.notes,
+                di.originalQuantity,
+                di.quantity as currentQuantity,
+                di.status as batchStatus,
+                di.dateExhausted,
+                di.expiryDate
+            FROM drug_inventory_transactions dit
+            INNER JOIN drug_inventory di ON dit.drugInventoryId = di.drugInventoryId
+            LEFT JOIN medications m ON di.medicationId = m.medicationId
+            LEFT JOIN users u ON dit.performedBy = u.userId
+            WHERE dit.drugInventoryId = ?
+        `;
+        const params = [id];
+
+        if (startDate) {
+            query += ` AND dit.transactionDate >= ?`;
+            params.push(startDate);
+        }
+
+        if (endDate) {
+            query += ` AND dit.transactionDate <= ?`;
+            params.push(endDate);
+        }
+
+        if (transactionType) {
+            query += ` AND dit.transactionType = ?`;
+            params.push(transactionType);
+        }
+
+        query += ` ORDER BY dit.transactionDate DESC, dit.transactionTime DESC`;
+
+        const [rows] = await pool.execute(query, params);
+
+        // Get batch summary
+        const [batchSummary] = await pool.execute(
+            `SELECT 
+                di.drugInventoryId,
+                di.batchNumber,
+                di.medicationId,
+                m.name as medicationName,
+                m.medicationCode,
+                di.originalQuantity,
+                di.quantity as currentQuantity,
+                di.status,
+                di.dateExhausted,
+                di.expiryDate,
+                di.unitPrice,
+                di.sellPrice,
+                di.location,
+                di.createdAt as batchCreatedAt
+             FROM drug_inventory di
+             LEFT JOIN medications m ON di.medicationId = m.medicationId
+             WHERE di.drugInventoryId = ?`,
+            [id]
+        );
+
+        res.status(200).json({
+            batch: batchSummary[0] || null,
+            transactions: rows,
+            totalTransactions: rows.length,
+            summary: {
+                totalReceived: rows.filter(t => t.transactionType === 'RECEIPT').reduce((sum, t) => sum + t.quantityChange, 0),
+                totalDispensed: Math.abs(rows.filter(t => t.transactionType === 'DISPENSATION').reduce((sum, t) => sum + t.quantityChange, 0)),
+                totalAdjustments: rows.filter(t => t.transactionType === 'ADJUSTMENT').reduce((sum, t) => sum + t.quantityChange, 0),
+                firstTransaction: rows.length > 0 ? rows[rows.length - 1] : null,
+                lastTransaction: rows.length > 0 ? rows[0] : null
+            }
+        });
+    } catch (error) {
+        console.error('Error fetching drug inventory transactions:', error);
+        res.status(500).json({ message: 'Error fetching drug inventory transactions', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/pharmacy/drug-inventory/batch/:batchNumber/transactions
+ * @description Get complete transaction history for a batch by batch number
+ */
+router.get('/drug-inventory/batch/:batchNumber/transactions', async (req, res) => {
+    try {
+        const { batchNumber } = req.params;
+        const { startDate, endDate, transactionType } = req.query;
+
+        // First, find the drugInventoryId for this batch
+        const [batches] = await pool.execute(
+            'SELECT drugInventoryId FROM drug_inventory WHERE batchNumber = ? ORDER BY createdAt DESC LIMIT 1',
+            [batchNumber]
+        );
+
+        if (batches.length === 0) {
+            return res.status(404).json({ message: 'Batch not found' });
+        }
+
+        const drugInventoryId = batches[0].drugInventoryId;
+
+        // Redirect to the drugInventoryId endpoint or query directly
+        let query = `
+            SELECT 
+                dit.transactionId,
+                dit.drugInventoryId,
+                di.batchNumber,
+                di.medicationId,
+                m.name as medicationName,
+                m.medicationCode,
+                dit.transactionType,
+                dit.transactionDate,
+                dit.transactionTime,
+                dit.quantityChange,
+                dit.quantityBefore,
+                dit.quantityAfter,
+                dit.balanceAfter,
+                dit.unitPrice,
+                dit.totalValue,
+                dit.referenceType,
+                dit.referenceId,
+                dit.referenceNumber,
+                u.firstName as performedByFirstName,
+                u.lastName as performedByLastName,
+                dit.notes
+            FROM drug_inventory_transactions dit
+            INNER JOIN drug_inventory di ON dit.drugInventoryId = di.drugInventoryId
+            LEFT JOIN medications m ON di.medicationId = m.medicationId
+            LEFT JOIN users u ON dit.performedBy = u.userId
+            WHERE dit.drugInventoryId = ?
+        `;
+        const params = [drugInventoryId];
+
+        if (startDate) {
+            query += ` AND dit.transactionDate >= ?`;
+            params.push(startDate);
+        }
+
+        if (endDate) {
+            query += ` AND dit.transactionDate <= ?`;
+            params.push(endDate);
+        }
+
+        if (transactionType) {
+            query += ` AND dit.transactionType = ?`;
+            params.push(transactionType);
+        }
+
+        query += ` ORDER BY dit.transactionDate DESC, dit.transactionTime DESC`;
+
+        const [rows] = await pool.execute(query, params);
+
+        res.status(200).json({
+            batchNumber: batchNumber,
+            drugInventoryId: drugInventoryId,
+            transactions: rows,
+            totalTransactions: rows.length
+        });
+    } catch (error) {
+        console.error('Error fetching batch transactions:', error);
+        res.status(500).json({ message: 'Error fetching batch transactions', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/pharmacy/drug-inventory/medication/:medicationId/history
+ * @description Get complete inventory history for a medication (all batches)
+ */
+router.get('/drug-inventory/medication/:medicationId/history', async (req, res) => {
+    try {
+        const { medicationId } = req.params;
+        const { startDate, endDate, status } = req.query;
+
+        // Get all batches for this medication
+        let batchQuery = `
+            SELECT 
+                di.drugInventoryId,
+                di.batchNumber,
+                di.originalQuantity,
+                di.quantity as currentQuantity,
+                di.status,
+                di.dateExhausted,
+                di.expiryDate,
+                di.unitPrice,
+                di.sellPrice,
+                di.createdAt as batchCreatedAt,
+                di.updatedAt as batchUpdatedAt
+            FROM drug_inventory di
+            WHERE di.medicationId = ?
+        `;
+        const batchParams = [medicationId];
+
+        if (status) {
+            batchQuery += ` AND di.status = ?`;
+            batchParams.push(status);
+        }
+
+        batchQuery += ` ORDER BY di.createdAt DESC`;
+
+        const [batches] = await pool.execute(batchQuery, batchParams);
+
+        // Get all transactions for all batches of this medication
+        let transactionQuery = `
+            SELECT 
+                dit.*,
+                di.batchNumber,
+                di.medicationId,
+                m.name as medicationName,
+                m.medicationCode,
+                u.firstName as performedByFirstName,
+                u.lastName as performedByLastName
+            FROM drug_inventory_transactions dit
+            INNER JOIN drug_inventory di ON dit.drugInventoryId = di.drugInventoryId
+            LEFT JOIN medications m ON di.medicationId = m.medicationId
+            LEFT JOIN users u ON dit.performedBy = u.userId
+            WHERE di.medicationId = ?
+        `;
+        const transactionParams = [medicationId];
+
+        if (startDate) {
+            transactionQuery += ` AND dit.transactionDate >= ?`;
+            transactionParams.push(startDate);
+        }
+
+        if (endDate) {
+            transactionQuery += ` AND dit.transactionDate <= ?`;
+            transactionParams.push(endDate);
+        }
+
+        transactionQuery += ` ORDER BY dit.transactionDate DESC, dit.transactionTime DESC`;
+
+        const [transactions] = await pool.execute(transactionQuery, transactionParams);
+
+        // Get medication info
+        const [medication] = await pool.execute(
+            'SELECT * FROM medications WHERE medicationId = ?',
+            [medicationId]
+        );
+
+        res.status(200).json({
+            medication: medication[0] || null,
+            batches: batches,
+            transactions: transactions,
+            summary: {
+                totalBatches: batches.length,
+                activeBatches: batches.filter(b => b.status === 'active').length,
+                exhaustedBatches: batches.filter(b => b.status === 'exhausted').length,
+                totalTransactions: transactions.length,
+                totalReceived: transactions.filter(t => t.transactionType === 'RECEIPT').reduce((sum, t) => sum + t.quantityChange, 0),
+                totalDispensed: Math.abs(transactions.filter(t => t.transactionType === 'DISPENSATION').reduce((sum, t) => sum + t.quantityChange, 0)),
+                currentStock: batches.reduce((sum, b) => sum + (b.currentQuantity || 0), 0)
+            }
+        });
+    } catch (error) {
+        console.error('Error fetching medication inventory history:', error);
+        res.status(500).json({ message: 'Error fetching medication inventory history', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/pharmacy/drug-inventory/:id/stock-levels
+ * @description Get historical stock levels at different points in time (snapshots)
+ * Useful for seeing inventory levels over time
+ */
+router.get('/drug-inventory/:id/stock-levels', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { startDate, endDate } = req.query;
+
+        // Get all transactions ordered by date
+        let query = `
+            SELECT 
+                dit.transactionDate,
+                dit.transactionTime,
+                dit.transactionType,
+                dit.balanceAfter as stockLevel,
+                dit.quantityChange,
+                dit.referenceNumber,
+                dit.notes
+            FROM drug_inventory_transactions dit
+            WHERE dit.drugInventoryId = ?
+        `;
+        const params = [id];
+
+        if (startDate) {
+            query += ` AND dit.transactionDate >= ?`;
+            params.push(startDate);
+        }
+
+        if (endDate) {
+            query += ` AND dit.transactionDate <= ?`;
+            params.push(endDate);
+        }
+
+        query += ` ORDER BY dit.transactionDate ASC, dit.transactionTime ASC`;
+
+        const [rows] = await pool.execute(query, params);
+
+        // Get batch info
+        const [batch] = await pool.execute(
+            `SELECT 
+                di.*,
+                m.name as medicationName,
+                m.medicationCode
+             FROM drug_inventory di
+             LEFT JOIN medications m ON di.medicationId = m.medicationId
+             WHERE di.drugInventoryId = ?`,
+            [id]
+        );
+
+        res.status(200).json({
+            batch: batch[0] || null,
+            stockLevels: rows,
+            summary: {
+                initialStock: rows.length > 0 ? rows[0].stockLevel - rows[0].quantityChange : 0,
+                finalStock: rows.length > 0 ? rows[rows.length - 1].stockLevel : 0,
+                minStock: rows.length > 0 ? Math.min(...rows.map(r => r.stockLevel)) : 0,
+                maxStock: rows.length > 0 ? Math.max(...rows.map(r => r.stockLevel)) : 0,
+                dataPoints: rows.length
+            }
+        });
+    } catch (error) {
+        console.error('Error fetching stock levels:', error);
+        res.status(500).json({ message: 'Error fetching stock levels', error: error.message });
     }
 });
 

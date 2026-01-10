@@ -12,6 +12,8 @@ import {
   History,
   Home,
   PillIcon as Pills,
+  Stethoscope,
+  Package,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -24,6 +26,8 @@ import { PatientAlerts } from "@/components/patient-alerts"
 import { PatientMedicalOverview } from "@/components/patient-medical-overview"
 import { PatientLabResults } from "@/components/patient-lab-results"
 import { PatientMedications } from "@/components/patient-medications"
+import { PatientProcedures } from "@/components/patient-procedures"
+import { PatientOrders } from "@/components/patient-orders"
 import { PatientAppointments } from "@/components/patient-appointments"
 import { PatientBilling } from "@/components/patient-billing"
 import { PatientAdmissions } from "@/components/patient-admissions"
@@ -279,6 +283,14 @@ export default function PatientProfilePage() {
                   <Pills className="h-4 w-4 mr-2" />
                   <span>Medications</span>
                 </TabsTrigger>
+                <TabsTrigger value="procedures" className="flex-grow py-2 px-3">
+                  <Stethoscope className="h-4 w-4 mr-2" />
+                  <span>Procedures</span>
+                </TabsTrigger>
+                <TabsTrigger value="orders" className="flex-grow py-2 px-3">
+                  <Package className="h-4 w-4 mr-2" />
+                  <span>Orders</span>
+                </TabsTrigger>
                 <TabsTrigger value="appointments" className="flex-grow py-2 px-3">
                   <Calendar className="h-4 w-4 mr-2" />
                   <span>Appointments</span>
@@ -311,6 +323,14 @@ export default function PatientProfilePage() {
 
               <TabsContent value="medications" className="space-y-4">
                 <PatientMedications patientId={patientId} />
+              </TabsContent>
+
+              <TabsContent value="procedures" className="space-y-4">
+                <PatientProcedures patientId={patientId} />
+              </TabsContent>
+
+              <TabsContent value="orders" className="space-y-4">
+                <PatientOrders patientId={patientId} />
               </TabsContent>
 
               <TabsContent value="appointments" className="space-y-4">
