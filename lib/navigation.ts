@@ -31,6 +31,7 @@ import {
   MapPin,
   Shield,
   Bell,
+  Store,
 } from "lucide-react"
 
 export interface NavigationItem {
@@ -284,6 +285,11 @@ export const navigationCategories: NavigationCategory[] = [
         title: "Settings",
         icon: Settings,
         href: "/settings",
+      },
+      {
+        title: "Drug Stores",
+        icon: Store,
+        href: "/settings/drug-stores",
       },
     ],
   },

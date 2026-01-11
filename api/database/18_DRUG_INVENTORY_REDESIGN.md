@@ -222,3 +222,4 @@ ADD INDEX idx_prescription (prescriptionId);
 - `GET /api/pharmacy/drug-inventory/:id/adjustments` - Get all adjustments for medication
 
 
+

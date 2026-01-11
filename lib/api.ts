@@ -197,6 +197,48 @@ export const pharmacyApi = {
   deleteDrugInventoryItem: (id: string) =>
     apiRequest<any>(`/api/pharmacy/drug-inventory/${id}`, { method: 'DELETE' }),
   
+  // Branches
+  getBranches: (search?: string, isActive?: string) => {
+    const params = new URLSearchParams();
+    if (search) params.append('search', search);
+    if (isActive) params.append('isActive', isActive);
+    return apiRequest<any[]>(`/api/pharmacy/branches?${params.toString()}`);
+  },
+  
+  getBranch: (id: string) =>
+    apiRequest<any>(`/api/pharmacy/branches/${id}`),
+  
+  createBranch: (data: any) =>
+    apiRequest<any>('/api/pharmacy/branches', { method: 'POST', body: data }),
+  
+  updateBranch: (id: string, data: any) =>
+    apiRequest<any>(`/api/pharmacy/branches/${id}`, { method: 'PUT', body: data }),
+  
+  deleteBranch: (id: string) =>
+    apiRequest<any>(`/api/pharmacy/branches/${id}`, { method: 'DELETE' }),
+  
+  // Drug Stores
+  getDrugStores: (branchId?: string, search?: string, isActive?: string, isDispensingStore?: string) => {
+    const params = new URLSearchParams();
+    if (branchId) params.append('branchId', branchId);
+    if (search) params.append('search', search);
+    if (isActive) params.append('isActive', isActive);
+    if (isDispensingStore) params.append('isDispensingStore', isDispensingStore);
+    return apiRequest<any[]>(`/api/pharmacy/drug-stores?${params.toString()}`);
+  },
+  
+  getDrugStore: (id: string) =>
+    apiRequest<any>(`/api/pharmacy/drug-stores/${id}`),
+  
+  createDrugStore: (data: any) =>
+    apiRequest<any>('/api/pharmacy/drug-stores', { method: 'POST', body: data }),
+  
+  updateDrugStore: (id: string, data: any) =>
+    apiRequest<any>(`/api/pharmacy/drug-stores/${id}`, { method: 'PUT', body: data }),
+  
+  deleteDrugStore: (id: string) =>
+    apiRequest<any>(`/api/pharmacy/drug-stores/${id}`, { method: 'DELETE' }),
+  
   // Dispensing
   getPaidPrescriptionItemsReadyForDispensing: (patientId?: string) => {
     const params = new URLSearchParams();

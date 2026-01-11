@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { pharmacyApi } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -20,6 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Loader2 } from "lucide-react"
 
 interface DrugInventoryItem {
   drugInventoryId?: number
@@ -67,8 +69,28 @@ export function DrugInventoryForm({ item, open, onOpenChange, onSuccess, medicat
   })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [stores, setStores] = useState<any[]>([])
+  const [loadingStores, setLoadingStores] = useState(false)
 
   useEffect(() => {
+    const loadStores = async () => {
+      try {
+        setLoadingStores(true)
+        const data = await pharmacyApi.getDrugStores(undefined, undefined, 'true')
+        setStores(data)
+      } catch (error: any) {
+        console.error('Error loading stores:', error)
+        // Don't show error toast, just log it - stores are optional
+        setStores([])
+      } finally {
+        setLoadingStores(false)
+      }
+    }
+
+    if (open) {
+      loadStores()
+    }
+
     if (item) {
       setFormData({
         medicationId: item.medicationId || 0,
@@ -277,12 +299,37 @@ export function DrugInventoryForm({ item, open, onOpenChange, onSuccess, medicat
 
           <div>
             <Label htmlFor="location">Location</Label>
-            <Input
-              id="location"
-              value={formData.location}
-              onChange={(e) => setFormData({ ...formData, location: e.target.value })}
-              placeholder="Storage location"
-            />
+            {loadingStores ? (
+              <div className="flex items-center justify-center h-10 border rounded-md">
+                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+              </div>
+            ) : stores.length > 0 ? (
+              <Select
+                value={formData.location || ''}
+                onValueChange={(value) => setFormData({ ...formData, location: value })}
+              >
+                <SelectTrigger id="location">
+                  <SelectValue placeholder="Select a store location" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">None (Enter manually)</SelectItem>
+                  {stores.map((store) => (
+                    <SelectItem key={store.storeId} value={store.storeName}>
+                      {store.storeName}
+                      {store.branchName && ` (${store.branchName})`}
+                      {store.isDispensingStore && ' - Dispensing'}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <Input
+                id="location"
+                value={formData.location}
+                onChange={(e) => setFormData({ ...formData, location: e.target.value })}
+                placeholder="Storage location (no stores configured)"
+              />
+            )}
           </div>
 
           <div>

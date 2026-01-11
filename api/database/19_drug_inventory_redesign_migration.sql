@@ -247,3 +247,4 @@ MODIFY COLUMN patientId INT
 COMMENT 'Patient who received the drug (for DISPENSATION transactions)';
 
 
+

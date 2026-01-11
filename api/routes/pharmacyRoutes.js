@@ -2898,4 +2898,469 @@ router.post('/stock-adjustments', async (req, res) => {
     }
 });
 
+// ============================================
+// BRANCHES (Multi-branch hospital support)
+// ============================================
+
+/**
+ * @route GET /api/pharmacy/branches
+ * @description Get all branches
+ */
+router.get('/branches', async (req, res) => {
+    try {
+        const { search, isActive } = req.query;
+        let query = 'SELECT * FROM branches WHERE 1=1';
+        const params = [];
+
+        if (isActive !== undefined && isActive !== 'all') {
+            query += ` AND isActive = ?`;
+            params.push(isActive === 'true' ? 1 : 0);
+        } else {
+            query += ` AND isActive = 1`;
+        }
+
+        if (search) {
+            query += ` AND (branchName LIKE ? OR branchCode LIKE ?)`;
+            const searchTerm = `%${search}%`;
+            params.push(searchTerm, searchTerm);
+        }
+
+        query += ' ORDER BY isMainBranch DESC, branchName';
+
+        const [rows] = await pool.execute(query, params);
+        res.status(200).json(rows);
+    } catch (error) {
+        console.error('Error fetching branches:', error);
+        res.status(500).json({ message: 'Error fetching branches', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/pharmacy/branches/:id
+ * @description Get a single branch by ID
+ */
+router.get('/branches/:id', async (req, res) => {
+    try {
+        const [rows] = await pool.execute(
+            'SELECT * FROM branches WHERE branchId = ?',
+            [req.params.id]
+        );
+        
+        if (rows.length > 0) {
+            res.status(200).json(rows[0]);
+        } else {
+            res.status(404).json({ message: 'Branch not found' });
+        }
+    } catch (error) {
+        console.error('Error fetching branch:', error);
+        res.status(500).json({ message: 'Error fetching branch', error: error.message });
+    }
+});
+
+/**
+ * @route POST /api/pharmacy/branches
+ * @description Create a new branch
+ */
+router.post('/branches', async (req, res) => {
+    try {
+        const branchData = req.body;
+
+        // Generate branch code if not provided
+        if (!branchData.branchCode) {
+            const [count] = await pool.execute('SELECT COUNT(*) as count FROM branches');
+            branchData.branchCode = `BR-${String(count[0].count + 1).padStart(3, '0')}`;
+        }
+
+        // If setting as main branch, unset other main branches
+        if (branchData.isMainBranch) {
+            await pool.execute('UPDATE branches SET isMainBranch = 0');
+        }
+
+        const [result] = await pool.execute(
+            `INSERT INTO branches (branchCode, branchName, address, phone, email, isMainBranch, isActive, notes)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                branchData.branchCode,
+                branchData.branchName,
+                branchData.address || null,
+                branchData.phone || null,
+                branchData.email || null,
+                branchData.isMainBranch ? 1 : 0,
+                branchData.isActive !== undefined ? (branchData.isActive ? 1 : 0) : 1,
+                branchData.notes || null
+            ]
+        );
+
+        const [created] = await pool.execute(
+            'SELECT * FROM branches WHERE branchId = ?',
+            [result.insertId]
+        );
+
+        res.status(201).json(created[0]);
+    } catch (error) {
+        console.error('Error creating branch:', error);
+        if (error.code === 'ER_DUP_ENTRY') {
+            return res.status(400).json({ message: 'Branch code already exists', error: error.message });
+        }
+        res.status(500).json({ message: 'Error creating branch', error: error.message });
+    }
+});
+
+/**
+ * @route PUT /api/pharmacy/branches/:id
+ * @description Update a branch
+ */
+router.put('/branches/:id', async (req, res) => {
+    try {
+        const branchData = req.body;
+        const updates = [];
+        const values = [];
+
+        if (branchData.branchName !== undefined) {
+            updates.push('branchName = ?');
+            values.push(branchData.branchName);
+        }
+        if (branchData.address !== undefined) {
+            updates.push('address = ?');
+            values.push(branchData.address || null);
+        }
+        if (branchData.phone !== undefined) {
+            updates.push('phone = ?');
+            values.push(branchData.phone || null);
+        }
+        if (branchData.email !== undefined) {
+            updates.push('email = ?');
+            values.push(branchData.email || null);
+        }
+        if (branchData.isMainBranch !== undefined) {
+            // If setting as main branch, unset other main branches
+            if (branchData.isMainBranch) {
+                await pool.execute('UPDATE branches SET isMainBranch = 0 WHERE branchId != ?', [req.params.id]);
+            }
+            updates.push('isMainBranch = ?');
+            values.push(branchData.isMainBranch ? 1 : 0);
+        }
+        if (branchData.isActive !== undefined) {
+            updates.push('isActive = ?');
+            values.push(branchData.isActive ? 1 : 0);
+        }
+        if (branchData.notes !== undefined) {
+            updates.push('notes = ?');
+            values.push(branchData.notes || null);
+        }
+
+        if (updates.length === 0) {
+            return res.status(400).json({ message: 'No fields to update' });
+        }
+
+        values.push(req.params.id);
+        await pool.execute(
+            `UPDATE branches SET ${updates.join(', ')}, updatedAt = NOW() WHERE branchId = ?`,
+            values
+        );
+
+        const [updated] = await pool.execute(
+            'SELECT * FROM branches WHERE branchId = ?',
+            [req.params.id]
+        );
+
+        res.status(200).json(updated[0]);
+    } catch (error) {
+        console.error('Error updating branch:', error);
+        res.status(500).json({ message: 'Error updating branch', error: error.message });
+    }
+});
+
+/**
+ * @route DELETE /api/pharmacy/branches/:id
+ * @description Delete a branch (soft delete by setting isActive = 0)
+ */
+router.delete('/branches/:id', async (req, res) => {
+    try {
+        // Check if branch has stores
+        const [stores] = await pool.execute(
+            'SELECT COUNT(*) as count FROM drug_stores WHERE branchId = ? AND isActive = 1',
+            [req.params.id]
+        );
+
+        if (stores[0].count > 0) {
+            return res.status(400).json({ message: 'Cannot delete branch with active stores. Please deactivate or delete stores first.' });
+        }
+
+        // Soft delete
+        await pool.execute(
+            'UPDATE branches SET isActive = 0, updatedAt = NOW() WHERE branchId = ?',
+            [req.params.id]
+        );
+
+        res.status(200).json({ message: 'Branch deactivated successfully' });
+    } catch (error) {
+        console.error('Error deleting branch:', error);
+        res.status(500).json({ message: 'Error deleting branch', error: error.message });
+    }
+});
+
+// ============================================
+// DRUG STORES
+// ============================================
+
+/**
+ * @route GET /api/pharmacy/drug-stores
+ * @description Get all drug stores
+ */
+router.get('/drug-stores', async (req, res) => {
+    try {
+        const { branchId, search, isActive, isDispensingStore } = req.query;
+        let query = `
+            SELECT ds.*, 
+                   b.branchName, 
+                   b.branchCode,
+                   b.isMainBranch
+            FROM drug_stores ds
+            LEFT JOIN branches b ON ds.branchId = b.branchId
+            WHERE 1=1
+        `;
+        const params = [];
+
+        if (isActive !== undefined && isActive !== 'all') {
+            query += ` AND ds.isActive = ?`;
+            params.push(isActive === 'true' ? 1 : 0);
+        } else {
+            query += ` AND ds.isActive = 1`;
+        }
+
+        if (branchId) {
+            query += ` AND ds.branchId = ?`;
+            params.push(branchId);
+        }
+
+        if (isDispensingStore !== undefined) {
+            query += ` AND ds.isDispensingStore = ?`;
+            params.push(isDispensingStore === 'true' ? 1 : 0);
+        }
+
+        if (search) {
+            query += ` AND (ds.storeName LIKE ? OR ds.storeCode LIKE ?)`;
+            const searchTerm = `%${search}%`;
+            params.push(searchTerm, searchTerm);
+        }
+
+        query += ' ORDER BY b.branchName, ds.storeName';
+
+        const [rows] = await pool.execute(query, params);
+        res.status(200).json(rows);
+    } catch (error) {
+        console.error('Error fetching drug stores:', error);
+        res.status(500).json({ message: 'Error fetching drug stores', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/pharmacy/drug-stores/:id
+ * @description Get a single drug store by ID
+ */
+router.get('/drug-stores/:id', async (req, res) => {
+    try {
+        const [rows] = await pool.execute(
+            `SELECT ds.*, 
+                    b.branchName, 
+                    b.branchCode,
+                    b.isMainBranch
+             FROM drug_stores ds
+             LEFT JOIN branches b ON ds.branchId = b.branchId
+             WHERE ds.storeId = ?`,
+            [req.params.id]
+        );
+        
+        if (rows.length > 0) {
+            res.status(200).json(rows[0]);
+        } else {
+            res.status(404).json({ message: 'Drug store not found' });
+        }
+    } catch (error) {
+        console.error('Error fetching drug store:', error);
+        res.status(500).json({ message: 'Error fetching drug store', error: error.message });
+    }
+});
+
+/**
+ * @route POST /api/pharmacy/drug-stores
+ * @description Create a new drug store
+ */
+router.post('/drug-stores', async (req, res) => {
+    try {
+        const storeData = req.body;
+
+        // Generate store code if not provided
+        if (!storeData.storeCode) {
+            const [count] = await pool.execute('SELECT COUNT(*) as count FROM drug_stores');
+            storeData.storeCode = `STORE-${String(count[0].count + 1).padStart(4, '0')}`;
+        }
+
+        // If setting as dispensing store, unset other dispensing stores for the same branch
+        if (storeData.isDispensingStore && storeData.branchId) {
+            await pool.execute(
+                'UPDATE drug_stores SET isDispensingStore = 0 WHERE branchId = ?',
+                [storeData.branchId]
+            );
+        }
+
+        const [result] = await pool.execute(
+            `INSERT INTO drug_stores (storeCode, storeName, branchId, isDispensingStore, location, contactPerson, phone, email, isActive, notes)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                storeData.storeCode,
+                storeData.storeName,
+                storeData.branchId,
+                storeData.isDispensingStore ? 1 : 0,
+                storeData.location || null,
+                storeData.contactPerson || null,
+                storeData.phone || null,
+                storeData.email || null,
+                storeData.isActive !== undefined ? (storeData.isActive ? 1 : 0) : 1,
+                storeData.notes || null
+            ]
+        );
+
+        const [created] = await pool.execute(
+            `SELECT ds.*, 
+                    b.branchName, 
+                    b.branchCode,
+                    b.isMainBranch
+             FROM drug_stores ds
+             LEFT JOIN branches b ON ds.branchId = b.branchId
+             WHERE ds.storeId = ?`,
+            [result.insertId]
+        );
+
+        res.status(201).json(created[0]);
+    } catch (error) {
+        console.error('Error creating drug store:', error);
+        if (error.code === 'ER_DUP_ENTRY') {
+            return res.status(400).json({ message: 'Store code already exists', error: error.message });
+        }
+        res.status(500).json({ message: 'Error creating drug store', error: error.message });
+    }
+});
+
+/**
+ * @route PUT /api/pharmacy/drug-stores/:id
+ * @description Update a drug store
+ */
+router.put('/drug-stores/:id', async (req, res) => {
+    try {
+        const storeData = req.body;
+        const updates = [];
+        const values = [];
+
+        if (storeData.storeName !== undefined) {
+            updates.push('storeName = ?');
+            values.push(storeData.storeName);
+        }
+        if (storeData.branchId !== undefined) {
+            updates.push('branchId = ?');
+            values.push(storeData.branchId);
+        }
+        if (storeData.isDispensingStore !== undefined) {
+            // If setting as dispensing store, unset other dispensing stores for the same branch
+            if (storeData.isDispensingStore && storeData.branchId) {
+                await pool.execute(
+                    'UPDATE drug_stores SET isDispensingStore = 0 WHERE branchId = ? AND storeId != ?',
+                    [storeData.branchId, req.params.id]
+                );
+            } else if (storeData.isDispensingStore) {
+                // Get current branchId if not provided
+                const [current] = await pool.execute('SELECT branchId FROM drug_stores WHERE storeId = ?', [req.params.id]);
+                if (current.length > 0) {
+                    await pool.execute(
+                        'UPDATE drug_stores SET isDispensingStore = 0 WHERE branchId = ? AND storeId != ?',
+                        [current[0].branchId, req.params.id]
+                    );
+                }
+            }
+            updates.push('isDispensingStore = ?');
+            values.push(storeData.isDispensingStore ? 1 : 0);
+        }
+        if (storeData.location !== undefined) {
+            updates.push('location = ?');
+            values.push(storeData.location || null);
+        }
+        if (storeData.contactPerson !== undefined) {
+            updates.push('contactPerson = ?');
+            values.push(storeData.contactPerson || null);
+        }
+        if (storeData.phone !== undefined) {
+            updates.push('phone = ?');
+            values.push(storeData.phone || null);
+        }
+        if (storeData.email !== undefined) {
+            updates.push('email = ?');
+            values.push(storeData.email || null);
+        }
+        if (storeData.isActive !== undefined) {
+            updates.push('isActive = ?');
+            values.push(storeData.isActive ? 1 : 0);
+        }
+        if (storeData.notes !== undefined) {
+            updates.push('notes = ?');
+            values.push(storeData.notes || null);
+        }
+
+        if (updates.length === 0) {
+            return res.status(400).json({ message: 'No fields to update' });
+        }
+
+        values.push(req.params.id);
+        await pool.execute(
+            `UPDATE drug_stores SET ${updates.join(', ')}, updatedAt = NOW() WHERE storeId = ?`,
+            values
+        );
+
+        const [updated] = await pool.execute(
+            `SELECT ds.*, 
+                    b.branchName, 
+                    b.branchCode,
+                    b.isMainBranch
+             FROM drug_stores ds
+             LEFT JOIN branches b ON ds.branchId = b.branchId
+             WHERE ds.storeId = ?`,
+            [req.params.id]
+        );
+
+        res.status(200).json(updated[0]);
+    } catch (error) {
+        console.error('Error updating drug store:', error);
+        res.status(500).json({ message: 'Error updating drug store', error: error.message });
+    }
+});
+
+/**
+ * @route DELETE /api/pharmacy/drug-stores/:id
+ * @description Delete a drug store (soft delete by setting isActive = 0)
+ */
+router.delete('/drug-stores/:id', async (req, res) => {
+    try {
+        // Check if store has inventory
+        const [inventory] = await pool.execute(
+            'SELECT COUNT(*) as count FROM drug_inventory WHERE storeId = ? AND quantity > 0',
+            [req.params.id]
+        );
+
+        if (inventory[0].count > 0) {
+            return res.status(400).json({ message: 'Cannot delete store with inventory. Please transfer or remove inventory first.' });
+        }
+
+        // Soft delete
+        await pool.execute(
+            'UPDATE drug_stores SET isActive = 0, updatedAt = NOW() WHERE storeId = ?',
+            [req.params.id]
+        );
+
+        res.status(200).json({ message: 'Drug store deactivated successfully' });
+    } catch (error) {
+        console.error('Error deleting drug store:', error);
+        res.status(500).json({ message: 'Error deleting drug store', error: error.message });
+    }
+});
+
 module.exports = router;

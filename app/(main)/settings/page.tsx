@@ -1,3 +1,6 @@
+"use client"
+
+import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -5,6 +8,7 @@ import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { MapPin, Building2, ArrowRight } from "lucide-react"
 
 export default function SettingsPage() {
   return (
@@ -116,7 +120,65 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
 
-        {/* Similar content for other tabs */}
+        <TabsContent value="security" className="space-y-4 mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Security Settings</CardTitle>
+              <CardDescription>Manage your account security and password</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="current-password">Current Password</Label>
+                <Input id="current-password" type="password" />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="new-password">New Password</Label>
+                <Input id="new-password" type="password" />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="confirm-password">Confirm New Password</Label>
+                <Input id="confirm-password" type="password" />
+              </div>
+            </CardContent>
+            <CardFooter>
+              <Button>Update Password</Button>
+            </CardFooter>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="system" className="space-y-4 mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>System Configuration</CardTitle>
+              <CardDescription>Manage system-wide settings and configurations</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Link href="/settings/drug-stores">
+                <Card className="cursor-pointer hover:bg-accent transition-colors">
+                  <CardHeader>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 rounded-md bg-primary/10">
+                          <MapPin className="h-5 w-5 text-primary" />
+                        </div>
+                        <div>
+                          <CardTitle className="text-lg">Drug Stores Management</CardTitle>
+                          <CardDescription>Manage branches and drug store locations</CardDescription>
+                        </div>
+                      </div>
+                      <ArrowRight className="h-5 w-5 text-muted-foreground" />
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-sm text-muted-foreground">
+                      Create and manage hospital branches and drug stores. Set main branch and dispensing stores per branch.
+                    </p>
+                  </CardContent>
+                </Card>
+              </Link>
+            </CardContent>
+          </Card>
+        </TabsContent>
       </Tabs>
     </div>
   )

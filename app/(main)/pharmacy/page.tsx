@@ -208,13 +208,14 @@ export default function PharmacyPage() {
 
   const handleExportSummary = () => {
     // Create CSV content
-    const headers = ['Medication Code', 'Medication Name', 'Generic Name', 'Dosage Form', 'Strength', 'Total Quantity', 'Batch Count', 'Earliest Expiry', 'Latest Expiry', 'Average Unit Price', 'Average Sell Price', 'Status']
+    const headers = ['Medication Code', 'Medication Name', 'Generic Name', 'Dosage Form', 'Strength', 'Location', 'Total Quantity', 'Batch Count', 'Earliest Expiry', 'Latest Expiry', 'Average Unit Price', 'Average Sell Price', 'Status']
     const rows = drugInventorySummary.map((item) => [
       item.medicationCode || '',
       item.medicationName || '',
       item.genericName || '',
       item.dosageForm || '',
       item.strength || '',
+      item.location || '',
       item.totalQuantity || 0,
       item.batchCount || 0,
       item.earliestExpiryDate ? new Date(item.earliestExpiryDate).toLocaleDateString() : '',
@@ -271,6 +272,7 @@ export default function PharmacyPage() {
                 <th>Generic Name</th>
                 <th>Dosage Form</th>
                 <th>Strength</th>
+                <th>Location</th>
                 <th>Total Quantity</th>
                 <th>Batch Count</th>
                 <th>Earliest Expiry</th>
@@ -288,6 +290,7 @@ export default function PharmacyPage() {
                   <td>${item.genericName || ''}</td>
                   <td>${item.dosageForm || ''}</td>
                   <td>${item.strength || ''}</td>
+                  <td>${item.location || ''}</td>
                   <td>${item.totalQuantity || 0}</td>
                   <td>${item.batchCount || 0}</td>
                   <td>${item.earliestExpiryDate ? new Date(item.earliestExpiryDate).toLocaleDateString() : ''}</td>
@@ -886,6 +889,7 @@ export default function PharmacyPage() {
                         <TableHead>Generic Name</TableHead>
                         <TableHead>Dosage Form</TableHead>
                         <TableHead>Strength</TableHead>
+                        <TableHead>Location</TableHead>
                         <TableHead className="text-right">Total Quantity</TableHead>
                         <TableHead className="text-right">Batch Count</TableHead>
                         <TableHead>Earliest Expiry</TableHead>
@@ -904,6 +908,7 @@ export default function PharmacyPage() {
                             <TableCell>{item.genericName || '-'}</TableCell>
                             <TableCell>{item.dosageForm || '-'}</TableCell>
                             <TableCell>{item.strength || '-'}</TableCell>
+                            <TableCell>{item.location || '-'}</TableCell>
                             <TableCell className="text-right font-medium">{item.totalQuantity || 0}</TableCell>
                             <TableCell className="text-right">{item.batchCount || 0}</TableCell>
                             <TableCell>
@@ -943,7 +948,7 @@ export default function PharmacyPage() {
                         ))
                       ) : (
                         <TableRow>
-                          <TableCell colSpan={12} className="text-center py-8 text-muted-foreground">
+                          <TableCell colSpan={13} className="text-center py-8 text-muted-foreground">
                             No drug inventory summary found
                           </TableCell>
                         </TableRow>
