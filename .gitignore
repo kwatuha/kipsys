@@ -17,6 +17,8 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
+.vscode
+/api/database/ldb/
 
 # env files and sensitive data
 .env*

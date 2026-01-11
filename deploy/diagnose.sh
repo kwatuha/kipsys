@@ -42,7 +42,7 @@ echo -e "${BLUE}[2] Checking Docker Containers...${NC}"
 eval "$SSH_CMD" << EOF
     echo "=== Running Containers ==="
     docker ps --filter "name=kiplombe" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" || echo "No containers found"
-    
+
     echo ""
     echo "=== Container Health Status ==="
     for container in kiplombe_api kiplombe_frontend kiplombe_nginx kiplombe_mysql; do
@@ -109,7 +109,7 @@ eval "$SSH_CMD" << EOF
         echo "✗ API is NOT responding on port 3001"
         echo "  Response: \$(curl -s http://localhost:3001/ 2>&1 | head -5)"
     fi
-    
+
     echo ""
     echo "Testing Frontend on port 3000:"
     if curl -f -s http://localhost:3000/ > /dev/null 2>&1; then
@@ -120,7 +120,7 @@ eval "$SSH_CMD" << EOF
         echo "  Error details:"
         timeout 3 curl -v http://localhost:3000/ 2>&1 | grep -E "(Connection|Failed|refused)" || true
     fi
-    
+
     echo ""
     echo "Testing Nginx on port 80:"
     if curl -f -s http://localhost:80/ > /dev/null 2>&1; then
@@ -137,7 +137,7 @@ echo -e "${BLUE}[8] Checking Docker Network...${NC}"
 eval "$SSH_CMD" << EOF
     echo "=== Docker Networks ==="
     docker network ls | grep kiplombe || echo "No kiplombe network found"
-    
+
     echo ""
     echo "=== Network Containers ==="
     if docker network inspect kiplombe-hmis_kiplombe_network > /dev/null 2>&1 || docker network inspect kiplombe_network > /dev/null 2>&1; then
@@ -157,12 +157,12 @@ eval "$SSH_CMD" << EOF
         echo "✗ App directory $APP_DIR does not exist"
         exit 1
     }
-    
+
     echo "✓ App directory exists: $APP_DIR"
     echo ""
     echo "=== Important Files ==="
     ls -la docker-compose.deploy.yml .env 2>/dev/null || echo "Missing docker-compose.deploy.yml or .env"
-    
+
     echo ""
     echo "=== Environment Variables ==="
     if [ -f .env ]; then

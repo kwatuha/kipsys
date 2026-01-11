@@ -8,10 +8,10 @@
 
 -- Add sellPrice column to drug_inventory_transactions
 SET @col_exists = 0;
-SELECT COUNT(*) INTO @col_exists 
-FROM information_schema.COLUMNS 
-WHERE TABLE_SCHEMA = DATABASE() 
-  AND TABLE_NAME = 'drug_inventory_transactions' 
+SELECT COUNT(*) INTO @col_exists
+FROM information_schema.COLUMNS
+WHERE TABLE_SCHEMA = DATABASE()
+  AND TABLE_NAME = 'drug_inventory_transactions'
   AND COLUMN_NAME = 'sellPrice';
 
 SET @sql = IF(@col_exists = 0,
@@ -23,10 +23,10 @@ DEALLOCATE PREPARE stmt;
 
 -- Add totalSellValue column to track total selling value (quantityChange * sellPrice)
 SET @col_exists2 = 0;
-SELECT COUNT(*) INTO @col_exists2 
-FROM information_schema.COLUMNS 
-WHERE TABLE_SCHEMA = DATABASE() 
-  AND TABLE_NAME = 'drug_inventory_transactions' 
+SELECT COUNT(*) INTO @col_exists2
+FROM information_schema.COLUMNS
+WHERE TABLE_SCHEMA = DATABASE()
+  AND TABLE_NAME = 'drug_inventory_transactions'
   AND COLUMN_NAME = 'totalSellValue';
 
 SET @sql2 = IF(@col_exists2 = 0,
@@ -37,26 +37,26 @@ EXECUTE stmt2;
 DEALLOCATE PREPARE stmt2;
 
 -- Add comments explaining the pricing fields
-ALTER TABLE drug_inventory_transactions 
-MODIFY COLUMN unitPrice DECIMAL(15, 2) 
+ALTER TABLE drug_inventory_transactions
+MODIFY COLUMN unitPrice DECIMAL(15, 2)
 COMMENT 'Buying/cost price per unit at time of transaction (from drug_inventory.unitPrice)';
 
-ALTER TABLE drug_inventory_transactions 
-MODIFY COLUMN sellPrice DECIMAL(15, 2) 
+ALTER TABLE drug_inventory_transactions
+MODIFY COLUMN sellPrice DECIMAL(15, 2)
 COMMENT 'Selling price per unit at time of transaction (from drug_inventory.sellPrice)';
 
-ALTER TABLE drug_inventory_transactions 
-MODIFY COLUMN totalValue DECIMAL(15, 2) 
+ALTER TABLE drug_inventory_transactions
+MODIFY COLUMN totalValue DECIMAL(15, 2)
 COMMENT 'Total cost value of transaction (quantityChange * unitPrice)';
 
-ALTER TABLE drug_inventory_transactions 
-MODIFY COLUMN totalSellValue DECIMAL(15, 2) 
+ALTER TABLE drug_inventory_transactions
+MODIFY COLUMN totalSellValue DECIMAL(15, 2)
 COMMENT 'Total selling value of transaction (quantityChange * sellPrice)';
 
 -- Update the view to include sellPrice and totalSellValue
 DROP VIEW IF EXISTS vw_drug_inventory_history;
 CREATE VIEW vw_drug_inventory_history AS
-SELECT 
+SELECT
     dit.transactionId,
     dit.drugInventoryId,
     di.batchNumber,
@@ -94,7 +94,7 @@ ORDER BY dit.drugInventoryId, dit.transactionDate DESC, dit.transactionTime DESC
 -- Update batch summary view to include pricing information
 DROP VIEW IF EXISTS vw_batch_summary;
 CREATE VIEW vw_batch_summary AS
-SELECT 
+SELECT
     di.drugInventoryId,
     di.batchNumber,
     di.medicationId,
@@ -112,7 +112,7 @@ SELECT
     -- Calculate total selling value
     COALESCE((SELECT SUM(totalSellValue) FROM drug_inventory_transactions WHERE drugInventoryId = di.drugInventoryId AND transactionType = 'DISPENSATION'), 0) as totalSellValue,
     -- Calculate profit margin
-    COALESCE((SELECT SUM(totalSellValue) FROM drug_inventory_transactions WHERE drugInventoryId = di.drugInventoryId AND transactionType = 'DISPENSATION'), 0) - 
+    COALESCE((SELECT SUM(totalSellValue) FROM drug_inventory_transactions WHERE drugInventoryId = di.drugInventoryId AND transactionType = 'DISPENSATION'), 0) -
     COALESCE((SELECT SUM(totalValue) FROM drug_inventory_transactions WHERE drugInventoryId = di.drugInventoryId AND transactionType = 'DISPENSATION'), 0) as profitMargin,
     di.manufactureDate,
     di.expiryDate,

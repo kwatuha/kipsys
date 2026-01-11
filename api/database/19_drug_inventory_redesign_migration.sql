@@ -12,14 +12,14 @@ CREATE TABLE IF NOT EXISTS drug_inventory_backup AS SELECT * FROM drug_inventory
 
 -- Step 2: Add patient information to drug_inventory_transactions
 SET @col_exists = 0;
-SELECT COUNT(*) INTO @col_exists 
-FROM information_schema.COLUMNS 
-WHERE TABLE_SCHEMA = DATABASE() 
-  AND TABLE_NAME = 'drug_inventory_transactions' 
+SELECT COUNT(*) INTO @col_exists
+FROM information_schema.COLUMNS
+WHERE TABLE_SCHEMA = DATABASE()
+  AND TABLE_NAME = 'drug_inventory_transactions'
   AND COLUMN_NAME = 'patientId';
 
 SET @sql = IF(@col_exists = 0,
-    'ALTER TABLE drug_inventory_transactions 
+    'ALTER TABLE drug_inventory_transactions
      ADD COLUMN patientId INT NULL AFTER drugInventoryId,
      ADD COLUMN prescriptionId INT NULL AFTER patientId,
      ADD COLUMN dispensationId INT NULL AFTER prescriptionId',
@@ -114,7 +114,7 @@ INSERT INTO drug_stock_adjustments (
     performedBy,
     notes
 )
-SELECT 
+SELECT
     dit.drugInventoryId,
     di.medicationId,
     dit.transactionType,
@@ -134,8 +134,8 @@ SELECT
 FROM drug_inventory_transactions dit
 INNER JOIN drug_inventory di ON dit.drugInventoryId = di.drugInventoryId
 WHERE NOT EXISTS (
-    SELECT 1 FROM drug_stock_adjustments dsa 
-    WHERE dsa.drugInventoryId = dit.drugInventoryId 
+    SELECT 1 FROM drug_stock_adjustments dsa
+    WHERE dsa.drugInventoryId = dit.drugInventoryId
     AND dsa.adjustmentDate = dit.transactionDate
     AND dsa.adjustmentTime = dit.transactionTime
 );
@@ -146,7 +146,7 @@ INNER JOIN drug_inventory di ON dit.drugInventoryId = di.drugInventoryId
 INNER JOIN dispensations d ON dit.referenceId = d.dispensationId AND dit.referenceType = 'dispensation'
 INNER JOIN prescription_items pi ON d.prescriptionItemId = pi.itemId
 INNER JOIN prescriptions p ON pi.prescriptionId = p.prescriptionId
-SET 
+SET
     dit.patientId = p.patientId,
     dit.prescriptionId = p.prescriptionId,
     dit.dispensationId = d.dispensationId
@@ -154,11 +154,11 @@ WHERE dit.patientId IS NULL AND dit.transactionType = 'DISPENSATION';
 
 -- Step 6: Update stock_adjustments with patient information
 UPDATE drug_stock_adjustments dsa
-INNER JOIN drug_inventory_transactions dit ON 
-    dsa.drugInventoryId = dit.drugInventoryId 
+INNER JOIN drug_inventory_transactions dit ON
+    dsa.drugInventoryId = dit.drugInventoryId
     AND dsa.adjustmentDate = dit.transactionDate
     AND dsa.adjustmentTime = dit.transactionTime
-SET 
+SET
     dsa.patientId = dit.patientId,
     dsa.prescriptionId = dit.prescriptionId,
     dsa.dispensationId = dit.dispensationId
@@ -168,7 +168,7 @@ WHERE dsa.patientId IS NULL AND dsa.adjustmentType = 'DISPENSATION';
 -- We'll keep the current structure but add a view for aggregated quantities
 DROP VIEW IF EXISTS vw_drug_inventory_aggregated;
 CREATE VIEW vw_drug_inventory_aggregated AS
-SELECT 
+SELECT
     di.medicationId,
     m.name as medicationName,
     m.medicationCode,
@@ -184,7 +184,7 @@ SELECT
     MIN(di.unitPrice) as minUnitPrice,
     MAX(di.sellPrice) as maxSellPrice,
     di.location,
-    CASE 
+    CASE
         WHEN SUM(di.quantity) = 0 THEN 'out_of_stock'
         WHEN SUM(di.quantity) < 10 THEN 'low_stock'
         ELSE 'active'
@@ -197,7 +197,7 @@ GROUP BY di.medicationId, m.name, m.medicationCode, m.genericName, m.dosageForm,
 -- Step 8: Create comprehensive history view with patient information
 DROP VIEW IF EXISTS vw_drug_history_complete;
 CREATE VIEW vw_drug_history_complete AS
-SELECT 
+SELECT
     dsa.adjustmentId,
     dsa.drugInventoryId,
     dsa.medicationId,
@@ -238,13 +238,14 @@ LEFT JOIN users u ON dsa.performedBy = u.userId
 ORDER BY dsa.adjustmentDate DESC, dsa.adjustmentTime DESC;
 
 -- Step 9: Add comments
-ALTER TABLE drug_stock_adjustments 
+ALTER TABLE drug_stock_adjustments
 MODIFY COLUMN adjustmentType ENUM('RECEIPT', 'DISPENSATION', 'ADJUSTMENT', 'TRANSFER', 'EXPIRY', 'DAMAGE', 'RETURN', 'CORRECTION')
 COMMENT 'Type of stock adjustment: RECEIPT=stock received, DISPENSATION=dispensed to patient, ADJUSTMENT=manual adjustment, etc.';
 
 ALTER TABLE drug_inventory_transactions
 MODIFY COLUMN patientId INT
 COMMENT 'Patient who received the drug (for DISPENSATION transactions)';
+
 
 
 

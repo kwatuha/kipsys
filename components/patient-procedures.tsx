@@ -43,7 +43,7 @@ export function PatientProcedures({ patientId }: { patientId: string }) {
 
       // Fetch all procedures for the patient
       const data = await proceduresApi.getPatientProcedures(patientId)
-      
+
       setProcedures(data || [])
     } catch (err: any) {
       console.error("Error loading procedures:", err)
@@ -154,7 +154,7 @@ export function PatientProcedures({ patientId }: { patientId: string }) {
               {sortedProcedures.map((procedure) => {
                 const cost = getProcedureCost(procedure)
                 const hasComplications = procedure.complications && procedure.complications.trim() !== ""
-                
+
                 return (
                   <TableRow key={procedure.patientProcedureId}>
                     <TableCell className="font-medium">

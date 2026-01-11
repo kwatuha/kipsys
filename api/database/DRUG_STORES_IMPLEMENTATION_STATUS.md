@@ -5,7 +5,7 @@
 ### Phase 1: Database & API ✅
 1. ✅ Database schema created (`21_drug_stores_schema.sql`)
    - `branches` table
-   - `drug_stores` table  
+   - `drug_stores` table
    - `drug_store_reorder_levels` table
    - `drug_inventory_transfers` table
    - Updated `drug_inventory` with `storeId`

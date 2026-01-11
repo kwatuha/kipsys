@@ -82,14 +82,14 @@ eval "$SSH_CMD" << EOF
         echo "✗ Docker is not installed"
         exit 1
     fi
-    
+
     if docker compose version > /dev/null 2>&1 || docker-compose version > /dev/null 2>&1; then
         echo "✓ Docker Compose is available"
     else
         echo "✗ Docker Compose is not available"
         exit 1
     fi
-    
+
     if docker info > /dev/null 2>&1; then
         echo "✓ Docker service is running"
     else
@@ -110,19 +110,19 @@ eval "$SSH_CMD" << EOF
     if [ -d "$APP_DIR" ]; then
         echo "✓ App directory exists: $APP_DIR"
         cd $APP_DIR
-        
+
         if [ -f "docker-compose.deploy.yml" ]; then
             echo "✓ docker-compose.deploy.yml exists on server"
         else
             echo "⚠ docker-compose.deploy.yml not found on server"
         fi
-        
+
         if [ -f ".env" ]; then
             echo "✓ .env file exists on server"
         else
             echo "⚠ .env file not found on server"
         fi
-        
+
         echo ""
         echo "Current containers:"
         docker ps --filter "name=kiplombe" --format "table {{.Names}}\t{{.Status}}" || echo "No containers running"
@@ -168,11 +168,11 @@ echo -e "${BLUE}[Test 6] Checking Server Disk Space...${NC}"
 eval "$SSH_CMD" << EOF
     AVAILABLE_SPACE=\$(df -h ~ | tail -1 | awk '{print \$4}')
     echo "Available disk space: \$AVAILABLE_SPACE"
-    
+
     # Check if we have at least 5GB available (approximate)
     AVAILABLE_BYTES=\$(df ~ | tail -1 | awk '{print \$4}')
     REQUIRED_BYTES=5242880  # 5GB in KB
-    
+
     if [ \$AVAILABLE_BYTES -gt \$REQUIRED_BYTES ]; then
         echo "✓ Sufficient disk space available"
     else
