@@ -1310,6 +1310,8 @@ export default function PharmacyPage() {
         onSuccess={handleStockAdjustmentSuccess}
         drugInventoryId={selectedDrugInventoryForAdjustment?.drugInventoryId}
         medicationId={selectedDrugInventoryForAdjustment?.medicationId}
+        initialLocation={selectedDrugInventoryForAdjustment?.location}
+        initialMedicationName={selectedDrugInventoryForAdjustment?.medicationName}
       />
     </div>
   )

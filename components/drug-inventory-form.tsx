@@ -305,14 +305,13 @@ export function DrugInventoryForm({ item, open, onOpenChange, onSuccess, medicat
               </div>
             ) : stores.length > 0 ? (
               <Select
-                value={formData.location || ''}
+                value={formData.location || undefined}
                 onValueChange={(value) => setFormData({ ...formData, location: value })}
               >
                 <SelectTrigger id="location">
-                  <SelectValue placeholder="Select a store location" />
+                  <SelectValue placeholder="Select a store location (optional)" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">None (Enter manually)</SelectItem>
                   {stores.map((store) => (
                     <SelectItem key={store.storeId} value={store.storeName}>
                       {store.storeName}
