@@ -246,3 +246,4 @@ ALTER TABLE drug_inventory_transactions
 MODIFY COLUMN patientId INT
 COMMENT 'Patient who received the drug (for DISPENSATION transactions)';
 
+

@@ -991,6 +991,57 @@ router.get('/drug-inventory', async (req, res) => {
 });
 
 /**
+ * @route GET /api/pharmacy/drug-inventory/summary
+ * @description Get aggregated drug inventory summary (total quantities per medication)
+ */
+router.get('/drug-inventory/summary', async (req, res) => {
+    try {
+        const { search, page = 1, limit = 100 } = req.query;
+        const offset = (page - 1) * limit;
+
+        let query = `
+            SELECT * FROM vw_drug_inventory_aggregated
+            WHERE 1=1
+        `;
+        const params = [];
+
+        if (search) {
+            query += ` AND (medicationName LIKE ? OR genericName LIKE ? OR medicationCode LIKE ?)`;
+            const searchTerm = `%${search}%`;
+            params.push(searchTerm, searchTerm, searchTerm);
+        }
+
+        query += ` ORDER BY medicationName LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset)}`;
+
+        const [rows] = await pool.execute(query, params);
+        
+        // Get total count for pagination
+        let countQuery = `SELECT COUNT(*) as total FROM vw_drug_inventory_aggregated WHERE 1=1`;
+        const countParams = [];
+        if (search) {
+            countQuery += ` AND (medicationName LIKE ? OR genericName LIKE ? OR medicationCode LIKE ?)`;
+            const searchTerm = `%${search}%`;
+            countParams.push(searchTerm, searchTerm, searchTerm);
+        }
+        const [countRows] = await pool.execute(countQuery, countParams);
+        const total = countRows[0]?.total || 0;
+
+        res.status(200).json({
+            data: rows,
+            pagination: {
+                page: parseInt(page),
+                limit: parseInt(limit),
+                total,
+                totalPages: Math.ceil(total / limit)
+            }
+        });
+    } catch (error) {
+        console.error('Error fetching drug inventory summary:', error);
+        res.status(500).json({ message: 'Error fetching drug inventory summary', error: error.message });
+    }
+});
+
+/**
  * @route GET /api/pharmacy/drug-inventory/:id
  * @description Get a single drug inventory item by ID
  */

@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
-import { Search, FileText, Package, Plus, Edit, Loader2, MoreVertical, Eye, CheckCircle, XCircle, Trash2, History, ArrowRight, Sliders } from "lucide-react"
+import { Search, FileText, Package, Plus, Edit, Loader2, MoreVertical, Eye, CheckCircle, XCircle, Trash2, History, ArrowRight, Sliders, Download, Printer } from "lucide-react"
 import Link from "next/link"
 import { AddPrescriptionForm } from "@/components/add-prescription-form"
 import { MedicationForm } from "@/components/medication-form"
@@ -129,6 +129,11 @@ export default function PharmacyPage() {
   const [isStockAdjustmentOpen, setIsStockAdjustmentOpen] = useState(false)
   const [selectedDrugInventoryForAdjustment, setSelectedDrugInventoryForAdjustment] = useState<DrugInventoryItem | null>(null)
 
+  // Drug Inventory Summary state
+  const [drugInventorySummary, setDrugInventorySummary] = useState<any[]>([])
+  const [loadingDrugInventorySummary, setLoadingDrugInventorySummary] = useState(true)
+  const [drugInventorySummarySearch, setDrugInventorySummarySearch] = useState("")
+
   const loadPrescriptions = async () => {
     try {
       setLoadingPrescriptions(true)
@@ -182,6 +187,130 @@ export default function PharmacyPage() {
   useEffect(() => {
     loadDrugInventory()
   }, [drugInventorySearch])
+
+  const loadDrugInventorySummary = async () => {
+    try {
+      setLoadingDrugInventorySummary(true)
+      setError(null)
+      const response = await pharmacyApi.getDrugInventorySummary(drugInventorySummarySearch || undefined)
+      setDrugInventorySummary(response.data || [])
+    } catch (err: any) {
+      setError(err.message || 'Failed to load drug inventory summary')
+      console.error('Error loading drug inventory summary:', err)
+    } finally {
+      setLoadingDrugInventorySummary(false)
+    }
+  }
+
+  useEffect(() => {
+    loadDrugInventorySummary()
+  }, [drugInventorySummarySearch])
+
+  const handleExportSummary = () => {
+    // Create CSV content
+    const headers = ['Medication Code', 'Medication Name', 'Generic Name', 'Dosage Form', 'Strength', 'Total Quantity', 'Batch Count', 'Earliest Expiry', 'Latest Expiry', 'Average Unit Price', 'Average Sell Price', 'Status']
+    const rows = drugInventorySummary.map((item) => [
+      item.medicationCode || '',
+      item.medicationName || '',
+      item.genericName || '',
+      item.dosageForm || '',
+      item.strength || '',
+      item.totalQuantity || 0,
+      item.batchCount || 0,
+      item.earliestExpiryDate ? new Date(item.earliestExpiryDate).toLocaleDateString() : '',
+      item.latestExpiryDate ? new Date(item.latestExpiryDate).toLocaleDateString() : '',
+      item.averageUnitPrice ? parseFloat(item.averageUnitPrice).toFixed(2) : '',
+      item.averageSellPrice ? parseFloat(item.averageSellPrice).toFixed(2) : '',
+      item.status || ''
+    ])
+
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+    ].join('\n')
+
+    // Create blob and download
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+    const link = document.createElement('a')
+    const url = URL.createObjectURL(blob)
+    link.setAttribute('href', url)
+    link.setAttribute('download', `drug-inventory-summary-${new Date().toISOString().split('T')[0]}.csv`)
+    link.style.visibility = 'hidden'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  }
+
+  const handlePrintSummary = () => {
+    const printWindow = window.open('', '_blank')
+    if (!printWindow) return
+
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Drug Inventory Summary</title>
+          <style>
+            body { font-family: Arial, sans-serif; margin: 20px; }
+            h1 { text-align: center; margin-bottom: 30px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+            th { background-color: #f2f2f2; font-weight: bold; }
+            tr:nth-child(even) { background-color: #f9f9f9; }
+            .date { text-align: right; margin-bottom: 20px; }
+          </style>
+        </head>
+        <body>
+          <h1>Drug Inventory Summary</h1>
+          <div class="date">Generated: ${new Date().toLocaleString()}</div>
+          <table>
+            <thead>
+              <tr>
+                <th>Medication Code</th>
+                <th>Medication Name</th>
+                <th>Generic Name</th>
+                <th>Dosage Form</th>
+                <th>Strength</th>
+                <th>Total Quantity</th>
+                <th>Batch Count</th>
+                <th>Earliest Expiry</th>
+                <th>Latest Expiry</th>
+                <th>Avg Unit Price</th>
+                <th>Avg Sell Price</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${drugInventorySummary.map((item) => `
+                <tr>
+                  <td>${item.medicationCode || ''}</td>
+                  <td>${item.medicationName || ''}</td>
+                  <td>${item.genericName || ''}</td>
+                  <td>${item.dosageForm || ''}</td>
+                  <td>${item.strength || ''}</td>
+                  <td>${item.totalQuantity || 0}</td>
+                  <td>${item.batchCount || 0}</td>
+                  <td>${item.earliestExpiryDate ? new Date(item.earliestExpiryDate).toLocaleDateString() : ''}</td>
+                  <td>${item.latestExpiryDate ? new Date(item.latestExpiryDate).toLocaleDateString() : ''}</td>
+                  <td>${item.averageUnitPrice ? parseFloat(item.averageUnitPrice).toFixed(2) : ''}</td>
+                  <td>${item.averageSellPrice ? parseFloat(item.averageSellPrice).toFixed(2) : ''}</td>
+                  <td>${item.status || ''}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </body>
+      </html>
+    `
+
+    printWindow.document.write(htmlContent)
+    printWindow.document.close()
+    printWindow.focus()
+    setTimeout(() => {
+      printWindow.print()
+      printWindow.close()
+    }, 250)
+  }
 
   const handleAddMedicationSuccess = () => {
     loadMedications()
@@ -359,10 +488,11 @@ export default function PharmacyPage() {
       </div>
 
       <Tabs defaultValue="prescriptions" className="w-full">
-        <TabsList className="grid w-full grid-cols-5">
+        <TabsList className="grid w-full grid-cols-6">
           <TabsTrigger value="prescriptions">Prescriptions</TabsTrigger>
           <TabsTrigger value="medications">Medications</TabsTrigger>
           <TabsTrigger value="drug-inventory">Drug Inventory</TabsTrigger>
+          <TabsTrigger value="drug-inventory-summary">Inventory Summary</TabsTrigger>
           <TabsTrigger value="batch-trace">Batch Trace</TabsTrigger>
           <TabsTrigger value="drug-history">Drug History</TabsTrigger>
         </TabsList>
@@ -697,6 +827,124 @@ export default function PharmacyPage() {
                         <TableRow>
                           <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
                             No drug inventory items found
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="drug-inventory-summary" className="space-y-4 mt-4">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Drug Inventory Summary</CardTitle>
+                  <CardDescription>Aggregated drug inventory quantities per medication (total across all batches)</CardDescription>
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="outline" onClick={handleExportSummary}>
+                    <Download className="mr-2 h-4 w-4" />
+                    Download CSV
+                  </Button>
+                  <Button variant="outline" onClick={handlePrintSummary}>
+                    <Printer className="mr-2 h-4 w-4" />
+                    Print
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between mb-4">
+                <div className="relative w-64">
+                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                  <Input 
+                    type="search" 
+                    placeholder="Search medications..." 
+                    className="w-full pl-8"
+                    value={drugInventorySummarySearch}
+                    onChange={(e) => setDrugInventorySummarySearch(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              {loadingDrugInventorySummary ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                </div>
+              ) : (
+                <div className="rounded-md border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Medication Code</TableHead>
+                        <TableHead>Medication Name</TableHead>
+                        <TableHead>Generic Name</TableHead>
+                        <TableHead>Dosage Form</TableHead>
+                        <TableHead>Strength</TableHead>
+                        <TableHead className="text-right">Total Quantity</TableHead>
+                        <TableHead className="text-right">Batch Count</TableHead>
+                        <TableHead>Earliest Expiry</TableHead>
+                        <TableHead>Latest Expiry</TableHead>
+                        <TableHead className="text-right">Avg Unit Price</TableHead>
+                        <TableHead className="text-right">Avg Sell Price</TableHead>
+                        <TableHead>Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {drugInventorySummary.length > 0 ? (
+                        drugInventorySummary.map((item, index) => (
+                          <TableRow key={item.medicationId || index}>
+                            <TableCell className="font-medium">{item.medicationCode || '-'}</TableCell>
+                            <TableCell className="font-medium">{item.medicationName || '-'}</TableCell>
+                            <TableCell>{item.genericName || '-'}</TableCell>
+                            <TableCell>{item.dosageForm || '-'}</TableCell>
+                            <TableCell>{item.strength || '-'}</TableCell>
+                            <TableCell className="text-right font-medium">{item.totalQuantity || 0}</TableCell>
+                            <TableCell className="text-right">{item.batchCount || 0}</TableCell>
+                            <TableCell>
+                              {item.earliestExpiryDate 
+                                ? new Date(item.earliestExpiryDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+                                : '-'}
+                            </TableCell>
+                            <TableCell>
+                              {item.latestExpiryDate 
+                                ? new Date(item.latestExpiryDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+                                : '-'}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {item.averageUnitPrice 
+                                ? `KES ${parseFloat(item.averageUnitPrice).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                : '-'}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {item.averageSellPrice 
+                                ? `KES ${parseFloat(item.averageSellPrice).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                : '-'}
+                            </TableCell>
+                            <TableCell>
+                              <Badge 
+                                variant={
+                                  item.status === 'out_of_stock' ? 'destructive' :
+                                  item.status === 'low_stock' ? 'secondary' :
+                                  'default'
+                                }
+                              >
+                                {item.status === 'out_of_stock' ? 'Out of Stock' :
+                                 item.status === 'low_stock' ? 'Low Stock' :
+                                 'In Stock'}
+                              </Badge>
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      ) : (
+                        <TableRow>
+                          <TableCell colSpan={12} className="text-center py-8 text-muted-foreground">
+                            No drug inventory summary found
                           </TableCell>
                         </TableRow>
                       )}

@@ -182,6 +182,9 @@ export const pharmacyApi = {
   getDrugInventory: (medicationId?: string, search?: string, page = 1, limit = 50) =>
     apiRequest<any[]>(`/api/pharmacy/drug-inventory?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(medicationId && { medicationId }), ...(search && { search }) })}`),
   
+  getDrugInventorySummary: (search?: string, page = 1, limit = 100) =>
+    apiRequest<{ data: any[], pagination: any }>(`/api/pharmacy/drug-inventory/summary?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(search && { search }) })}`),
+  
   getDrugInventoryItem: (id: string) =>
     apiRequest<any>(`/api/pharmacy/drug-inventory/${id}`),
   

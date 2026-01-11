@@ -131,3 +131,4 @@ GET /api/pharmacy/drug-history/patient/123?startDate=2024-01-01&endDate=2024-12-
 - Patient information now available in all transaction queries
 - Ready for UI implementation
 
+
