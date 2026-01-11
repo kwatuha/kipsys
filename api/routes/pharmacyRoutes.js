@@ -454,15 +454,39 @@ router.post('/prescriptions', async (req, res) => {
             for (const item of itemsWithQuantity) {
                 if (item.medicationId) {
                     try {
-                        // Get the oldest batch (FIFO - First In First Out by expiry date) from drug_inventory for this medication
-                        // Select the batch with the earliest expiry date that has sufficient quantity
+                        // Get the oldest batch (FIFO - First In First Out by receipt date) from drug_inventory for this medication
+                        // Select the batch that was received first (earliest receipt transaction date)
                         const [oldestBatch] = await connection.execute(
-                            `SELECT di.drugInventoryId, di.sellPrice, di.batchNumber, di.expiryDate, di.quantity
+                            `SELECT 
+                                di.drugInventoryId, 
+                                di.sellPrice, 
+                                di.batchNumber, 
+                                di.expiryDate, 
+                                di.quantity,
+                                di.unitPrice,
+                                -- Get first receipt date for FIFO ordering
+                                COALESCE(
+                                    (SELECT MIN(transactionDate) 
+                                     FROM drug_inventory_transactions 
+                                     WHERE drugInventoryId = di.drugInventoryId 
+                                     AND transactionType = 'RECEIPT'),
+                                    di.createdAt
+                                ) as firstReceiptDate
                              FROM drug_inventory di
                              WHERE di.medicationId = ? 
                                AND di.quantity > 0
+                               AND di.status = 'active'
                                AND (di.expiryDate IS NULL OR di.expiryDate >= CURDATE())
-                             ORDER BY di.expiryDate ASC, di.createdAt ASC
+                             -- FIFO: Order by first receipt date (oldest first), then by expiry date
+                             ORDER BY 
+                                COALESCE(
+                                    (SELECT MIN(transactionDate) 
+                                     FROM drug_inventory_transactions 
+                                     WHERE drugInventoryId = di.drugInventoryId 
+                                     AND transactionType = 'RECEIPT'),
+                                    di.createdAt
+                                ) ASC,
+                                di.expiryDate ASC
                              LIMIT 1`,
                             [item.medicationId]
                         );
@@ -1053,13 +1077,15 @@ router.post('/drug-inventory', async (req, res) => {
             // Record RECEIPT transaction for complete history
             try {
                 const unitPriceForTransaction = unitPrice || 0;
+                const sellPriceForTransaction = sellPrice || 0;
                 const totalValue = receivedQuantity * unitPriceForTransaction;
+                const totalSellValue = receivedQuantity * sellPriceForTransaction;
                 
                 await connection.execute(
                     `INSERT INTO drug_inventory_transactions 
                      (drugInventoryId, transactionType, transactionDate, quantityChange, quantityBefore, quantityAfter, balanceAfter,
-                      unitPrice, totalValue, referenceType, referenceId, referenceNumber, performedBy, notes)
-                     VALUES (?, 'RECEIPT', ?, ?, ?, ?, ?, ?, ?, 'purchase_order', ?, ?, ?, ?)`,
+                      unitPrice, sellPrice, totalValue, totalSellValue, referenceType, referenceId, referenceNumber, performedBy, notes)
+                     VALUES (?, 'RECEIPT', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'purchase_order', ?, ?, ?, ?)`,
                     [
                         drugInventoryId,
                         transactionDate,
@@ -1068,9 +1094,35 @@ router.post('/drug-inventory', async (req, res) => {
                         receivedQuantity, // Quantity after receipt
                         receivedQuantity, // Balance after
                         unitPriceForTransaction,
+                        sellPriceForTransaction,
                         totalValue,
+                        totalSellValue,
                         null, // Reference ID (can be linked to purchase order later)
                         batchNumber, // Reference number (use batch number for now)
+                        userId,
+                        `Initial stock receipt: ${receivedQuantity} units. Batch: ${batchNumber}${notes ? `. Notes: ${notes}` : ''}`
+                    ]
+                );
+
+                // Also create stock adjustment record
+                await connection.execute(
+                    `INSERT INTO drug_stock_adjustments 
+                     (drugInventoryId, medicationId, adjustmentType, adjustmentDate, quantity, batchNumber, unitPrice, sellPrice, 
+                      manufactureDate, expiryDate, minPrice, location, referenceType, referenceNumber, performedBy, notes)
+                     VALUES (?, ?, 'RECEIPT', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'purchase_order', ?, ?, ?)`,
+                    [
+                        drugInventoryId,
+                        medicationId,
+                        transactionDate,
+                        receivedQuantity, // Positive for receipt
+                        batchNumber,
+                        unitPriceForTransaction,
+                        sellPriceForTransaction,
+                        manufactureDate || null,
+                        expiryDate,
+                        minPrice || null,
+                        location || null,
+                        batchNumber, // Reference number
                         userId,
                         `Initial stock receipt: ${receivedQuantity} units. Batch: ${batchNumber}${notes ? `. Notes: ${notes}` : ''}`
                     ]
@@ -1446,6 +1498,8 @@ router.get('/prescriptions/:prescriptionId/items/ready-for-dispensing', async (r
 /**
  * @route GET /api/pharmacy/drug-inventory/available/:medicationId
  * @description Get available drug inventory for a medication
+ * Returns batches in FIFO order (First In First Out) - oldest batches first
+ * Orders by first receipt date (earliest transaction), then by expiry date for same-day receipts
  */
 router.get('/drug-inventory/available/:medicationId', async (req, res) => {
     try {
@@ -1459,16 +1513,36 @@ router.get('/drug-inventory/available/:medicationId', async (req, res) => {
                 di.batchNumber,
                 di.quantity,
                 di.unitPrice,
-                di.expiryDate,
                 di.sellPrice,
+                di.expiryDate,
                 di.location,
-                m.name as medicationName
+                di.status,
+                di.createdAt,
+                m.name as medicationName,
+                -- Get the first receipt date for this batch (FIFO ordering)
+                COALESCE(
+                    (SELECT MIN(transactionDate) 
+                     FROM drug_inventory_transactions 
+                     WHERE drugInventoryId = di.drugInventoryId 
+                     AND transactionType = 'RECEIPT'),
+                    di.createdAt
+                ) as firstReceiptDate
             FROM drug_inventory di
             INNER JOIN medications m ON di.medicationId = m.medicationId
             WHERE di.medicationId = ?
             AND di.quantity > 0
+            AND di.status = 'active'
             AND (di.expiryDate IS NULL OR di.expiryDate >= CURDATE())
-            ORDER BY di.expiryDate ASC, di.quantity DESC
+            -- FIFO: Order by first receipt date (oldest first), then by expiry date (earliest expiry first)
+            ORDER BY 
+                COALESCE(
+                    (SELECT MIN(transactionDate) 
+                     FROM drug_inventory_transactions 
+                     WHERE drugInventoryId = di.drugInventoryId 
+                     AND transactionType = 'RECEIPT'),
+                    di.createdAt
+                ) ASC,
+                di.expiryDate ASC
             `,
             [medicationId]
         );
@@ -1492,9 +1566,9 @@ router.post('/dispensations', async (req, res) => {
         const { prescriptionItemId, drugInventoryId, quantityDispensed, batchNumber, expiryDate, notes } = req.body;
         const userId = req.user?.id || req.user?.userId || 1; // Default to system user in development
         
-        if (!prescriptionItemId || !quantityDispensed || !drugInventoryId) {
+        if (!prescriptionItemId || !quantityDispensed) {
             await connection.rollback();
-            return res.status(400).json({ error: 'Prescription item ID, drug inventory ID, and quantity are required' });
+            return res.status(400).json({ error: 'Prescription item ID and quantity are required' });
         }
         
         // Get prescription item
@@ -1510,24 +1584,70 @@ router.post('/dispensations', async (req, res) => {
         
         const prescriptionItem = prescriptionItems[0];
         
-        // Get drug inventory
-        const [drugInventories] = await connection.execute(
-            'SELECT * FROM drug_inventory WHERE drugInventoryId = ?',
-            [drugInventoryId]
-        );
+        let drugInventory;
+        let selectedDrugInventoryId = drugInventoryId;
         
-        if (drugInventories.length === 0) {
-            await connection.rollback();
-            return res.status(404).json({ error: 'Drug inventory not found' });
+        // If drugInventoryId not provided, auto-select oldest batch using FIFO (First In First Out)
+        if (!selectedDrugInventoryId && prescriptionItem.medicationId) {
+            const [oldestBatches] = await connection.execute(
+                `SELECT 
+                    di.drugInventoryId,
+                    di.*,
+                    COALESCE(
+                        (SELECT MIN(transactionDate) 
+                         FROM drug_inventory_transactions 
+                         WHERE drugInventoryId = di.drugInventoryId 
+                         AND transactionType = 'RECEIPT'),
+                        di.createdAt
+                    ) as firstReceiptDate
+                 FROM drug_inventory di
+                 WHERE di.medicationId = ?
+                   AND di.quantity > 0
+                   AND di.status = 'active'
+                   AND (di.expiryDate IS NULL OR di.expiryDate >= CURDATE())
+                 ORDER BY 
+                    COALESCE(
+                        (SELECT MIN(transactionDate) 
+                         FROM drug_inventory_transactions 
+                         WHERE drugInventoryId = di.drugInventoryId 
+                         AND transactionType = 'RECEIPT'),
+                        di.createdAt
+                    ) ASC,
+                    di.expiryDate ASC
+                 LIMIT 1`,
+                [prescriptionItem.medicationId]
+            );
+            
+            if (oldestBatches.length === 0) {
+                await connection.rollback();
+                return res.status(404).json({ error: 'No available stock found for this medication' });
+            }
+            
+            drugInventory = oldestBatches[0];
+            selectedDrugInventoryId = drugInventory.drugInventoryId;
+        } else {
+            // Get drug inventory if ID was provided
+            const [drugInventories] = await connection.execute(
+                'SELECT * FROM drug_inventory WHERE drugInventoryId = ?',
+                [selectedDrugInventoryId]
+            );
+            
+            if (drugInventories.length === 0) {
+                await connection.rollback();
+                return res.status(404).json({ error: 'Drug inventory not found' });
+            }
+            
+            drugInventory = drugInventories[0];
         }
-        
-        const drugInventory = drugInventories[0];
         
         // Check if enough quantity is available
         if (drugInventory.quantity < quantityDispensed) {
             await connection.rollback();
-            return res.status(400).json({ error: `Insufficient stock. Available: ${drugInventory.quantity}, Requested: ${quantityDispensed}` });
+            return res.status(400).json({ error: `Insufficient stock in batch ${drugInventory.batchNumber}. Available: ${drugInventory.quantity}, Requested: ${quantityDispensed}` });
         }
+        
+        // Use the selected drug inventory ID
+        const finalDrugInventoryId = selectedDrugInventoryId;
         
         // Format expiryDate - extract date part if it's in ISO format
         let formattedExpiryDate = expiryDate || drugInventory.expiryDate;
@@ -1577,37 +1697,81 @@ router.post('/dispensations', async (req, res) => {
                 `UPDATE drug_inventory 
                  SET quantity = ?, status = ?, dateExhausted = ?, updatedAt = NOW() 
                  WHERE drugInventoryId = ?`,
-                [finalQuantity, batchStatus, dateExhausted, drugInventoryId]
+                [finalQuantity, batchStatus, dateExhausted, finalDrugInventoryId]
             );
         } else {
             await connection.execute(
                 'UPDATE drug_inventory SET quantity = ?, updatedAt = NOW() WHERE drugInventoryId = ?',
-                [newQuantity, drugInventoryId]
+                [newQuantity, finalDrugInventoryId]
             );
         }
+
+        // Get patient information from prescription
+        const [prescriptionInfo] = await connection.execute(
+            `SELECT p.patientId, p.prescriptionId 
+             FROM prescriptions p
+             INNER JOIN prescription_items pi ON p.prescriptionId = pi.prescriptionId
+             WHERE pi.itemId = ?`,
+            [prescriptionItemId]
+        );
+        const patientId = prescriptionInfo.length > 0 ? prescriptionInfo[0].patientId : null;
+        const prescriptionId = prescriptionInfo.length > 0 ? prescriptionInfo[0].prescriptionId : null;
 
         // Record transaction in drug_inventory_transactions table for complete history
         try {
             const transactionDate = new Date().toISOString().split('T')[0];
-            const unitPrice = drugInventory.sellPrice || drugInventory.unitPrice || 0;
-            const totalValue = quantityDispensed * unitPrice;
+            const unitPriceForTransaction = drugInventory.unitPrice || 0; // Buying/cost price
+            const sellPriceForTransaction = drugInventory.sellPrice || 0; // Selling price
+            const totalValue = quantityDispensed * unitPriceForTransaction; // Cost value
+            const totalSellValue = quantityDispensed * sellPriceForTransaction; // Selling value (negative for dispensation)
             
             await connection.execute(
                 `INSERT INTO drug_inventory_transactions 
-                 (drugInventoryId, transactionType, transactionDate, quantityChange, quantityBefore, quantityAfter, balanceAfter,
-                  unitPrice, totalValue, referenceType, referenceId, referenceNumber, performedBy, notes)
-                 VALUES (?, 'DISPENSATION', ?, ?, ?, ?, ?, ?, ?, 'dispensation', ?, ?, ?, ?)`,
+                 (drugInventoryId, patientId, prescriptionId, dispensationId, transactionType, transactionDate, quantityChange, quantityBefore, quantityAfter, balanceAfter,
+                  unitPrice, sellPrice, totalValue, totalSellValue, referenceType, referenceId, referenceNumber, performedBy, notes)
+                 VALUES (?, ?, ?, ?, 'DISPENSATION', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'dispensation', ?, ?, ?, ?)`,
                 [
-                    drugInventoryId,
+                    finalDrugInventoryId,
+                    patientId,
+                    prescriptionId,
+                    dispensationId, // Reference to the dispensation record
                     transactionDate,
                     -quantityDispensed, // Negative for dispensation
                     oldQuantity,
                     newQuantity < 0 ? 0 : newQuantity, // Don't allow negative quantities
                     newQuantity < 0 ? 0 : balanceAfter,
-                    unitPrice,
-                    totalValue,
-                    dispensationId, // Reference to the dispensation record
+                    unitPriceForTransaction,
+                    sellPriceForTransaction,
+                    -totalValue, // Negative cost value (outgoing stock)
+                    -totalSellValue, // Negative selling value (revenue)
+                    dispensationId, // Reference ID
                     `DISP-${dispensationId}`, // Human-readable reference
+                    userId,
+                    `Dispensed ${quantityDispensed} units to patient. Batch: ${drugInventory.batchNumber}${notes ? `. Notes: ${notes}` : ''}`
+                ]
+            );
+
+            // Also create stock adjustment record
+            await connection.execute(
+                `INSERT INTO drug_stock_adjustments 
+                 (drugInventoryId, medicationId, adjustmentType, adjustmentDate, quantity, batchNumber, unitPrice, sellPrice, 
+                  expiryDate, location, patientId, prescriptionId, dispensationId, referenceType, referenceId, referenceNumber, performedBy, notes)
+                 VALUES (?, ?, 'DISPENSATION', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'dispensation', ?, ?, ?, ?)`,
+                [
+                    finalDrugInventoryId,
+                    drugInventory.medicationId,
+                    transactionDate,
+                    -quantityDispensed, // Negative for dispensation
+                    drugInventory.batchNumber,
+                    unitPriceForTransaction,
+                    sellPriceForTransaction,
+                    drugInventory.expiryDate,
+                    drugInventory.location,
+                    patientId,
+                    prescriptionId,
+                    dispensationId,
+                    dispensationId,
+                    `DISP-${dispensationId}`,
                     userId,
                     `Dispensed ${quantityDispensed} units to patient. Batch: ${drugInventory.batchNumber}${notes ? `. Notes: ${notes}` : ''}`
                 ]
@@ -1624,7 +1788,7 @@ router.post('/dispensations', async (req, res) => {
                  (drugInventoryId, fieldName, oldValue, newValue, changedBy, changeType, notes)
                  VALUES (?, 'quantity', ?, ?, ?, 'update', ?)`,
                 [
-                    drugInventoryId,
+                    finalDrugInventoryId,
                     oldQuantity.toString(),
                     (newQuantity < 0 ? 0 : newQuantity).toString(),
                     userId,
@@ -1889,10 +2053,18 @@ router.get('/drug-inventory/:id/transactions', async (req, res) => {
                 dit.quantityAfter,
                 dit.balanceAfter,
                 dit.unitPrice,
+                dit.sellPrice,
                 dit.totalValue,
+                dit.totalSellValue,
                 dit.referenceType,
                 dit.referenceId,
                 dit.referenceNumber,
+                dit.patientId,
+                p.firstName as patientFirstName,
+                p.lastName as patientLastName,
+                p.patientNumber,
+                dit.prescriptionId,
+                pr.prescriptionNumber,
                 u.firstName as performedByFirstName,
                 u.lastName as performedByLastName,
                 dit.notes,
@@ -1905,6 +2077,8 @@ router.get('/drug-inventory/:id/transactions', async (req, res) => {
             INNER JOIN drug_inventory di ON dit.drugInventoryId = di.drugInventoryId
             LEFT JOIN medications m ON di.medicationId = m.medicationId
             LEFT JOIN users u ON dit.performedBy = u.userId
+            LEFT JOIN patients p ON dit.patientId = p.patientId
+            LEFT JOIN prescriptions pr ON dit.prescriptionId = pr.prescriptionId
             WHERE dit.drugInventoryId = ?
         `;
         const params = [id];
@@ -2213,6 +2387,463 @@ router.get('/drug-inventory/:id/stock-levels', async (req, res) => {
     } catch (error) {
         console.error('Error fetching stock levels:', error);
         res.status(500).json({ message: 'Error fetching stock levels', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/pharmacy/drug-history
+ * @description Get comprehensive drug history with filters
+ * Supports filtering by medication, patient, date range, batch, type, etc.
+ */
+router.get('/drug-history', async (req, res) => {
+    try {
+        const { 
+            medicationId, 
+            patientId, 
+            batchNumber, 
+            adjustmentType, 
+            startDate, 
+            endDate,
+            search,
+            page = 1,
+            limit = 50
+        } = req.query;
+
+        const offset = (parseInt(page) - 1) * parseInt(limit);
+
+        let query = `
+            SELECT 
+                dsa.*,
+                m.name as medicationName,
+                m.medicationCode,
+                m.genericName,
+                p.firstName as patientFirstName,
+                p.lastName as patientLastName,
+                p.patientNumber,
+                pr.prescriptionNumber,
+                u.firstName as performedByFirstName,
+                u.lastName as performedByLastName
+            FROM drug_stock_adjustments dsa
+            INNER JOIN medications m ON dsa.medicationId = m.medicationId
+            LEFT JOIN patients p ON dsa.patientId = p.patientId
+            LEFT JOIN prescriptions pr ON dsa.prescriptionId = pr.prescriptionId
+            LEFT JOIN users u ON dsa.performedBy = u.userId
+            WHERE 1=1
+        `;
+        const params = [];
+
+        if (medicationId && medicationId !== "all") {
+            query += ` AND dsa.medicationId = ?`;
+            params.push(medicationId);
+        }
+
+        if (patientId && patientId !== "all") {
+            query += ` AND dsa.patientId = ?`;
+            params.push(patientId);
+        }
+
+        if (batchNumber && batchNumber !== "all") {
+            query += ` AND dsa.batchNumber = ?`;
+            params.push(batchNumber);
+        }
+
+        if (adjustmentType && adjustmentType !== "all") {
+            query += ` AND dsa.adjustmentType = ?`;
+            params.push(adjustmentType);
+        }
+
+        if (startDate) {
+            query += ` AND dsa.adjustmentDate >= ?`;
+            params.push(startDate);
+        }
+
+        if (endDate) {
+            query += ` AND dsa.adjustmentDate <= ?`;
+            params.push(endDate);
+        }
+
+        if (search) {
+            query += ` AND (
+                m.name LIKE ? OR 
+                m.medicationCode LIKE ? OR 
+                dsa.batchNumber LIKE ? OR
+                p.firstName LIKE ? OR
+                p.lastName LIKE ? OR
+                p.patientNumber LIKE ?
+            )`;
+            const searchTerm = `%${search}%`;
+            params.push(searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm);
+        }
+
+        // Get total count (before adding LIMIT/OFFSET)
+        const countQuery = `SELECT COUNT(*) as total FROM (${query}) as filtered`;
+        const countParams = [...params]; // Copy params for count query
+        const [countResult] = await pool.execute(countQuery, countParams);
+        const total = countResult[0].total;
+
+        // Add ordering and pagination to main query (use direct values for LIMIT/OFFSET)
+        const safeLimit = parseInt(limit) || 50;
+        const safeOffset = parseInt(offset) || 0;
+        query += ` ORDER BY dsa.adjustmentDate DESC, dsa.adjustmentTime DESC LIMIT ${safeLimit} OFFSET ${safeOffset}`;
+
+        const [rows] = await pool.execute(query, params);
+
+        res.status(200).json({
+            adjustments: rows,
+            pagination: {
+                page: parseInt(page),
+                limit: parseInt(limit),
+                total,
+                totalPages: Math.ceil(total / parseInt(limit))
+            }
+        });
+    } catch (error) {
+        console.error('Error fetching drug history:', error);
+        res.status(500).json({ message: 'Error fetching drug history', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/pharmacy/drug-history/patient/:patientId
+ * @description Get drug history for a specific patient
+ */
+router.get('/drug-history/patient/:patientId', async (req, res) => {
+    try {
+        const { patientId } = req.params;
+        const { startDate, endDate } = req.query;
+
+        let query = `
+            SELECT 
+                dsa.*,
+                m.name as medicationName,
+                m.medicationCode,
+                pr.prescriptionNumber,
+                u.firstName as performedByFirstName,
+                u.lastName as performedByLastName
+            FROM drug_stock_adjustments dsa
+            INNER JOIN medications m ON dsa.medicationId = m.medicationId
+            LEFT JOIN prescriptions pr ON dsa.prescriptionId = pr.prescriptionId
+            LEFT JOIN users u ON dsa.performedBy = u.userId
+            WHERE dsa.patientId = ? AND dsa.adjustmentType = 'DISPENSATION'
+        `;
+        const params = [patientId];
+
+        if (startDate) {
+            query += ` AND dsa.adjustmentDate >= ?`;
+            params.push(startDate);
+        }
+
+        if (endDate) {
+            query += ` AND dsa.adjustmentDate <= ?`;
+            params.push(endDate);
+        }
+
+        query += ` ORDER BY dsa.adjustmentDate DESC, dsa.adjustmentTime DESC`;
+
+        const [rows] = await pool.execute(query, params);
+
+        res.status(200).json(rows);
+    } catch (error) {
+        console.error('Error fetching patient drug history:', error);
+        res.status(500).json({ message: 'Error fetching patient drug history', error: error.message });
+    }
+});
+
+/**
+ * @route POST /api/pharmacy/stock-adjustments
+ * @description Create a stock adjustment (manual stock movement)
+ * Supports: RECEIPT, DISPENSATION, ADJUSTMENT, TRANSFER, EXPIRY, DAMAGE, RETURN, CORRECTION
+ */
+router.post('/stock-adjustments', async (req, res) => {
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
+        
+        const {
+            drugInventoryId,
+            medicationId,
+            adjustmentType,
+            adjustmentDate,
+            quantity,
+            batchNumber,
+            unitPrice,
+            sellPrice,
+            manufactureDate,
+            expiryDate,
+            minPrice,
+            location,
+            referenceType,
+            referenceId,
+            referenceNumber,
+            notes
+        } = req.body;
+        
+        const userId = req.user?.id || req.user?.userId || 1;
+        
+        // Validate required fields
+        if (!medicationId || !adjustmentType || !adjustmentDate || quantity === undefined) {
+            await connection.rollback();
+            return res.status(400).json({ error: 'medicationId, adjustmentType, adjustmentDate, and quantity are required' });
+        }
+        
+        // For RECEIPT, batchNumber is required
+        if (adjustmentType === 'RECEIPT' && !batchNumber) {
+            await connection.rollback();
+            return res.status(400).json({ error: 'batchNumber is required for RECEIPT adjustments' });
+        }
+        
+        let drugInventory;
+        let actualDrugInventoryId = drugInventoryId;
+        let isNewBatch = false;
+        
+        // For RECEIPT adjustments, check if batch already exists, if not create new batch
+        if (adjustmentType === 'RECEIPT' && batchNumber) {
+            // Check if batch already exists
+            const [existingBatches] = await connection.execute(
+                'SELECT * FROM drug_inventory WHERE batchNumber = ? AND medicationId = ?',
+                [batchNumber, medicationId]
+            );
+            
+            if (existingBatches.length > 0) {
+                // Batch exists, use it
+                drugInventory = existingBatches[0];
+                actualDrugInventoryId = drugInventory.drugInventoryId;
+                isNewBatch = false;
+            } else {
+                // Create new batch
+                if (!unitPrice || !sellPrice || !expiryDate) {
+                    await connection.rollback();
+                    return res.status(400).json({ error: 'unitPrice, sellPrice, and expiryDate are required when creating a new batch' });
+                }
+                
+                const [newBatchResult] = await connection.execute(
+                    `INSERT INTO drug_inventory 
+                     (medicationId, batchNumber, quantity, unitPrice, sellPrice, minPrice, manufactureDate, expiryDate, location, notes, status, originalQuantity)
+                     VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?, ?, 'active', ?)`,
+                    [
+                        medicationId,
+                        batchNumber,
+                        unitPrice,
+                        sellPrice,
+                        minPrice || null,
+                        manufactureDate || null,
+                        expiryDate,
+                        location || null,
+                        notes || null,
+                        Math.abs(quantity) // originalQuantity
+                    ]
+                );
+                
+                actualDrugInventoryId = newBatchResult.insertId;
+                isNewBatch = true;
+                
+                // Get the newly created batch
+                const [newBatches] = await connection.execute(
+                    'SELECT * FROM drug_inventory WHERE drugInventoryId = ?',
+                    [actualDrugInventoryId]
+                );
+                drugInventory = newBatches[0];
+            }
+        } else {
+            // For non-RECEIPT adjustments, drugInventoryId is required
+            if (!drugInventoryId) {
+                await connection.rollback();
+                return res.status(400).json({ error: 'drugInventoryId is required for non-RECEIPT adjustments' });
+            }
+            
+            // Get current drug inventory
+            const [drugInventories] = await connection.execute(
+                'SELECT * FROM drug_inventory WHERE drugInventoryId = ?',
+                [drugInventoryId]
+            );
+            
+            if (drugInventories.length === 0) {
+                await connection.rollback();
+                return res.status(404).json({ error: 'Drug inventory not found' });
+            }
+            
+            drugInventory = drugInventories[0];
+            actualDrugInventoryId = drugInventoryId;
+            isNewBatch = false;
+        }
+        
+        // Calculate new quantity based on adjustment type
+        let newQuantity = drugInventory.quantity;
+        if (adjustmentType === 'RECEIPT') {
+            newQuantity += quantity; // Positive for receipts
+        } else if (adjustmentType === 'DISPENSATION') {
+            newQuantity -= Math.abs(quantity); // Negative for dispensations
+        } else if (adjustmentType === 'ADJUSTMENT' || adjustmentType === 'CORRECTION') {
+            // Adjustments can be positive or negative
+            newQuantity += quantity;
+        } else if (['EXPIRY', 'DAMAGE', 'TRANSFER', 'RETURN'].includes(adjustmentType)) {
+            // These are typically negative (removing stock)
+            newQuantity -= Math.abs(quantity);
+        }
+        
+        // Ensure quantity doesn't go negative (unless it's an adjustment/correction that explicitly allows it)
+        if (newQuantity < 0 && adjustmentType !== 'ADJUSTMENT' && adjustmentType !== 'CORRECTION') {
+            await connection.rollback();
+            return res.status(400).json({ error: `Adjustment would result in negative quantity. Current: ${drugInventory.quantity}, Adjustment: ${quantity}` });
+        }
+        
+        if (newQuantity < 0) {
+            newQuantity = 0; // Prevent negative quantities
+        }
+        
+        // Update drug inventory quantity
+        let batchStatus = drugInventory.status || 'active';
+        let dateExhausted = null;
+        
+        if (newQuantity <= 0 && adjustmentType !== 'RECEIPT') {
+            batchStatus = 'exhausted';
+            dateExhausted = adjustmentDate || new Date().toISOString().split('T')[0];
+        } else if (newQuantity > 0 && drugInventory.status === 'exhausted') {
+            batchStatus = 'active';
+            dateExhausted = null;
+        }
+        
+        // Update drug inventory (also update originalQuantity for RECEIPT if it's the first receipt)
+        if (adjustmentType === 'RECEIPT') {
+            // For RECEIPT, also update originalQuantity if it's the first receipt transaction
+            const [existingTransactions] = await connection.execute(
+                'SELECT COUNT(*) as count FROM drug_inventory_transactions WHERE drugInventoryId = ? AND transactionType = "RECEIPT"',
+                [actualDrugInventoryId]
+            );
+            
+            if (existingTransactions[0].count === 0) {
+                // First receipt, update originalQuantity
+                await connection.execute(
+                    `UPDATE drug_inventory 
+                     SET quantity = ?, 
+                         originalQuantity = ?,
+                         status = ?, 
+                         dateExhausted = ?,
+                         updatedAt = NOW()
+                     WHERE drugInventoryId = ?`,
+                    [newQuantity, newQuantity, batchStatus, dateExhausted, actualDrugInventoryId]
+                );
+            } else {
+                // Subsequent receipt
+                await connection.execute(
+                    `UPDATE drug_inventory 
+                     SET quantity = ?, 
+                         status = ?, 
+                         dateExhausted = ?,
+                         updatedAt = NOW()
+                     WHERE drugInventoryId = ?`,
+                    [newQuantity, batchStatus, dateExhausted, actualDrugInventoryId]
+                );
+            }
+        } else {
+            // For other adjustments
+            await connection.execute(
+                `UPDATE drug_inventory 
+                 SET quantity = ?, 
+                     status = ?, 
+                     dateExhausted = ?,
+                     updatedAt = NOW()
+                 WHERE drugInventoryId = ?`,
+                [newQuantity, batchStatus, dateExhausted, actualDrugInventoryId]
+            );
+        }
+        
+        // Create stock adjustment record
+        const adjustmentDateValue = adjustmentDate || new Date().toISOString().split('T')[0];
+        const [adjustmentResult] = await connection.execute(
+            `INSERT INTO drug_stock_adjustments 
+             (drugInventoryId, medicationId, adjustmentType, adjustmentDate, quantity, batchNumber, unitPrice, sellPrice,
+              manufactureDate, expiryDate, minPrice, location, referenceType, referenceId, referenceNumber, performedBy, notes)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                actualDrugInventoryId,
+                medicationId,
+                adjustmentType,
+                adjustmentDateValue,
+                quantity,
+                batchNumber || drugInventory.batchNumber,
+                unitPrice || drugInventory.unitPrice || 0,
+                sellPrice || drugInventory.sellPrice || 0,
+                manufactureDate || drugInventory.manufactureDate || null,
+                expiryDate || drugInventory.expiryDate || null,
+                minPrice || drugInventory.minPrice || null,
+                location || drugInventory.location || null,
+                referenceType || null,
+                referenceId || null,
+                referenceNumber || null,
+                userId,
+                notes || null
+            ]
+        );
+        
+        const adjustmentId = adjustmentResult.insertId;
+        
+        // Create transaction record for history
+        try {
+            const transactionDate = adjustmentDateValue;
+            const oldQuantity = isNewBatch ? 0 : drugInventory.quantity;
+            const quantityChange = adjustmentType === 'RECEIPT' ? Math.abs(quantity) : quantity; // Positive for receipts
+            const quantityBefore = oldQuantity;
+            const quantityAfter = newQuantity;
+            const balanceAfter = newQuantity;
+            const unitPriceForTransaction = unitPrice || drugInventory.unitPrice || 0;
+            const sellPriceForTransaction = sellPrice || drugInventory.sellPrice || 0;
+            const totalValue = quantityChange * unitPriceForTransaction;
+            const totalSellValue = quantityChange * sellPriceForTransaction;
+            
+            await connection.execute(
+                `INSERT INTO drug_inventory_transactions 
+                 (drugInventoryId, transactionType, transactionDate, quantityChange, quantityBefore, quantityAfter, balanceAfter,
+                  unitPrice, sellPrice, totalValue, totalSellValue, referenceType, referenceId, referenceNumber, performedBy, notes)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                    actualDrugInventoryId,
+                    adjustmentType,
+                    transactionDate,
+                    quantityChange,
+                    quantityBefore,
+                    quantityAfter,
+                    balanceAfter,
+                    unitPriceForTransaction,
+                    sellPriceForTransaction,
+                    totalValue,
+                    totalSellValue,
+                    referenceType || null,
+                    referenceId || null,
+                    referenceNumber || null,
+                    userId,
+                    notes || `Stock adjustment: ${adjustmentType}. ${notes || ''}`
+                ]
+            );
+        } catch (transactionError) {
+            console.error('Error recording stock adjustment transaction:', transactionError);
+            // Don't fail if transaction logging fails
+        }
+        
+        await connection.commit();
+        
+        // Get created adjustment with details
+        const [createdAdjustment] = await connection.execute(
+            `SELECT 
+                dsa.*,
+                m.name as medicationName,
+                m.medicationCode,
+                u.firstName as performedByFirstName,
+                u.lastName as performedByLastName
+             FROM drug_stock_adjustments dsa
+             LEFT JOIN medications m ON dsa.medicationId = m.medicationId
+             LEFT JOIN users u ON dsa.performedBy = u.userId
+             WHERE dsa.adjustmentId = ?`,
+            [adjustmentId]
+        );
+        
+        res.status(201).json(createdAdjustment[0]);
+    } catch (error) {
+        await connection.rollback();
+        console.error('Error creating stock adjustment:', error);
+        res.status(500).json({ message: 'Error creating stock adjustment', error: error.message });
+    } finally {
+        connection.release();
     }
 });
 

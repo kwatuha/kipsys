@@ -1,401 +1,540 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { zodResolver } from "@hookform/resolvers/zod"
-import { useForm } from "react-hook-form"
-import * as z from "zod"
 import { Button } from "@/components/ui/button"
-import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Card, CardContent } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-import { Search, Plus, Minus, AlertTriangle, Loader2 } from "lucide-react"
-import { inventoryApi, inventoryTransactionApi } from "@/lib/api"
+import { Loader2, Plus, Minus } from "lucide-react"
+import { pharmacyApi } from "@/lib/api"
 import { toast } from "@/components/ui/use-toast"
-import { useRouter, useSearchParams } from "next/navigation"
 
-// Form schema
-const formSchema = z.object({
-  itemId: z.string({
-    required_error: "Please select an item.",
-  }),
-  adjustmentType: z.enum(["add", "subtract"], {
-    required_error: "Please select an adjustment type.",
-  }),
-  quantity: z.coerce.number().positive({
-    message: "Quantity must be a positive number.",
-  }),
-  reason: z.enum(["purchase", "return", "damage", "expiry", "correction", "use", "transfer", "other"], {
-    required_error: "Please select a reason.",
-  }),
-  notes: z.string().optional(),
-  referenceNumber: z.string().optional(),
-  date: z.date({
-    required_error: "Please select a date.",
-  }),
-})
+interface StockAdjustmentFormProps {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onSuccess?: () => void
+  drugInventoryId?: number
+  medicationId?: number
+}
 
-export function StockAdjustmentForm() {
-  const router = useRouter()
-  const searchParams = useSearchParams()
-  const [searchTerm, setSearchTerm] = useState("")
-  const [selectedItem, setSelectedItem] = useState<any>(null)
-  const [items, setItems] = useState<any[]>([])
-  const [loading, setLoading] = useState(true)
-  const [submitting, setSubmitting] = useState(false)
+interface DrugInventoryItem {
+  drugInventoryId: number
+  medicationId: number
+  batchNumber: string
+  quantity: number
+  unitPrice: number
+  sellPrice: number
+  expiryDate?: string
+  location?: string
+}
 
-  // Initialize form
-  const form = useForm<z.infer<typeof formSchema>>({
-    resolver: zodResolver(formSchema),
-    defaultValues: {
-      adjustmentType: "add",
-      quantity: 1,
-      date: new Date(),
-    },
-  })
+export function StockAdjustmentForm({
+  open,
+  onOpenChange,
+  onSuccess,
+  drugInventoryId: initialDrugInventoryId,
+  medicationId: initialMedicationId,
+}: StockAdjustmentFormProps) {
+  const [loading, setLoading] = useState(false)
+  const [drugInventories, setDrugInventories] = useState<DrugInventoryItem[]>([])
+  const [medications, setMedications] = useState<any[]>([])
+  const [loadingData, setLoadingData] = useState(false)
 
-  // Handle selecting an item
-  const selectItem = (item: any) => {
-    setSelectedItem(item)
-    form.setValue("itemId", item.itemId.toString(), { shouldValidate: true })
-    setSearchTerm("") // Clear search after selection
-  }
+  // Form state
+  const [selectedDrugInventoryId, setSelectedDrugInventoryId] = useState<string>(
+    initialDrugInventoryId?.toString() || ""
+  )
+  const [selectedMedicationId, setSelectedMedicationId] = useState<string>(
+    initialMedicationId?.toString() || ""
+  )
+  const [adjustmentType, setAdjustmentType] = useState<string>("RECEIPT")
+  const [adjustmentDate, setAdjustmentDate] = useState(
+    new Date().toISOString().split("T")[0]
+  )
+  const [quantity, setQuantity] = useState<string>("")
+  const [batchNumber, setBatchNumber] = useState("")
+  const [unitPrice, setUnitPrice] = useState<string>("")
+  const [sellPrice, setSellPrice] = useState<string>("")
+  const [manufactureDate, setManufactureDate] = useState("")
+  const [expiryDate, setExpiryDate] = useState("")
+  const [minPrice, setMinPrice] = useState<string>("")
+  const [location, setLocation] = useState("")
+  const [referenceNumber, setReferenceNumber] = useState("")
+  const [notes, setNotes] = useState("")
 
-  // Load inventory items
+  // Load medications and drug inventories
   useEffect(() => {
-    const loadItems = async () => {
-      try {
-        setLoading(true)
-        const data = await inventoryApi.getAll(undefined, "Active")
-        setItems(data)
-        
-        // Pre-select item if itemId is provided in query params
-        const itemIdParam = searchParams?.get("itemId")
-        if (itemIdParam) {
-          const item = data.find((i: any) => i.itemId.toString() === itemIdParam)
-          if (item) {
-            selectItem(item)
-          }
-        }
-      } catch (error: any) {
-        console.error("Error loading inventory items:", error)
-        toast({
-          title: "Error",
-          description: "Failed to load inventory items.",
-          variant: "destructive",
-        })
-      } finally {
-        setLoading(false)
+    if (open) {
+      loadMedications()
+      if (selectedMedicationId) {
+        loadDrugInventories(selectedMedicationId)
+      }
+    } else {
+      // Reset form when closed
+      resetForm()
+    }
+  }, [open, selectedMedicationId])
+
+  // Load selected drug inventory details (only for non-RECEIPT adjustments)
+  useEffect(() => {
+    if (selectedDrugInventoryId && drugInventories.length > 0 && adjustmentType !== "RECEIPT") {
+      const selected = drugInventories.find(
+        (di) => di.drugInventoryId.toString() === selectedDrugInventoryId
+      )
+      if (selected) {
+        if (!batchNumber) setBatchNumber(selected.batchNumber)
+        if (!unitPrice) setUnitPrice(selected.unitPrice.toString())
+        if (!sellPrice) setSellPrice(selected.sellPrice.toString())
+        if (!expiryDate && selected.expiryDate)
+          setExpiryDate(selected.expiryDate.split("T")[0])
+        if (!location && selected.location) setLocation(selected.location)
+        setSelectedMedicationId(selected.medicationId.toString())
       }
     }
-    loadItems()
-  }, [searchParams, form])
+  }, [selectedDrugInventoryId, drugInventories, adjustmentType])
 
-  // Filter items based on search term
-  const filteredItems = items.filter(
-    (item) =>
-      item.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.itemCode?.toLowerCase().includes(searchTerm.toLowerCase()),
-  )
-
-  // Handle form submission
-  async function onSubmit(values: z.infer<typeof formSchema>) {
+  const loadMedications = async () => {
     try {
-      setSubmitting(true)
-      
-      const payload = {
-        itemId: parseInt(values.itemId),
-        adjustmentType: values.adjustmentType,
-        quantity: values.quantity,
-        reason: values.reason,
-        date: values.date ? new Date(values.date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
-        referenceNumber: values.referenceNumber || null,
-        notes: values.notes || null,
-      }
-
-      await inventoryTransactionApi.create(payload)
-      
-      toast({
-        title: "Success",
-        description: "Stock adjustment recorded successfully.",
-      })
-      
-      // Reset form
-      form.reset({
-        adjustmentType: "add",
-        quantity: 1,
-        date: new Date(),
-      })
-      setSelectedItem(null)
-      setSearchTerm("")
-      
-      // Optionally refresh the page or navigate
-      router.refresh()
-    } catch (error: any) {
-      console.error("Error recording stock adjustment:", error)
+      setLoadingData(true)
+      const data = await pharmacyApi.getMedications(undefined, 1, 100)
+      setMedications(data || [])
+    } catch (err: any) {
+      console.error("Error loading medications:", err)
       toast({
         title: "Error",
-        description: error.message || "Failed to record stock adjustment.",
+        description: "Failed to load medications",
         variant: "destructive",
       })
     } finally {
-      setSubmitting(false)
+      setLoadingData(false)
     }
   }
 
+  const loadDrugInventories = async (medId: string) => {
+    try {
+      const data = await pharmacyApi.getDrugInventory(medId)
+      setDrugInventories(Array.isArray(data) ? data : [])
+    } catch (err: any) {
+      console.error("Error loading drug inventories:", err)
+    }
+  }
+
+  const resetForm = () => {
+    setSelectedDrugInventoryId(initialDrugInventoryId?.toString() || "")
+    setSelectedMedicationId(initialMedicationId?.toString() || "all")
+    setAdjustmentType("RECEIPT")
+    setAdjustmentDate(new Date().toISOString().split("T")[0])
+    setQuantity("")
+    setBatchNumber("")
+    setUnitPrice("")
+    setSellPrice("")
+    setManufactureDate("")
+    setExpiryDate("")
+    setMinPrice("")
+    setLocation("")
+    setReferenceNumber("")
+    setNotes("")
+  }
+
+  const handleMedicationChange = (medId: string) => {
+    setSelectedMedicationId(medId)
+    setSelectedDrugInventoryId("")
+    if (medId && medId !== "all") {
+      loadDrugInventories(medId)
+    } else {
+      setDrugInventories([])
+    }
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+
+    if (!selectedMedicationId || selectedMedicationId === "all") {
+      toast({
+        title: "Error",
+        description: "Please select a medication",
+        variant: "destructive",
+      })
+      return
+    }
+
+    // For RECEIPT adjustments, drugInventoryId is optional (can create new batch)
+    // For other adjustments, drugInventoryId is required
+    if (adjustmentType !== "RECEIPT" && !selectedDrugInventoryId) {
+      toast({
+        title: "Error",
+        description: "Please select a drug inventory batch",
+        variant: "destructive",
+      })
+      return
+    }
+
+    if (!adjustmentType || !adjustmentDate || !quantity) {
+      toast({
+        title: "Error",
+        description: "Adjustment type, date, and quantity are required",
+        variant: "destructive",
+      })
+      return
+    }
+
+    if (adjustmentType === "RECEIPT" && !batchNumber) {
+      toast({
+        title: "Error",
+        description: "Batch number is required for receipt adjustments",
+        variant: "destructive",
+      })
+      return
+    }
+
+    try {
+      setLoading(true)
+
+      const adjustmentData: any = {
+        medicationId: parseInt(selectedMedicationId),
+        adjustmentType,
+        adjustmentDate,
+        quantity: Math.abs(parseInt(quantity)), // Always positive, API handles sign based on type
+        batchNumber: batchNumber || undefined,
+        unitPrice: unitPrice ? parseFloat(unitPrice) : undefined,
+        sellPrice: sellPrice ? parseFloat(sellPrice) : undefined,
+        manufactureDate: manufactureDate || undefined,
+        expiryDate: expiryDate || undefined,
+        minPrice: minPrice ? parseFloat(minPrice) : undefined,
+        location: location || undefined,
+        referenceType: adjustmentType === "RECEIPT" ? "purchase_order" : "adjustment",
+        referenceNumber: referenceNumber || undefined,
+        notes: notes || undefined,
+      }
+
+      // For non-RECEIPT adjustments, include drugInventoryId
+      if (adjustmentType !== "RECEIPT" && selectedDrugInventoryId) {
+        adjustmentData.drugInventoryId = parseInt(selectedDrugInventoryId)
+      } else if (adjustmentType === "RECEIPT" && selectedDrugInventoryId) {
+        // For RECEIPT, if batch is selected, use it; otherwise create new
+        adjustmentData.drugInventoryId = parseInt(selectedDrugInventoryId)
+      }
+
+      await pharmacyApi.createStockAdjustment(adjustmentData)
+
+      toast({
+        title: "Success",
+        description: "Stock adjustment created successfully",
+      })
+
+      onSuccess?.()
+      onOpenChange(false)
+      resetForm()
+    } catch (err: any) {
+      console.error("Error creating stock adjustment:", err)
+      toast({
+        title: "Error",
+        description: err.message || "Failed to create stock adjustment",
+        variant: "destructive",
+      })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const getQuantityLabel = () => {
+    switch (adjustmentType) {
+      case "RECEIPT":
+        return "Quantity to Add"
+      case "DISPENSATION":
+        return "Quantity to Dispense"
+      case "EXPIRY":
+      case "DAMAGE":
+        return "Quantity to Remove"
+      case "ADJUSTMENT":
+      case "CORRECTION":
+        return "Quantity Adjustment (can be positive or negative)"
+      default:
+        return "Quantity"
+    }
+  }
+
+  const isQuantityPositive = () => {
+    return ["RECEIPT", "ADJUSTMENT", "CORRECTION"].includes(adjustmentType)
+  }
+
   return (
-    <Form {...form}>
-      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-        <div className="space-y-4">
-          <FormField
-            control={form.control}
-            name="itemId"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Select Item</FormLabel>
-                <FormControl>
-                  <div className="space-y-2">
-                    <div className="flex items-center space-x-2">
-                      <Search className="h-4 w-4 text-muted-foreground" />
-                      <Input
-                        placeholder="Search by name or SKU..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        className="flex-1"
-                      />
-                    </div>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Stock Adjustment</DialogTitle>
+          <DialogDescription>
+            Record a stock movement: receipt, adjustment, expiry, damage, or transfer
+          </DialogDescription>
+        </DialogHeader>
 
-                    {loading ? (
-                      <div className="flex items-center justify-center py-4">
-                        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                        <span className="ml-2 text-sm text-muted-foreground">Loading items...</span>
-                      </div>
-                    ) : searchTerm && filteredItems.length > 0 && !selectedItem ? (
-                      <Card>
-                        <CardContent className="p-2">
-                          <ul className="divide-y">
-                            {filteredItems.map((item) => (
-                              <li
-                                key={item.itemId}
-                                className="py-2 px-2 hover:bg-muted cursor-pointer rounded-md"
-                                onClick={() => {
-                                  selectItem(item)
-                                  field.onChange(item.itemId.toString())
-                                }}
-                              >
-                                <div className="font-medium">{item.name}</div>
-                                <div className="text-sm text-muted-foreground flex justify-between">
-                                  <span>{item.itemCode || `INV-${item.itemId}`}</span>
-                                  <span>Current Stock: {item.quantity || 0}</span>
-                                </div>
-                              </li>
-                            ))}
-                          </ul>
-                        </CardContent>
-                      </Card>
-                    ) : searchTerm && filteredItems.length === 0 ? (
-                      <div className="text-sm text-muted-foreground py-2">No items found</div>
-                    ) : null}
-
-                    {selectedItem && (
-                      <Card>
-                        <CardContent className="p-3">
-                          <div className="flex justify-between items-start">
-                            <div>
-                              <div className="font-medium">{selectedItem.name}</div>
-                              <div className="text-sm text-muted-foreground">{selectedItem.itemCode || `INV-${selectedItem.itemId}`}</div>
-                            </div>
-                            <Badge>Current Stock: {selectedItem.quantity || 0}</Badge>
-                          </div>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="mt-2"
-                            onClick={() => {
-                              setSelectedItem(null)
-                              setSearchTerm("")
-                              field.onChange("")
-                              form.setValue("itemId", "")
-                            }}
-                          >
-                            Change Item
-                          </Button>
-                        </CardContent>
-                      </Card>
-                    )}
-                  </div>
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <FormField
-            control={form.control}
-            name="adjustmentType"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Adjustment Type</FormLabel>
-                <Select onValueChange={field.onChange} defaultValue={field.value}>
-                  <FormControl>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select type" />
-                    </SelectTrigger>
-                  </FormControl>
-                  <SelectContent>
-                    <SelectItem value="add">
-                      <div className="flex items-center">
-                        <Plus className="mr-2 h-4 w-4 text-green-500" />
-                        Add Stock
-                      </div>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="medication">Medication *</Label>
+              <Select
+                value={selectedMedicationId}
+                onValueChange={handleMedicationChange}
+                disabled={!!initialMedicationId}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select medication" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Select medication</SelectItem>
+                  {medications.map((med) => (
+                    <SelectItem key={med.medicationId} value={med.medicationId.toString()}>
+                      {med.name || med.medicationName}
                     </SelectItem>
-                    <SelectItem value="subtract">
-                      <div className="flex items-center">
-                        <Minus className="mr-2 h-4 w-4 text-red-500" />
-                        Subtract Stock
-                      </div>
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
 
-          <FormField
-            control={form.control}
-            name="quantity"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Quantity</FormLabel>
-                <FormControl>
-                  <Input type="number" min="1" {...field} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <FormField
-            control={form.control}
-            name="reason"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Reason</FormLabel>
-                <Select onValueChange={field.onChange} defaultValue={field.value}>
-                  <FormControl>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select reason" />
-                    </SelectTrigger>
-                  </FormControl>
-                  <SelectContent>
-                    <SelectItem value="purchase">New Purchase</SelectItem>
-                    <SelectItem value="return">Return from Department</SelectItem>
-                    <SelectItem value="damage">Damaged/Broken</SelectItem>
-                    <SelectItem value="expiry">Expired</SelectItem>
-                    <SelectItem value="correction">Inventory Correction</SelectItem>
-                    <SelectItem value="use">Used in Procedure</SelectItem>
-                    <SelectItem value="transfer">Transfer to Another Location</SelectItem>
-                    <SelectItem value="other">Other</SelectItem>
-                  </SelectContent>
-                </Select>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-
-          <FormField
-            control={form.control}
-            name="date"
-            render={({ field }) => (
-              <FormItem className="flex flex-col">
-                <FormLabel>Date</FormLabel>
-                <FormControl>
+            <div className="space-y-2">
+              <Label htmlFor="batch">
+                Drug Inventory Batch {adjustmentType !== "RECEIPT" ? "*" : ""}
+              </Label>
+              {loadingData ? (
+                <div className="flex items-center justify-center p-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                </div>
+              ) : adjustmentType === "RECEIPT" ? (
+                <>
                   <Input
-                    type="date"
-                    value={field.value ? new Date(field.value).toISOString().split("T")[0] : ""}
-                    onChange={(e) => {
-                      const date = e.target.value ? new Date(e.target.value) : null
-                      field.onChange(date)
-                    }}
+                    id="batch"
+                    value={selectedDrugInventoryId}
+                    onChange={(e) => setSelectedDrugInventoryId(e.target.value)}
+                    placeholder="Leave empty for new batch or select existing"
+                    disabled
                   />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        </div>
+                  <p className="text-xs text-muted-foreground">
+                    For RECEIPT: Enter batch number below. A new batch will be created if it doesn't exist.
+                  </p>
+                </>
+              ) : (
+                <Select
+                  value={selectedDrugInventoryId}
+                  onValueChange={setSelectedDrugInventoryId}
+                  disabled={!selectedMedicationId || selectedMedicationId === "all"}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select batch" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {drugInventories.map((di) => (
+                      <SelectItem key={di.drugInventoryId} value={di.drugInventoryId.toString()}>
+                        {di.batchNumber} (Qty: {di.quantity})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+          </div>
 
-        <FormField
-          control={form.control}
-          name="referenceNumber"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Reference Number</FormLabel>
-              <FormControl>
-                <Input placeholder="e.g., PO-2023-089, REQ-2023-112" {...field} />
-              </FormControl>
-              <FormDescription>Purchase order, requisition, or other reference number</FormDescription>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="adjustmentType">Adjustment Type *</Label>
+              <Select value={adjustmentType} onValueChange={setAdjustmentType}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="RECEIPT">Receipt (Add Stock)</SelectItem>
+                  <SelectItem value="DISPENSATION">Dispensation (Remove Stock)</SelectItem>
+                  <SelectItem value="ADJUSTMENT">Adjustment</SelectItem>
+                  <SelectItem value="CORRECTION">Correction</SelectItem>
+                  <SelectItem value="EXPIRY">Expiry (Remove Stock)</SelectItem>
+                  <SelectItem value="DAMAGE">Damage (Remove Stock)</SelectItem>
+                  <SelectItem value="RETURN">Return</SelectItem>
+                  <SelectItem value="TRANSFER">Transfer</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
 
-        <FormField
-          control={form.control}
-          name="notes"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Notes</FormLabel>
-              <FormControl>
-                <Textarea placeholder="Additional notes about this adjustment" className="min-h-[100px]" {...field} />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
+            <div className="space-y-2">
+              <Label htmlFor="adjustmentDate">Adjustment Date *</Label>
+              <Input
+                id="adjustmentDate"
+                type="date"
+                value={adjustmentDate}
+                onChange={(e) => setAdjustmentDate(e.target.value)}
+                required
+              />
+            </div>
+          </div>
 
-        {form.watch("adjustmentType") === "subtract" &&
-          selectedItem &&
-          form.watch("quantity") > (selectedItem.quantity || 0) && (
-            <div className="flex items-center p-3 text-amber-800 bg-amber-50 rounded-md border border-amber-200">
-              <AlertTriangle className="h-5 w-5 text-amber-500 mr-2" />
-              <div>
-                <p className="font-medium">Warning: Insufficient Stock</p>
-                <p className="text-sm">
-                  The adjustment quantity ({form.watch("quantity")}) exceeds the current stock level (
-                  {selectedItem.quantity || 0}).
-                </p>
-              </div>
+          {adjustmentType === "RECEIPT" && (
+            <div className="space-y-2">
+              <Label htmlFor="batchNumber">Batch Number *</Label>
+              <Input
+                id="batchNumber"
+                value={batchNumber}
+                onChange={(e) => setBatchNumber(e.target.value)}
+                placeholder="Enter batch number"
+                required={adjustmentType === "RECEIPT"}
+              />
             </div>
           )}
 
-        <div className="flex justify-end gap-2">
-          <Button type="button" variant="outline">
-            Cancel
-          </Button>
-          <Button
-            type="submit"
-            disabled={
-              submitting ||
-              !selectedItem ||
-              (form.watch("adjustmentType") === "subtract" &&
-                selectedItem &&
-                form.watch("quantity") > (selectedItem.quantity || 0))
-            }
-          >
-            {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Record Adjustment
-          </Button>
-        </div>
-      </form>
-    </Form>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="quantity">{getQuantityLabel()} *</Label>
+              <Input
+                id="quantity"
+                type="number"
+                min={isQuantityPositive() ? "0" : undefined}
+                value={quantity}
+                onChange={(e) => setQuantity(e.target.value)}
+                placeholder="Enter quantity"
+                required
+              />
+              {selectedDrugInventoryId && drugInventories.length > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  Current quantity:{" "}
+                  {
+                    drugInventories.find(
+                      (di) => di.drugInventoryId.toString() === selectedDrugInventoryId
+                    )?.quantity
+                  }
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="location">Location</Label>
+              <Input
+                id="location"
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                placeholder="Storage location"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="unitPrice">Buy Price (Unit Price)</Label>
+              <Input
+                id="unitPrice"
+                type="number"
+                step="0.01"
+                value={unitPrice}
+                onChange={(e) => setUnitPrice(e.target.value)}
+                placeholder="0.00"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="sellPrice">Sell Price</Label>
+              <Input
+                id="sellPrice"
+                type="number"
+                step="0.01"
+                value={sellPrice}
+                onChange={(e) => setSellPrice(e.target.value)}
+                placeholder="0.00"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="manufactureDate">Manufacture Date</Label>
+              <Input
+                id="manufactureDate"
+                type="date"
+                value={manufactureDate}
+                onChange={(e) => setManufactureDate(e.target.value)}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="expiryDate">Expiry Date</Label>
+              <Input
+                id="expiryDate"
+                type="date"
+                value={expiryDate}
+                onChange={(e) => setExpiryDate(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="minPrice">Minimum Price</Label>
+              <Input
+                id="minPrice"
+                type="number"
+                step="0.01"
+                value={minPrice}
+                onChange={(e) => setMinPrice(e.target.value)}
+                placeholder="0.00"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="referenceNumber">Reference Number</Label>
+              <Input
+                id="referenceNumber"
+                value={referenceNumber}
+                onChange={(e) => setReferenceNumber(e.target.value)}
+                placeholder="PO number, adjustment ID, etc."
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="notes">Notes</Label>
+            <Textarea
+              id="notes"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Additional notes about this adjustment..."
+              rows={3}
+            />
+          </div>
+
+          <div className="flex justify-end gap-2 pt-4">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+              disabled={loading}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={loading}>
+              {loading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Creating...
+                </>
+              ) : (
+                <>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Create Adjustment
+                </>
+              )}
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   )
 }

@@ -231,6 +231,42 @@ export const pharmacyApi = {
   
   getMedicationInventoryHistory: (medicationId: string) =>
     apiRequest<any>(`/api/pharmacy/drug-inventory/medication/${medicationId}/history`),
+
+  // Drug History (New comprehensive history with filters)
+  getDrugHistory: (filters?: {
+    medicationId?: string
+    patientId?: string
+    batchNumber?: string
+    adjustmentType?: string
+    startDate?: string
+    endDate?: string
+    search?: string
+    page?: number
+    limit?: number
+  }) => {
+    const params = new URLSearchParams()
+    if (filters?.medicationId) params.append('medicationId', filters.medicationId)
+    if (filters?.patientId) params.append('patientId', filters.patientId)
+    if (filters?.batchNumber) params.append('batchNumber', filters.batchNumber)
+    if (filters?.adjustmentType) params.append('adjustmentType', filters.adjustmentType)
+    if (filters?.startDate) params.append('startDate', filters.startDate)
+    if (filters?.endDate) params.append('endDate', filters.endDate)
+    if (filters?.search) params.append('search', filters.search)
+    if (filters?.page) params.append('page', filters.page.toString())
+    if (filters?.limit) params.append('limit', filters.limit.toString())
+    return apiRequest<any>(`/api/pharmacy/drug-history?${params.toString()}`)
+  },
+
+  getPatientDrugHistory: (patientId: string, startDate?: string, endDate?: string) => {
+    const params = new URLSearchParams()
+    if (startDate) params.append('startDate', startDate)
+    if (endDate) params.append('endDate', endDate)
+    return apiRequest<any[]>(`/api/pharmacy/drug-history/patient/${patientId}?${params.toString()}`)
+  },
+
+  // Stock Adjustments
+  createStockAdjustment: (data: any) =>
+    apiRequest<any>('/api/pharmacy/stock-adjustments', { method: 'POST', body: data }),
 };
 
 // Notification API

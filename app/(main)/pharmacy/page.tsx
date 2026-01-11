@@ -7,12 +7,14 @@ import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
-import { Search, FileText, Package, Plus, Edit, Loader2, MoreVertical, Eye, CheckCircle, XCircle, Trash2, History } from "lucide-react"
+import { Search, FileText, Package, Plus, Edit, Loader2, MoreVertical, Eye, CheckCircle, XCircle, Trash2, History, ArrowRight, Sliders } from "lucide-react"
+import Link from "next/link"
 import { AddPrescriptionForm } from "@/components/add-prescription-form"
 import { MedicationForm } from "@/components/medication-form"
 import { DrugInventoryForm } from "@/components/drug-inventory-form"
 import { BatchTraceability } from "@/components/batch-traceability"
 import { DrugInventoryHistoryDialog } from "@/components/drug-inventory-history-dialog"
+import { StockAdjustmentForm } from "@/components/stock-adjustment-form"
 import { pharmacyApi } from "@/lib/api"
 import {
   DropdownMenu,
@@ -124,6 +126,8 @@ export default function PharmacyPage() {
   const [deleteDrugInventoryError, setDeleteDrugInventoryError] = useState<string | null>(null)
   const [isDrugInventoryHistoryOpen, setIsDrugInventoryHistoryOpen] = useState(false)
   const [selectedDrugInventoryForHistory, setSelectedDrugInventoryForHistory] = useState<DrugInventoryItem | null>(null)
+  const [isStockAdjustmentOpen, setIsStockAdjustmentOpen] = useState(false)
+  const [selectedDrugInventoryForAdjustment, setSelectedDrugInventoryForAdjustment] = useState<DrugInventoryItem | null>(null)
 
   const loadPrescriptions = async () => {
     try {
@@ -289,6 +293,17 @@ export default function PharmacyPage() {
     setIsDrugInventoryHistoryOpen(true)
   }
 
+  const handleStockAdjustment = (item: DrugInventoryItem) => {
+    setSelectedDrugInventoryForAdjustment(item)
+    setIsStockAdjustmentOpen(true)
+  }
+
+  const handleStockAdjustmentSuccess = () => {
+    loadDrugInventory()
+    setIsStockAdjustmentOpen(false)
+    setSelectedDrugInventoryForAdjustment(null)
+  }
+
   const handleDeleteDrugInventoryClick = (item: DrugInventoryItem) => {
     setDrugInventoryToDelete(item)
     setDeleteDrugInventoryError(null)
@@ -344,11 +359,12 @@ export default function PharmacyPage() {
       </div>
 
       <Tabs defaultValue="prescriptions" className="w-full">
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="grid w-full grid-cols-5">
           <TabsTrigger value="prescriptions">Prescriptions</TabsTrigger>
           <TabsTrigger value="medications">Medications</TabsTrigger>
           <TabsTrigger value="drug-inventory">Drug Inventory</TabsTrigger>
           <TabsTrigger value="batch-trace">Batch Trace</TabsTrigger>
+          <TabsTrigger value="drug-history">Drug History</TabsTrigger>
         </TabsList>
 
         <TabsContent value="prescriptions" className="space-y-4 mt-4">
@@ -656,6 +672,10 @@ export default function PharmacyPage() {
                                     <History className="h-4 w-4 mr-2" />
                                     View History
                                   </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => handleStockAdjustment(item)}>
+                                    <Sliders className="h-4 w-4 mr-2" />
+                                    Stock Adjustment
+                                  </DropdownMenuItem>
                                   <DropdownMenuItem onClick={() => handleEditDrugInventoryClick(item)}>
                                     <Edit className="h-4 w-4 mr-2" />
                                     Edit
@@ -690,6 +710,34 @@ export default function PharmacyPage() {
 
         <TabsContent value="batch-trace" className="space-y-4 mt-4">
           <BatchTraceability />
+        </TabsContent>
+
+        <TabsContent value="drug-history" className="space-y-4 mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Drug History</CardTitle>
+              <CardDescription>
+                Complete history of all drug inventory movements with patient tracking and filters
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-col items-center justify-center py-12 space-y-4">
+                <History className="h-16 w-16 text-muted-foreground" />
+                <div className="text-center space-y-2">
+                  <h3 className="text-lg font-semibold">View Complete Drug History</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Access the comprehensive drug history page with advanced filtering options
+                  </p>
+                </div>
+                <Link href="/pharmacy/history">
+                  <Button>
+                    Open Drug History
+                    <ArrowRight className="ml-2 h-4 w-4" />
+                  </Button>
+                </Link>
+              </div>
+            </CardContent>
+          </Card>
         </TabsContent>
       </Tabs>
 
@@ -995,6 +1043,20 @@ export default function PharmacyPage() {
         }}
         drugInventoryId={selectedDrugInventoryForHistory?.drugInventoryId}
         batchNumber={selectedDrugInventoryForHistory?.batchNumber}
+      />
+
+      {/* Stock Adjustment Form */}
+      <StockAdjustmentForm
+        open={isStockAdjustmentOpen}
+        onOpenChange={(open) => {
+          setIsStockAdjustmentOpen(open)
+          if (!open) {
+            setSelectedDrugInventoryForAdjustment(null)
+          }
+        }}
+        onSuccess={handleStockAdjustmentSuccess}
+        drugInventoryId={selectedDrugInventoryForAdjustment?.drugInventoryId}
+        medicationId={selectedDrugInventoryForAdjustment?.medicationId}
       />
     </div>
   )

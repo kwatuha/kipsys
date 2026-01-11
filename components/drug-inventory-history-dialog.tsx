@@ -31,9 +31,17 @@ interface Transaction {
   quantityAfter: number
   balanceAfter: number
   unitPrice?: string
+  sellPrice?: string
   totalValue?: string
+  totalSellValue?: string
   referenceType?: string
   referenceNumber?: string
+  patientId?: number
+  patientFirstName?: string
+  patientLastName?: string
+  patientNumber?: string
+  prescriptionId?: number
+  prescriptionNumber?: string
   performedByFirstName?: string
   performedByLastName?: string
   notes?: string
@@ -141,7 +149,7 @@ export function DrugInventoryHistoryDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-[98vw] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <History className="h-5 w-5" />
@@ -166,28 +174,56 @@ export function DrugInventoryHistoryDialog({
           <div className="space-y-4">
             {/* Batch Summary */}
             {batch && (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-muted rounded-lg">
-                <div>
-                  <p className="text-sm text-muted-foreground">Original Quantity</p>
-                  <p className="text-lg font-semibold">{batch.originalQuantity || "-"}</p>
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-muted rounded-lg">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Original Quantity</p>
+                    <p className="text-lg font-semibold">{batch.originalQuantity || "-"}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Current Quantity</p>
+                    <p className="text-lg font-semibold">{batch.currentQuantity || batch.quantity || "-"}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Status</p>
+                    <p className="text-lg font-semibold">
+                      <Badge variant={batch.status === "active" ? "default" : "secondary"}>
+                        {batch.status || "active"}
+                      </Badge>
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Expiry Date</p>
+                    <p className="text-lg font-semibold">
+                      {batch.expiryDate ? formatDate(batch.expiryDate) : "-"}
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Current Quantity</p>
-                  <p className="text-lg font-semibold">{batch.currentQuantity || batch.quantity || "-"}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Status</p>
-                  <p className="text-lg font-semibold">
-                    <Badge variant={batch.status === "active" ? "default" : "secondary"}>
-                      {batch.status || "active"}
-                    </Badge>
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Expiry Date</p>
-                  <p className="text-lg font-semibold">
-                    {batch.expiryDate ? formatDate(batch.expiryDate) : "-"}
-                  </p>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-blue-50 dark:bg-blue-950 rounded-lg">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Buy Price (Cost)</p>
+                    <p className="text-lg font-semibold">
+                      {batch.unitPrice || batch.costPrice
+                        ? `KES ${parseFloat(batch.unitPrice || batch.costPrice).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                        : "-"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Sell Price</p>
+                    <p className="text-lg font-semibold">
+                      {batch.sellPrice
+                        ? `KES ${parseFloat(batch.sellPrice).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                        : "-"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Batch Number</p>
+                    <p className="text-lg font-semibold font-mono">{batch.batchNumber || "-"}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Location</p>
+                    <p className="text-lg font-semibold">{batch.location || "-"}</p>
+                  </div>
                 </div>
               </div>
             )}
@@ -226,6 +262,11 @@ export function DrugInventoryHistoryDialog({
                       <TableHead className="text-right">Before</TableHead>
                       <TableHead className="text-right">After</TableHead>
                       <TableHead className="text-right">Balance</TableHead>
+                      <TableHead className="text-right">Buy Price</TableHead>
+                      <TableHead className="text-right">Sell Price</TableHead>
+                      <TableHead className="text-right">Total Cost</TableHead>
+                      <TableHead className="text-right">Total Revenue</TableHead>
+                      <TableHead>Patient</TableHead>
                       <TableHead>Reference</TableHead>
                       <TableHead>Performed By</TableHead>
                       <TableHead>Notes</TableHead>
@@ -261,6 +302,47 @@ export function DrugInventoryHistoryDialog({
                         <TableCell className="text-right">{transaction.quantityAfter}</TableCell>
                         <TableCell className="text-right font-semibold">
                           {transaction.balanceAfter}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {transaction.unitPrice 
+                            ? `KES ${parseFloat(transaction.unitPrice).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                            : "-"}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {transaction.sellPrice 
+                            ? `KES ${parseFloat(transaction.sellPrice).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                            : "-"}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {transaction.totalValue 
+                            ? `KES ${parseFloat(transaction.totalValue).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                            : "-"}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {transaction.totalSellValue 
+                            ? `KES ${parseFloat(transaction.totalSellValue).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                            : "-"}
+                        </TableCell>
+                        <TableCell>
+                          {transaction.patientFirstName || transaction.patientLastName ? (
+                            <div className="flex flex-col">
+                              <span className="text-sm font-medium">
+                                {transaction.patientFirstName || ""} {transaction.patientLastName || ""}
+                              </span>
+                              {transaction.patientNumber && (
+                                <span className="text-xs text-muted-foreground">
+                                  {transaction.patientNumber}
+                                </span>
+                              )}
+                              {transaction.prescriptionNumber && (
+                                <span className="text-xs text-muted-foreground">
+                                  Rx: {transaction.prescriptionNumber}
+                                </span>
+                              )}
+                            </div>
+                          ) : (
+                            "-"
+                          )}
                         </TableCell>
                         <TableCell>
                           <div className="flex flex-col">
