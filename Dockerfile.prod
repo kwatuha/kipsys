@@ -1,38 +1,34 @@
 # syntax=docker/dockerfile:1.5
 # Production Dockerfile for Next.js Frontend
-# Dependencies are installed AFTER container creation (not during build) to avoid long build times
-# This approach installs dependencies at runtime via the entrypoint script
-
 FROM node:18-alpine
+
+# Install bash and build tools
+# We need these because Next.js build sometimes requires sharp or other native modules
+RUN apk add --no-cache bash curl wget python3 make g++
 
 WORKDIR /app
 
-# Install bash and tools needed for entrypoint script (Alpine doesn't have bash by default)
-RUN apk add --no-cache bash curl wget
-
-# Copy package files first (for better layer caching)
+# 1. Copy package files
 COPY package*.json ./
 
-# Copy application code
+# 2. Copy the entire project 
+# (This includes tsconfig.json, components/, and app/ which are vital for aliases)
 COPY . .
 
-# Copy and set up entrypoint script that handles dependency installation
+# 3. Explicitly set permissions for the entrypoint
+# Using the specific script you have in your ls: docker-entrypoint-prod.sh
 COPY docker-entrypoint-prod.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Expose port
+# 4. Set production environment variables
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# Expose the Next.js port
 EXPOSE 3000
 
-# Set environment
-ENV NODE_ENV=production
-ENV DOCKER_BUILD=false
-
-# Note: Dependencies will be installed by entrypoint.sh AFTER container creation
-# This avoids long build times and allows for faster deployments
-
-# Use entrypoint that installs dependencies on first run
+# The entrypoint handles:
+# - npm install (if node_modules missing)
+# - next build (the step currently failing)
+# - starting the server
 ENTRYPOINT ["/entrypoint.sh"]
-
-# Default command - entrypoint will handle dependency installation, build, and startup
-CMD ["node", "server.js"]
-

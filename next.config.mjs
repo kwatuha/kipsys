@@ -1,3 +1,9 @@
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   eslint: {
@@ -15,18 +21,14 @@ const nextConfig = {
       exclude: ['error', 'warn'],
     } : false,
   },
-  // Optimize for faster development
   onDemandEntries: {
-    // Keep pages in memory longer (reduces recompilation)
-    maxInactiveAge: 5 * 60 * 1000, // 5 minutes
-    // Keep more pages in buffer
+    maxInactiveAge: 5 * 60 * 1000, 
     pagesBufferLength: 10,
   },
-  // Enable standalone output for Docker
+  // Keep your DOCKER_BUILD logic
   output: process.env.DOCKER_BUILD === 'true' ? 'standalone' : undefined,
-  // Optimize Turbopack for faster compilation
+
   experimental: {
-    // Enable faster refresh
     optimizePackageImports: [
       'lucide-react',
       '@radix-ui/react-accordion',
@@ -35,6 +37,15 @@ const nextConfig = {
       'recharts',
     ],
   },
+
+  // ADD THIS WEBPACK SECTION:
+  webpack: (config) => {
+    config.resolve.alias = {
+      ...config.resolve.alias,
+      '@': path.resolve(__dirname, './'),
+    };
+    return config;
+  },
 }
 
-export default nextConfig
+export default nextConfig;
