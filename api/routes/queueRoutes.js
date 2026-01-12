@@ -1,15 +1,27 @@
-// Queue management routes
 const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
 
+/**
+ * @route GET /api/queue
+ * @description Fetch active queue entries with pending bill status for cashier point
+ */
 router.get('/', async (req, res) => {
     try {
         const { servicePoint, status, includeCompleted } = req.query;
+        
+        // We include 'hasPendingBills' using a subquery to identify patients with unpaid invoices
+        // This is crucial for the UI to show warning icons/indicators
         let query = `
             SELECT q.*, 
                    p.firstName as patientFirstName, p.lastName as patientLastName,
-                   p.phone as patientPhone, p.patientNumber
+                   p.phone as patientPhone, p.patientNumber,
+                   EXISTS (
+                       SELECT 1 FROM invoices i 
+                       WHERE i.patientId = q.patientId 
+                       AND i.status NOT IN ('paid', 'cancelled', 'draft') 
+                       AND i.balance > 0
+                   ) as hasPendingBills
             FROM queue_entries q
             LEFT JOIN patients p ON q.patientId = p.patientId
             WHERE 1=1
@@ -34,28 +46,40 @@ router.get('/', async (req, res) => {
         query += ` ORDER BY q.arrivalTime ASC`;
 
         const [rows] = await pool.execute(query, params);
-        res.status(200).json(rows);
+        
+        // Convert the EXISTS result (usually 1 or 0) to a clean boolean
+        const results = rows.map(row => ({
+            ...row,
+            hasPendingBills: !!row.hasPendingBills
+        }));
+
+        res.status(200).json(results);
     } catch (error) {
         console.error('Error fetching queue:', error);
         res.status(500).json({ message: 'Error fetching queue', error: error.message });
     }
 });
 
+/**
+ * @route POST /api/queue
+ * @description Create a new queue entry
+ */
 router.post('/', async (req, res) => {
     try {
         const queueData = req.body;
         const userId = req.user?.id || null;
 
-        // Generate ticket number
+        // Generate ticket number if not provided by client
         if (!queueData.ticketNumber) {
             const [count] = await pool.execute(
                 'SELECT COUNT(*) as count FROM queue_entries WHERE DATE(arrivalTime) = CURDATE()'
             );
             const ticketNum = count[0].count + 1;
+            // Ticket format: S-001 (ServicePoint first letter - Count)
             queueData.ticketNumber = `${queueData.servicePoint.substring(0, 1).toUpperCase()}-${String(ticketNum).padStart(3, '0')}`;
         }
 
-        // Ensure all values are explicitly set to null if undefined
+        // Detailed explicit null/undefined checks from original file
         const estimatedWaitTime = queueData.estimatedWaitTime !== undefined && queueData.estimatedWaitTime !== null && queueData.estimatedWaitTime !== '' 
             ? parseInt(queueData.estimatedWaitTime) 
             : null;
@@ -95,6 +119,10 @@ router.post('/', async (req, res) => {
     }
 });
 
+/**
+ * @route GET /api/queue/:id
+ * @description Get specific queue entry details
+ */
 router.get('/:id', async (req, res) => {
     try {
         const { id } = req.params;
@@ -119,6 +147,10 @@ router.get('/:id', async (req, res) => {
     }
 });
 
+/**
+ * @route PUT /api/queue/:id
+ * @description General update for queue details (priority, doctor, etc)
+ */
 router.put('/:id', async (req, res) => {
     try {
         const { id } = req.params;
@@ -181,14 +213,41 @@ router.put('/:id', async (req, res) => {
     }
 });
 
+/**
+ * @route PUT /api/queue/:id/status
+ * @description Update queue status with a specific block for Cashier point if bills are unpaid
+ */
 router.put('/:id/status', async (req, res) => {
     try {
         const { status } = req.body;
         const { id } = req.params;
 
+        // 1. Fetch current entry to check servicePoint and patientId
+        const [current] = await pool.execute('SELECT * FROM queue_entries WHERE queueId = ?', [id]);
+        if (current.length === 0) return res.status(404).json({ message: 'Queue entry not found' });
+
+        const entry = current[0];
+
+        // 2. NEW LOGIC: If trying to complete a Cashier entry, check for unpaid bills
+        if (status === 'completed' && entry.servicePoint === 'cashier') {
+            const [bills] = await pool.execute(
+                `SELECT COUNT(*) as unpaidCount FROM invoices 
+                 WHERE patientId = ? AND status NOT IN ('paid', 'cancelled', 'draft') AND balance > 0`,
+                [entry.patientId]
+            );
+
+            if (bills[0].unpaidCount > 0) {
+                return res.status(400).json({ 
+                    message: 'Cannot complete cashier queue: Patient has pending bills.',
+                    unpaidCount: bills[0].unpaidCount 
+                });
+            }
+        }
+
         const updates = ['status = ?'];
         const values = [status];
 
+        // Timestamp updates based on state transition
         if (status === 'called') {
             updates.push('calledTime = NOW()');
         } else if (status === 'serving') {
@@ -223,7 +282,7 @@ router.put('/:id/status', async (req, res) => {
 
 /**
  * @route POST /api/queue/:id/archive
- * @description Archive a completed queue entry to history table
+ * @description Archive a completed queue entry to history table with metric calculation
  */
 router.post('/:id/archive', async (req, res) => {
     const connection = await pool.getConnection();
@@ -245,7 +304,24 @@ router.post('/:id/archive', async (req, res) => {
 
         const queue = queueEntries[0];
 
-        // Calculate service metrics
+        // NEW LOGIC: Block archiving for cashier point if patient still owes money
+        if (queue.servicePoint === 'cashier') {
+            const [bills] = await connection.execute(
+                `SELECT COUNT(*) as unpaidCount FROM invoices 
+                 WHERE patientId = ? AND status NOT IN ('paid', 'cancelled', 'draft') AND balance > 0`,
+                [queue.patientId]
+            );
+
+            if (bills[0].unpaidCount > 0) {
+                await connection.rollback();
+                return res.status(400).json({ 
+                    message: 'Cannot archive: Patient still has pending bills at Cashier.',
+                    unpaidCount: bills[0].unpaidCount 
+                });
+            }
+        }
+
+        // Detailed Metrics calculation from original file
         let waitTimeMinutes = null;
         let serviceTimeMinutes = null;
         let totalTimeMinutes = null;
@@ -321,7 +397,7 @@ router.post('/:id/archive', async (req, res) => {
 
 /**
  * @route GET /api/queue/history
- * @description Get archived queue entries (history)
+ * @description Get archived queue entries (history) with filtering and pagination
  */
 router.get('/history', async (req, res) => {
     try {
@@ -388,29 +464,14 @@ router.post('/archive-completed', async (req, res) => {
         let archivedCount = 0;
 
         for (const queue of completedEntries) {
-            // Calculate service metrics
-            let waitTimeMinutes = null;
-            let serviceTimeMinutes = null;
-            let totalTimeMinutes = null;
+            // Note: Batch archive usually skips the bill check as items are already 'completed' status
+            let waitTimeMinutes = null, serviceTimeMinutes = null, totalTimeMinutes = null;
 
             if (queue.arrivalTime) {
                 const arrival = new Date(queue.arrivalTime);
-                
-                if (queue.calledTime) {
-                    const called = new Date(queue.calledTime);
-                    waitTimeMinutes = Math.floor((called - arrival) / 60000);
-                }
-                
-                if (queue.startTime && queue.endTime) {
-                    const start = new Date(queue.startTime);
-                    const end = new Date(queue.endTime);
-                    serviceTimeMinutes = Math.floor((end - start) / 60000);
-                }
-                
-                if (queue.endTime) {
-                    const end = new Date(queue.endTime);
-                    totalTimeMinutes = Math.floor((end - arrival) / 60000);
-                }
+                if (queue.calledTime) waitTimeMinutes = Math.floor((new Date(queue.calledTime) - arrival) / 60000);
+                if (queue.startTime && queue.endTime) serviceTimeMinutes = Math.floor((new Date(queue.endTime) - new Date(queue.startTime)) / 60000);
+                if (queue.endTime) totalTimeMinutes = Math.floor((new Date(queue.endTime) - arrival) / 60000);
             }
 
             // Insert into history
@@ -421,76 +482,44 @@ router.post('/archive-completed', async (req, res) => {
                  waitTimeMinutes, serviceTimeMinutes, totalTimeMinutes)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
-                    queue.queueId,
-                    queue.patientId,
-                    queue.ticketNumber,
-                    queue.servicePoint,
-                    queue.priority,
-                    queue.status,
-                    queue.estimatedWaitTime,
-                    queue.arrivalTime,
-                    queue.calledTime,
-                    queue.startTime,
-                    queue.endTime,
-                    queue.notes,
-                    queue.createdBy,
-                    waitTimeMinutes,
-                    serviceTimeMinutes,
-                    totalTimeMinutes
+                    queue.queueId, queue.patientId, queue.ticketNumber, queue.servicePoint, queue.priority, queue.status,
+                    queue.estimatedWaitTime, queue.arrivalTime, queue.calledTime, queue.startTime, queue.endTime, queue.notes, queue.createdBy,
+                    waitTimeMinutes, serviceTimeMinutes, totalTimeMinutes
                 ]
             );
 
             // Delete from active queue
-            await connection.execute(
-                'DELETE FROM queue_entries WHERE queueId = ?',
-                [queue.queueId]
-            );
-
+            await connection.execute('DELETE FROM queue_entries WHERE queueId = ?', [queue.queueId]);
             archivedCount++;
         }
 
         await connection.commit();
-        res.status(200).json({ 
-            message: `Successfully archived ${archivedCount} queue entries`,
-            archivedCount
-        });
+        res.status(200).json({ message: `Successfully archived ${archivedCount} entries`, archivedCount });
     } catch (error) {
         await connection.rollback();
-        console.error('Error archiving completed entries:', error);
-        res.status(500).json({ message: 'Error archiving completed entries', error: error.message });
+        console.error('Error batch archiving:', error);
+        res.status(500).json({ message: 'Batch archive failed', error: error.message });
     } finally {
         connection.release();
     }
 });
 
+/**
+ * @route DELETE /api/queue/:id
+ */
 router.delete('/:id', async (req, res) => {
     try {
         const { id } = req.params;
 
-        // Check if queue entry exists
-        const [existing] = await pool.execute(
-            'SELECT * FROM queue_entries WHERE queueId = ?',
-            [id]
-        );
+        const [existing] = await pool.execute('SELECT * FROM queue_entries WHERE queueId = ?', [id]);
 
-        if (existing.length === 0) {
-            return res.status(404).json({ message: 'Queue entry not found' });
-        }
+        if (existing.length === 0) return res.status(404).json({ message: 'Queue entry not found' });
 
-        // For safety, only allow deletion of non-completed entries
-        // Completed entries should be archived instead
         if (existing[0].status === 'completed' || existing[0].status === 'cancelled') {
-            return res.status(400).json({ 
-                message: 'Cannot delete completed entries. Use archive endpoint instead.' 
-            });
+            return res.status(400).json({ message: 'Cannot delete completed entries. Use archive instead.' });
         }
 
-        // Delete the queue entry
-        await pool.execute(
-            'DELETE FROM queue_entries WHERE queueId = ?',
-            [id]
-        );
-
+        await pool.execute('DELETE FROM queue_entries WHERE queueId = ?', [id]);
         res.status(200).json({ message: 'Queue entry deleted successfully' });
     } catch (error) {
         console.error('Error deleting queue entry:', error);
@@ -500,8 +529,7 @@ router.delete('/:id', async (req, res) => {
 
 /**
  * @route POST /api/queue/cashier/check-and-complete
- * @description Check if all invoices for a patient are paid and complete cashier queue entries
- * This is useful for fixing cases where payments were recorded before the automatic completion logic was added
+ * @description Manual check to complete cashier queue if payment was confirmed
  */
 router.post('/cashier/check-and-complete', async (req, res) => {
     const connection = await pool.getConnection();
@@ -511,17 +539,9 @@ router.post('/cashier/check-and-complete', async (req, res) => {
         const { patientId, patientNumber } = req.body;
         let targetPatientId = patientId;
 
-        // If patientNumber is provided, find the patientId
         if (!targetPatientId && patientNumber) {
-            const [patients] = await connection.execute(
-                'SELECT patientId FROM patients WHERE patientNumber = ?',
-                [patientNumber]
-            );
-            if (patients.length === 0) {
-                await connection.rollback();
-                return res.status(404).json({ message: 'Patient not found' });
-            }
-            targetPatientId = patients[0].patientId;
+            const [p] = await connection.execute('SELECT patientId FROM patients WHERE patientNumber = ?', [patientNumber]);
+            if (p.length > 0) targetPatientId = p[0].patientId;
         }
 
         if (!targetPatientId) {
@@ -529,72 +549,40 @@ router.post('/cashier/check-and-complete', async (req, res) => {
             return res.status(400).json({ message: 'patientId or patientNumber is required' });
         }
 
-        // Get all invoices for this patient (excluding draft and cancelled)
-        const [allPatientInvoices] = await connection.execute(
-            `SELECT invoiceId, invoiceNumber, status, balance, totalAmount, paidAmount
-             FROM invoices 
-             WHERE patientId = ? 
-               AND status NOT IN ('draft', 'cancelled')`,
+        const [invoices] = await connection.execute(
+            `SELECT invoiceId, status, balance FROM invoices 
+             WHERE patientId = ? AND status NOT IN ('draft', 'cancelled')`,
             [targetPatientId]
         );
 
-        // Check if all invoices are fully paid
-        let allInvoicesPaid = false;
-        if (allPatientInvoices.length > 0) {
-            allInvoicesPaid = allPatientInvoices.every((inv) => {
-                const balance = parseFloat(inv.balance || 0);
-                const status = (inv.status || '').toLowerCase();
-                return status === 'paid' || balance <= 0;
-            });
-        } else {
-            // No invoices = nothing to pay
-            allInvoicesPaid = true;
-        }
-
-        // Find all active cashier queue entries for this patient
-        const [cashierQueues] = await connection.execute(
-            `SELECT queueId, ticketNumber, status 
-             FROM queue_entries 
-             WHERE patientId = ? 
-               AND servicePoint = 'cashier' 
-               AND status NOT IN ('completed', 'cancelled')`,
-            [targetPatientId]
-        );
+        let allPaid = invoices.length > 0 ? invoices.every(i => parseFloat(i.balance) <= 0 || i.status === 'paid') : true;
 
         const completedQueues = [];
-        if (allInvoicesPaid && cashierQueues.length > 0) {
-            for (const queueEntry of cashierQueues) {
+        if (allPaid) {
+            const [cashierQueues] = await connection.execute(
+                `SELECT queueId FROM queue_entries 
+                 WHERE patientId = ? AND servicePoint = 'cashier' AND status NOT IN ('completed', 'cancelled')`,
+                [targetPatientId]
+            );
+
+            for (const q of cashierQueues) {
                 await connection.execute(
-                    `UPDATE queue_entries 
-                     SET status = 'completed', endTime = NOW(), updatedAt = NOW() 
-                     WHERE queueId = ?`,
-                    [queueEntry.queueId]
+                    `UPDATE queue_entries SET status = 'completed', endTime = NOW(), updatedAt = NOW() WHERE queueId = ?`,
+                    [q.queueId]
                 );
-                completedQueues.push(queueEntry);
+                completedQueues.push(q.queueId);
             }
         }
 
         await connection.commit();
-
-        res.status(200).json({
-            message: allInvoicesPaid 
-                ? `All ${allPatientInvoices.length} invoice(s) are paid. ${completedQueues.length} cashier queue entry/entries completed.`
-                : `Patient has ${allPatientInvoices.length} invoice(s), but not all are paid. Queue entries not completed.`,
-            patientId: targetPatientId,
-            totalInvoices: allPatientInvoices.length,
-            allInvoicesPaid: allInvoicesPaid,
-            activeCashierQueues: cashierQueues.length,
-            completedQueues: completedQueues.length,
-            completedQueueIds: completedQueues.map(q => q.queueId)
-        });
+        res.status(200).json({ allInvoicesPaid: allPaid, completedQueueIds: completedQueues });
     } catch (error) {
         await connection.rollback();
-        console.error('Error checking and completing cashier queue:', error);
-        res.status(500).json({ message: 'Error checking and completing cashier queue', error: error.message });
+        console.error('Error in manual cashier check:', error);
+        res.status(500).json({ message: 'Error in manual cashier check', error: error.message });
     } finally {
         connection.release();
     }
 });
 
 module.exports = router;
-
