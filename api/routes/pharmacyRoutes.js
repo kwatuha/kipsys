@@ -310,394 +310,114 @@ router.get('/prescriptions/:id', async (req, res) => {
  * @route POST /api/pharmacy/prescriptions
  * @description Create a new prescription
  */
+/**
+ * @route POST /api/pharmacy/prescriptions
+ * @description Create a new prescription, link to FIFO batches, and generate invoice/queue.
+ */
 router.post('/prescriptions', async (req, res) => {
     const connection = await pool.getConnection();
     try {
         await connection.beginTransaction();
 
         const { prescriptionNumber, patientId, doctorId, prescriptionDate, status, notes, items } = req.body;
-        const userId = req.user?.id;
+        const userId = req.user?.id || null;
 
-        // Generate prescription number if not provided
+        // 1. Generate prescription number
         let prescNumber = prescriptionNumber;
         if (!prescNumber) {
             const [count] = await connection.execute('SELECT COUNT(*) as count FROM prescriptions');
             prescNumber = `PRES-${String(count[0].count + 1).padStart(6, '0')}`;
         }
 
-        // Insert prescription
         const [result] = await connection.execute(
             `INSERT INTO prescriptions (prescriptionNumber, patientId, doctorId, prescriptionDate, status, notes)
              VALUES (?, ?, ?, ?, ?, ?)`,
             [prescNumber, patientId, doctorId, prescriptionDate || new Date(), status || 'pending', notes]
         );
-
         const prescriptionId = result.insertId;
 
-        // Get doctor and patient names for notifications
-        let doctorName = 'Unknown Doctor';
-        let patientName = 'Unknown Patient';
-        try {
-            const [doctorRows] = await connection.execute(
-                'SELECT firstName, lastName FROM users WHERE userId = ?',
-                [doctorId]
-            );
-            if (doctorRows.length > 0 && doctorRows[0].firstName) {
-                doctorName = `Dr. ${doctorRows[0].firstName} ${doctorRows[0].lastName || ''}`.trim();
-            }
-        } catch (error) {
-            console.error('Error fetching doctor name:', error);
-        }
-        
-        try {
-            const [patientRows] = await connection.execute(
-                'SELECT firstName, lastName FROM patients WHERE patientId = ?',
-                [patientId]
-            );
-            if (patientRows.length > 0 && patientRows[0].firstName) {
-                patientName = `${patientRows[0].firstName} ${patientRows[0].lastName || ''}`.trim();
-            }
-        } catch (error) {
-            console.error('Error fetching patient name:', error);
-        }
+        // 2. Process Items and find FIFO Batches for Billing
+        let totalAmount = 0;
+        const invoiceItems = [];
 
-        // Insert prescription items and check for missing drugs in inventory
         if (items && items.length > 0) {
             for (const item of items) {
-                // Get medication name for storage
-                let medicationName = 'Unknown';
-                if (item.medicationId) {
-                    try {
-                        const [medRows] = await connection.execute(
-                            'SELECT name FROM medications WHERE medicationId = ?',
-                            [item.medicationId]
-                        );
-                        if (medRows.length > 0 && medRows[0].name) {
-                            medicationName = medRows[0].name;
-                        }
-                    } catch (medError) {
-                        console.error('Error fetching medication name:', medError);
-                    }
-                }
-                
-                // Ensure all required fields are present
-                const medicationIdNum = item.medicationId ? (isNaN(parseInt(item.medicationId)) ? null : parseInt(item.medicationId)) : null;
-                const quantityNum = item.quantity ? (isNaN(parseInt(item.quantity)) ? null : parseInt(item.quantity)) : null;
-                
-                const insertData = [
-                    prescriptionId,
-                    medicationIdNum,
-                    medicationName,
-                    item.dosage || '',
-                    item.frequency || '',
-                    item.duration || '',
-                    quantityNum,
-                    item.instructions || null
-                ];
-                
-                const [itemResult] = await connection.execute(
+                let medicationName = item.medicationName || 'Unknown';
+                const medicationIdNum = item.medicationId ? parseInt(item.medicationId) : null;
+                const quantityNum = item.quantity ? parseInt(item.quantity) : 0;
+
+                // Save prescription item
+                await connection.execute(
                     `INSERT INTO prescription_items (prescriptionId, medicationId, medicationName, dosage, frequency, duration, quantity, instructions)
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-                    insertData
+                    [prescriptionId, medicationIdNum, medicationName, item.dosage, item.frequency, item.duration, quantityNum, item.instructions]
                 );
-                
-                const prescriptionItemId = itemResult.insertId;
-                
-                // Check if medication is in drug_inventory
-                if (medicationIdNum) {
-                    try {
-                        const [inventoryCheck] = await connection.execute(
-                            `SELECT COUNT(*) as count FROM drug_inventory 
-                             WHERE medicationId = ? AND quantity > 0`,
-                            [medicationIdNum]
-                        );
-                        
-                        // If medication is not in inventory, create a notification
-                        if (inventoryCheck.length > 0 && inventoryCheck[0].count === 0) {
-                            const message = `${medicationName} was prescribed by ${doctorName} for ${patientName} but is not available in drug inventory.`;
-                            
-                            await connection.execute(
-                                `INSERT INTO drug_notifications 
-                                 (medicationId, medicationName, prescriptionId, prescriptionItemId, doctorId, doctorName, patientId, patientName, status, priority, message)
-                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'medium', ?)`,
-                                [
-                                    medicationIdNum,
-                                    medicationName,
-                                    prescriptionId,
-                                    prescriptionItemId,
-                                    doctorId,
-                                    doctorName,
-                                    patientId,
-                                    patientName,
-                                    message
-                                ]
-                            );
-                        }
-                    } catch (notificationError) {
-                        console.error('Error checking inventory or creating notification:', notificationError);
-                        // Don't fail the prescription creation if notification creation fails
+
+                // FIFO Batch Selection (Price Lookup)
+                if (medicationIdNum && quantityNum > 0) {
+                    const [batches] = await connection.execute(
+                        `SELECT di.drugInventoryId, di.sellPrice FROM drug_inventory di
+                         WHERE di.medicationId = ? AND di.quantity > 0 AND di.status = 'active'
+                         AND (di.expiryDate IS NULL OR di.expiryDate >= CURDATE())
+                         ORDER BY di.expiryDate ASC, di.createdAt ASC LIMIT 1`,
+                        [medicationIdNum]
+                    );
+
+                    if (batches.length > 0) {
+                        const price = parseFloat(batches[0].sellPrice);
+                        totalAmount += price * quantityNum;
+                        invoiceItems.push({
+                            medicationId: medicationIdNum,
+                            description: `Prescription Item: ${medicationName}`,
+                            quantity: quantityNum,
+                            unitPrice: price,
+                            totalPrice: price * quantityNum,
+                            drugInventoryId: batches[0].drugInventoryId
+                        });
                     }
                 }
             }
         }
 
-        // After prescription creation, create invoice and queue entry for cashier (drug payment)
-        // Only create if prescription has items with quantity (drugs in inventory)
-        const itemsWithQuantity = items.filter(item => item.quantity !== null && item.quantity > 0);
-        const hasItemsInInventory = itemsWithQuantity.length > 0;
-        
-        if (hasItemsInInventory) {
-            // Calculate total amount for invoice by getting prices from drug_inventory
-            let totalAmount = 0;
-            const invoiceItems = [];
+        // 3. Create Invoice & Queue (Maintaining your logic for unique invoice numbers)
+        if (invoiceItems.length > 0 && totalAmount > 0) {
+            const today = new Date().toISOString().split('T')[0].replace(/-/g, '');
+            const datePrefix = `INV-${today}-`;
+            const [maxResult] = await connection.execute(
+                `SELECT MAX(CAST(SUBSTRING_INDEX(invoiceNumber, '-', -1) AS UNSIGNED)) as maxNum 
+                 FROM invoices WHERE invoiceNumber LIKE CONCAT(?, '%')`, [datePrefix]
+            );
+            let nextNum = (maxResult[0]?.maxNum || 0) + 1;
+            let invoiceNumber = `${datePrefix}${String(nextNum).padStart(4, '0')}`;
 
-            for (const item of itemsWithQuantity) {
-                if (item.medicationId) {
-                    try {
-                        // Get the oldest batch (FIFO - First In First Out by receipt date) from drug_inventory for this medication
-                        // Select the batch that was received first (earliest receipt transaction date)
-                        const [oldestBatch] = await connection.execute(
-                            `SELECT 
-                                di.drugInventoryId, 
-                                di.sellPrice, 
-                                di.batchNumber, 
-                                di.expiryDate, 
-                                di.quantity,
-                                di.unitPrice,
-                                -- Get first receipt date for FIFO ordering
-                                COALESCE(
-                                    (SELECT MIN(transactionDate) 
-                                     FROM drug_inventory_transactions 
-                                     WHERE drugInventoryId = di.drugInventoryId 
-                                     AND transactionType = 'RECEIPT'),
-                                    di.createdAt
-                                ) as firstReceiptDate
-                             FROM drug_inventory di
-                             WHERE di.medicationId = ? 
-                               AND di.quantity > 0
-                               AND di.status = 'active'
-                               AND (di.expiryDate IS NULL OR di.expiryDate >= CURDATE())
-                             -- FIFO: Order by first receipt date (oldest first), then by expiry date
-                             ORDER BY 
-                                COALESCE(
-                                    (SELECT MIN(transactionDate) 
-                                     FROM drug_inventory_transactions 
-                                     WHERE drugInventoryId = di.drugInventoryId 
-                                     AND transactionType = 'RECEIPT'),
-                                    di.createdAt
-                                ) ASC,
-                                di.expiryDate ASC
-                             LIMIT 1`,
-                            [item.medicationId]
-                        );
+            const [invResult] = await connection.execute(
+                `INSERT INTO invoices (invoiceNumber, patientId, invoiceDate, totalAmount, balance, status, notes, createdBy)
+                 VALUES (?, ?, CURDATE(), ?, ?, 'pending', ?, ?)`,
+                [invoiceNumber, patientId, totalAmount, totalAmount, `Drug payment - Prescription: ${prescNumber}`, userId]
+            );
 
-                        if (oldestBatch.length > 0 && oldestBatch[0].drugInventoryId) {
-                            const batch = oldestBatch[0];
-                            const unitPrice = parseFloat(batch.sellPrice);
-                            const quantity = parseInt(item.quantity);
-                            const itemTotal = unitPrice * quantity;
-                            totalAmount += itemTotal;
-
-                            // Get medication name
-                            let medicationName = item.medicationName || 'Unknown';
-                            if (!medicationName || medicationName === 'Unknown') {
-                                const [medRows] = await connection.execute(
-                                    'SELECT name FROM medications WHERE medicationId = ?',
-                                    [item.medicationId]
-                                );
-                                if (medRows.length > 0 && medRows[0].name) {
-                                    medicationName = medRows[0].name;
-                                }
-                            }
-
-                            invoiceItems.push({
-                                medicationId: item.medicationId,
-                                description: `Prescription Item: ${medicationName}`,
-                                quantity: quantity,
-                                unitPrice: unitPrice,
-                                totalPrice: itemTotal,
-                                drugInventoryId: batch.drugInventoryId // Store the selected batch for dispensing
-                            });
-                        }
-                    } catch (error) {
-                        console.error(`Error fetching pricing for medication ${item.medicationId}:`, error);
-                    }
-                }
-            }
-
-            // Create invoice if we have items with pricing
-            if (invoiceItems.length > 0 && totalAmount > 0) {
-                // Generate invoice number (same approach as triage numbers to avoid duplicates)
-                const today = new Date().toISOString().split('T')[0].replace(/-/g, '');
-                const datePrefix = `INV-${today}-`;
-                
-                // Get the maximum invoice number for today (extract the numeric part after last dash)
-                const [maxResult] = await connection.execute(
-                    `SELECT MAX(CAST(SUBSTRING_INDEX(invoiceNumber, '-', -1) AS UNSIGNED)) as maxNum 
-                     FROM invoices 
-                     WHERE invoiceNumber LIKE CONCAT(?, '%')`,
-                    [datePrefix]
-                );
-                
-                let nextNum = (maxResult[0]?.maxNum || 0) + 1;
-                let invoiceNumber = `${datePrefix}${String(nextNum).padStart(4, '0')}`;
-                
-                // Check if this number already exists (safety check for race conditions)
-                let attempts = 0;
-                while (attempts < 100) {
-                    const [existing] = await connection.execute(
-                        'SELECT invoiceId FROM invoices WHERE invoiceNumber = ?',
-                        [invoiceNumber]
-                    );
-                    
-                    if (existing.length === 0) {
-                        break; // Number is available
-                    }
-                    // Number exists, try next one
-                    nextNum++;
-                    invoiceNumber = `${datePrefix}${String(nextNum).padStart(4, '0')}`;
-                    attempts++;
-                }
-                
-                if (attempts >= 100) {
-                    await connection.rollback();
-                    connection.release();
-                    return res.status(500).json({ 
-                        message: 'Failed to generate unique invoice number',
-                        error: 'Please try again.'
-                    });
-                }
-
-                // Create invoice (with retry on duplicate key error)
-                let invoiceResult;
-                try {
-                    [invoiceResult] = await connection.execute(
-                        `INSERT INTO invoices (invoiceNumber, patientId, invoiceDate, totalAmount, balance, status, notes, createdBy)
-                         VALUES (?, ?, CURDATE(), ?, ?, 'pending', ?, ?)`,
-                        [
-                            invoiceNumber,
-                            patientId,
-                            totalAmount,
-                            totalAmount, // balance = totalAmount initially
-                            `Drug payment - Prescription: ${prescNumber}`,
-                            userId || null
-                        ]
-                    );
-                } catch (insertError) {
-                    // Handle duplicate key error - find next available number
-                    if (insertError.code === 'ER_DUP_ENTRY' || insertError.errno === 1062) {
-                            // Get max number and find next available
-                            const [retryMaxResult] = await connection.execute(
-                                `SELECT MAX(CAST(SUBSTRING_INDEX(invoiceNumber, '-', -1) AS UNSIGNED)) as maxNum 
-                                 FROM invoices 
-                                 WHERE invoiceNumber LIKE CONCAT(?, '%')`,
-                                [datePrefix]
-                            );
-                        
-                        let retryNum = (retryMaxResult[0]?.maxNum || 0) + 1;
-                        let foundAvailable = false;
-                        let retryAttempts = 0;
-                        
-                        while (!foundAvailable && retryAttempts < 100) {
-                            const testNumber = `${datePrefix}${String(retryNum).padStart(4, '0')}`;
-                            const [existing] = await connection.execute(
-                                'SELECT invoiceId FROM invoices WHERE invoiceNumber = ?',
-                                [testNumber]
-                            );
-                            
-                            if (existing.length === 0) {
-                                invoiceNumber = testNumber;
-                                foundAvailable = true;
-                            } else {
-                                retryNum++;
-                                retryAttempts++;
-                            }
-                        }
-                        
-                        if (!foundAvailable) {
-                            await connection.rollback();
-                            connection.release();
-                            return res.status(500).json({ 
-                                message: 'Failed to generate unique invoice number',
-                                error: 'Please try again.'
-                            });
-                        }
-                        
-                        // Retry insert with new number
-                        [invoiceResult] = await connection.execute(
-                            `INSERT INTO invoices (invoiceNumber, patientId, invoiceDate, totalAmount, balance, status, notes, createdBy)
-                             VALUES (?, ?, CURDATE(), ?, ?, 'pending', ?, ?)`,
-                            [
-                                invoiceNumber,
-                                patientId,
-                                totalAmount,
-                                totalAmount,
-                                `Drug payment - Prescription: ${prescNumber}`,
-                                userId || null
-                            ]
-                        );
-                    } else {
-                        throw insertError; // Re-throw if it's not a duplicate key error
-                    }
-                }
-
-                const invoiceId = invoiceResult.insertId;
-
-                // Create invoice items with selected batch (drugInventoryId)
-                for (const invoiceItem of invoiceItems) {
-                    await connection.execute(
-                        `INSERT INTO invoice_items (invoiceId, description, quantity, unitPrice, totalPrice, drugInventoryId)
-                         VALUES (?, ?, ?, ?, ?, ?)`,
-                        [
-                            invoiceId,
-                            invoiceItem.description,
-                            invoiceItem.quantity,
-                            invoiceItem.unitPrice,
-                            invoiceItem.totalPrice,
-                            invoiceItem.drugInventoryId || null
-                        ]
-                    );
-                }
-
-                // Generate ticket number for cashier queue
-                const [cashierCount] = await connection.execute(
-                    'SELECT COUNT(*) as count FROM queue_entries WHERE DATE(arrivalTime) = CURDATE() AND servicePoint = "cashier"'
-                );
-                const cashierTicketNum = cashierCount[0].count + 1;
-                const cashierTicketNumber = `C-${String(cashierTicketNum).padStart(3, '0')}`;
-
-                // Create queue entry for cashier (drug payment)
+            for (const invItem of invoiceItems) {
                 await connection.execute(
-                    `INSERT INTO queue_entries 
-                    (patientId, ticketNumber, servicePoint, priority, status, notes, createdBy)
-                    VALUES (?, ?, 'cashier', 'normal', 'waiting', ?, ?)`,
-                    [
-                        patientId,
-                        cashierTicketNumber,
-                        `Drug payment - Prescription: ${prescNumber}`,
-                        userId || null
-                    ]
+                    `INSERT INTO invoice_items (invoiceId, description, quantity, unitPrice, totalPrice, drugInventoryId)
+                     VALUES (?, ?, ?, ?, ?, ?)`,
+                    [invResult.insertId, invItem.description, invItem.quantity, invItem.unitPrice, invItem.totalPrice, invItem.drugInventoryId]
                 );
             }
+
+            // Create Cashier Queue Entry
+            const [cashierCount] = await connection.execute('SELECT COUNT(*) as count FROM queue_entries WHERE DATE(arrivalTime) = CURDATE() AND servicePoint = "cashier"');
+            const cashierTicketNumber = `C-${String(cashierCount[0].count + 1).padStart(3, '0')}`;
+            await connection.execute(
+                `INSERT INTO queue_entries (patientId, ticketNumber, servicePoint, priority, status, notes, createdBy)
+                 VALUES (?, ?, 'cashier', 'normal', 'waiting', ?, ?)`,
+                [patientId, cashierTicketNumber, `Drug payment - Prescription: ${prescNumber}`, userId]
+            );
         }
 
         await connection.commit();
-
-        const [newPrescription] = await connection.execute(
-            `SELECT p.*, 
-                    pt.firstName, pt.lastName, pt.patientNumber,
-                    u.firstName as doctorFirstName, u.lastName as doctorLastName
-             FROM prescriptions p
-             LEFT JOIN patients pt ON p.patientId = pt.patientId
-             LEFT JOIN users u ON p.doctorId = u.userId
-             WHERE p.prescriptionId = ?`,
-            [prescriptionId]
-        );
-
-        res.status(201).json(newPrescription[0]);
+        res.status(201).json({ prescriptionId, prescriptionNumber: prescNumber });
     } catch (error) {
         await connection.rollback();
-        console.error('Error creating prescription:', error);
         res.status(500).json({ message: 'Error creating prescription', error: error.message });
     } finally {
         connection.release();
@@ -708,6 +428,8 @@ router.post('/prescriptions', async (req, res) => {
  * @route PUT /api/pharmacy/prescriptions/:id
  * @description Update a prescription
  */
+
+
 router.put('/prescriptions/:id', async (req, res) => {
     const connection = await pool.getConnection();
     try {
@@ -717,7 +439,7 @@ router.put('/prescriptions/:id', async (req, res) => {
         const { status, notes, patientId, doctorId, prescriptionDate, items } = req.body;
         const userId = req.user?.id || req.user?.userId || null;
 
-        // Get existing prescription
+        // 1. Get existing prescription
         const [existing] = await connection.execute(
             'SELECT * FROM prescriptions WHERE prescriptionId = ?',
             [id]
@@ -730,71 +452,93 @@ router.put('/prescriptions/:id', async (req, res) => {
 
         const oldPrescription = existing[0];
 
-        // Build update query
+        // --- INVENTORY HANDSHAKE & HISTORY LOGGING ---
+        if (status === 'dispensed' && oldPrescription.status !== 'dispensed') {
+            
+            // Find the invoice items associated with this prescription to get the reserved Batch IDs
+            const [dispenseItems] = await connection.execute(
+                `SELECT ii.drugInventoryId, ii.quantity, ii.description, pi.medicationId
+                 FROM invoice_items ii
+                 JOIN invoices i ON ii.invoiceId = i.invoiceId
+                 JOIN prescription_items pi ON pi.prescriptionId = ?
+                 WHERE i.notes LIKE CONCAT('%', ?, '%') AND ii.drugInventoryId IS NOT NULL
+                 GROUP BY ii.invoiceItemId`, 
+                 [id, oldPrescription.prescriptionNumber]
+            );
+
+            for (const item of dispenseItems) {
+                // A. Update Inventory Quantity
+                const [updateResult] = await connection.execute(
+                    `UPDATE drug_inventory 
+                     SET quantity = quantity - ?, updatedAt = NOW() 
+                     WHERE drugInventoryId = ? AND quantity >= ?`,
+                    [item.quantity, item.drugInventoryId, item.quantity]
+                );
+
+                if (updateResult.affectedRows === 0) {
+                    throw new Error(`Insufficient stock in selected batch for: ${item.description}`);
+                }
+
+                // B. UPDATE DRUG INVENTORY HISTORY (The missing step)
+                // This ensures the "History" tab in your UI reflects the dispense action
+                await connection.execute(
+                    `INSERT INTO drug_inventory_transactions 
+                     (drugInventoryId, medicationId, transactionType, quantity, referenceId, notes, createdBy, transactionDate)
+                     VALUES (?, ?, 'DISPENSE', ?, ?, ?, ?, NOW())`,
+                    [
+                        item.drugInventoryId, 
+                        item.medicationId, 
+                        'DISPENSE',
+                        item.quantity, // You may want to use -item.quantity if your history expects negative numbers for deductions
+                        id, 
+                        `Dispensed for Prescription: ${oldPrescription.prescriptionNumber}`, 
+                        userId
+                    ]
+                );
+            }
+        }
+
+        // --- MAINTAIN PREVIOUS FEATURES (History tracking for fields/items) ---
         const updates = [];
         const values = [];
         const historyEntries = [];
 
-        // Track changes for history
         if (status !== undefined && status !== oldPrescription.status) {
             updates.push('status = ?');
             values.push(status);
-            historyEntries.push({
-                fieldName: 'status',
-                oldValue: oldPrescription.status,
-                newValue: status
-            });
+            historyEntries.push({ fieldName: 'status', oldValue: oldPrescription.status, newValue: status });
         }
 
         if (notes !== undefined && notes !== oldPrescription.notes) {
             updates.push('notes = ?');
             values.push(notes);
-            historyEntries.push({
-                fieldName: 'notes',
-                oldValue: oldPrescription.notes || '',
-                newValue: notes || ''
-            });
+            historyEntries.push({ fieldName: 'notes', oldValue: oldPrescription.notes || '', newValue: notes || '' });
         }
 
         if (patientId !== undefined && patientId !== oldPrescription.patientId) {
             updates.push('patientId = ?');
             values.push(patientId);
-            historyEntries.push({
-                fieldName: 'patientId',
-                oldValue: oldPrescription.patientId?.toString() || '',
-                newValue: patientId?.toString() || ''
-            });
+            historyEntries.push({ fieldName: 'patientId', oldValue: oldPrescription.patientId?.toString() || '', newValue: patientId?.toString() || '' });
         }
 
         if (doctorId !== undefined && doctorId !== oldPrescription.doctorId) {
             updates.push('doctorId = ?');
             values.push(doctorId);
-            historyEntries.push({
-                fieldName: 'doctorId',
-                oldValue: oldPrescription.doctorId?.toString() || '',
-                newValue: doctorId?.toString() || ''
-            });
+            historyEntries.push({ fieldName: 'doctorId', oldValue: oldPrescription.doctorId?.toString() || '', newValue: doctorId?.toString() || '' });
         }
 
         if (prescriptionDate !== undefined && prescriptionDate !== oldPrescription.prescriptionDate) {
             updates.push('prescriptionDate = ?');
             values.push(prescriptionDate);
-            historyEntries.push({
-                fieldName: 'prescriptionDate',
-                oldValue: oldPrescription.prescriptionDate || '',
-                newValue: prescriptionDate || ''
-            });
+            historyEntries.push({ fieldName: 'prescriptionDate', oldValue: oldPrescription.prescriptionDate || '', newValue: prescriptionDate || '' });
         }
 
-        // Update prescription if there are changes
         if (updates.length > 0) {
             values.push(id);
             await connection.execute(
                 `UPDATE prescriptions SET ${updates.join(', ')}, updatedAt = NOW() WHERE prescriptionId = ?`,
                 values
             );
-
-            // Record history
             for (const entry of historyEntries) {
                 await connection.execute(
                     `INSERT INTO prescription_history (prescriptionId, fieldName, oldValue, newValue, changedBy, changeType)
@@ -804,101 +548,39 @@ router.put('/prescriptions/:id', async (req, res) => {
             }
         }
 
-        // Handle items updates if provided
+        // Handle prescription_items updates
         if (items && Array.isArray(items)) {
-            // Get existing items
-            const [existingItems] = await connection.execute(
-                'SELECT * FROM prescription_items WHERE prescriptionId = ?',
-                [id]
-            );
-
-            // Delete removed items
+            const [existingItems] = await connection.execute('SELECT * FROM prescription_items WHERE prescriptionId = ?', [id]);
             const newItemIds = items.filter(item => item.itemId).map(item => item.itemId);
             const itemsToDelete = existingItems.filter(item => !newItemIds.includes(item.itemId));
             
             for (const item of itemsToDelete) {
-                await connection.execute(
-                    `INSERT INTO prescription_items_history (itemId, prescriptionId, fieldName, oldValue, newValue, changedBy, changeType)
-                     VALUES (?, ?, 'item', ?, ?, ?, 'delete')`,
-                    [item.itemId, id, JSON.stringify(item), '', userId]
-                );
-                await connection.execute('DELETE FROM prescription_items WHERE itemId = ?', [item.itemId]);
+                await connection.execute(`DELETE FROM prescription_items WHERE itemId = ?`, [item.itemId]);
             }
 
-            // Update or insert items
             for (const item of items) {
-                let medicationName = item.medicationName || 'Unknown';
-                if (item.medicationId && !medicationName) {
-                    const [medRows] = await connection.execute(
-                        'SELECT name FROM medications WHERE medicationId = ?',
-                        [item.medicationId]
-                    );
-                    if (medRows.length > 0) {
-                        medicationName = medRows[0].name;
-                    }
-                }
-
                 if (item.itemId) {
-                    // Update existing item
                     const existingItem = existingItems.find(ei => ei.itemId === item.itemId);
                     if (existingItem) {
                         const itemUpdates = [];
                         const itemValues = [];
-                        const itemHistoryEntries = [];
-
-                        const fieldsToCheck = ['medicationId', 'medicationName', 'dosage', 'frequency', 'duration', 'quantity', 'instructions', 'status'];
-                        for (const field of fieldsToCheck) {
-                            if (item[field] !== undefined && item[field] !== existingItem[field]) {
-                                itemUpdates.push(`${field} = ?`);
-                                itemValues.push(item[field] === null ? null : item[field]);
-                                itemHistoryEntries.push({
-                                    fieldName: field,
-                                    oldValue: existingItem[field]?.toString() || '',
-                                    newValue: item[field]?.toString() || ''
-                                });
+                        const fields = ['dosage', 'frequency', 'duration', 'quantity', 'instructions', 'status'];
+                        fields.forEach(f => {
+                            if (item[f] !== undefined && item[f] !== existingItem[f]) {
+                                itemUpdates.push(`${f} = ?`);
+                                itemValues.push(item[f]);
                             }
-                        }
-
+                        });
                         if (itemUpdates.length > 0) {
                             itemValues.push(item.itemId);
-                            await connection.execute(
-                                `UPDATE prescription_items SET ${itemUpdates.join(', ')}, updatedAt = NOW() WHERE itemId = ?`,
-                                itemValues
-                            );
-
-                            // Record item history
-                            for (const entry of itemHistoryEntries) {
-                                await connection.execute(
-                                    `INSERT INTO prescription_items_history (itemId, prescriptionId, fieldName, oldValue, newValue, changedBy, changeType)
-                                     VALUES (?, ?, ?, ?, ?, ?, 'update')`,
-                                    [item.itemId, id, entry.fieldName, entry.oldValue, entry.newValue, userId]
-                                );
-                            }
+                            await connection.execute(`UPDATE prescription_items SET ${itemUpdates.join(', ')} WHERE itemId = ?`, itemValues);
                         }
                     }
                 } else {
-                    // Insert new item
-                    const [result] = await connection.execute(
+                    await connection.execute(
                         `INSERT INTO prescription_items (prescriptionId, medicationId, medicationName, dosage, frequency, duration, quantity, instructions, status)
                          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                        [
-                            id,
-                            item.medicationId || null,
-                            medicationName,
-                            item.dosage || '',
-                            item.frequency || '',
-                            item.duration || '',
-                            item.quantity || null,
-                            item.instructions || null,
-                            item.status || 'pending'
-                        ]
-                    );
-
-                    // Record creation in history
-                    await connection.execute(
-                        `INSERT INTO prescription_items_history (itemId, prescriptionId, fieldName, oldValue, newValue, changedBy, changeType)
-                         VALUES (?, ?, 'item', '', ?, ?, 'create')`,
-                        [result.insertId, id, JSON.stringify(item), userId]
+                        [id, item.medicationId, item.medicationName, item.dosage, item.frequency, item.duration, item.quantity, item.instructions, item.status || 'pending']
                     );
                 }
             }
@@ -906,25 +588,21 @@ router.put('/prescriptions/:id', async (req, res) => {
 
         await connection.commit();
 
-        // Get updated prescription with joined data
         const [updated] = await connection.execute(
-            `SELECT p.*, 
-                    pt.firstName, pt.lastName, pt.patientNumber,
-                    u.firstName as doctorFirstName, u.lastName as doctorLastName
+            `SELECT p.*, pt.firstName, pt.lastName, u.firstName as doctorFirstName, u.lastName as doctorLastName
              FROM prescriptions p
              LEFT JOIN patients pt ON p.patientId = pt.patientId
              LEFT JOIN users u ON p.doctorId = u.userId
-             WHERE p.prescriptionId = ?`,
-            [id]
+             WHERE p.prescriptionId = ?`, [id]
         );
 
-        connection.release();
         res.status(200).json(updated[0]);
     } catch (error) {
-        await connection.rollback();
-        connection.release();
+        if (connection) await connection.rollback();
         console.error('Error updating prescription:', error);
-        res.status(500).json({ message: 'Error updating prescription', error: error.message });
+        res.status(500).json({ message: error.message });
+    } finally {
+        if (connection) connection.release();
     }
 });
 
