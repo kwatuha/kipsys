@@ -4,12 +4,12 @@ import { useState, useEffect, useMemo } from "react"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useForm, useFieldArray, useWatch } from "react-hook-form"
 import { z } from "zod"
-import { 
-  CalendarIcon, 
-  Loader2, 
-  Plus, 
-  Trash2, 
-  AlertTriangle, 
+import {
+  CalendarIcon,
+  Loader2,
+  Plus,
+  Trash2,
+  AlertTriangle,
   Package,
   FlaskRoundIcon as Flask,
   FileText,
@@ -72,6 +72,8 @@ import { patientApi, doctorsApi, pharmacyApi, laboratoryApi, medicalRecordsApi, 
 import { useCriticalNotifications } from "@/lib/critical-notifications-context"
 import { checkAndNotifyCriticalVitals } from "@/lib/critical-vitals-utils"
 import { toast } from "@/components/ui/use-toast"
+
+const DRAFT_TTL_MS = 24 * 60 * 60 * 1000 // 24 hours
 
 // Schema definitions
 const medicationSchema = z.object({
@@ -189,14 +191,18 @@ interface PatientEncounterFormProps {
   initialDoctorId?: string
 }
 
-const STORAGE_KEY = 'patient_encounter_form_draft'
+//const STORAGE_KEY = 'patient_encounter_form_draft'
+const getStorageKey = (patientId:any) => {
+  if (!patientId) return null
+  return `patient_encounter_form_draft_${patientId}`
+}
 
-export function PatientEncounterForm({ 
-  open, 
-  onOpenChange, 
+export function PatientEncounterForm({
+  open,
+  onOpenChange,
   onSuccess,
   initialPatientId,
-  initialDoctorId 
+  initialDoctorId
 }: PatientEncounterFormProps) {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [doctors, setDoctors] = useState<any[]>([])
@@ -229,7 +235,7 @@ export function PatientEncounterForm({
   const [editingMedicationIndex, setEditingMedicationIndex] = useState<number | null>(null)
   const [addMedicationDialogOpen, setAddMedicationDialogOpen] = useState(false)
   const [tempMedication, setTempMedication] = useState<MedicationValues>(defaultMedication)
-  
+
   // Patient data state
   const [patientData, setPatientData] = useState<any>(null)
   const [patientAllergies, setPatientAllergies] = useState<any[]>([])
@@ -304,7 +310,7 @@ export function PatientEncounterForm({
         patientId,
         patientIdType: typeof patientId,
         notificationsCount: notifications.length,
-        matchingNotifications: notifications.filter(n => 
+        matchingNotifications: notifications.filter(n =>
           n.patientId === patientId.toString() || n.patientId === String(patientId)
         ).length
       })
@@ -315,26 +321,30 @@ export function PatientEncounterForm({
   useEffect(() => {
     if (open) {
       loadData()
-      const savedDraft = loadDraftFromStorage()
+      //const savedDraft = loadDraftFromStorage()
+
+        const patientId = initialPatientId || form.getValues("patientId")
+        const savedDraft = loadDraftFromStorage(patientId)
+
       if (savedDraft) {
         if (savedDraft.encounterDate) {
           savedDraft.encounterDate = new Date(savedDraft.encounterDate)
         }
         // Clean up empty medication entries
         if (savedDraft.medications) {
-          savedDraft.medications = savedDraft.medications.filter((med: any) => 
+          savedDraft.medications = savedDraft.medications.filter((med: any) =>
             med?.medicationId && med.medicationId.trim() !== ""
           )
         }
         // Clean up empty procedure entries
         if (savedDraft.procedures) {
-          savedDraft.procedures = savedDraft.procedures.filter((proc: any) => 
+          savedDraft.procedures = savedDraft.procedures.filter((proc: any) =>
             proc?.procedureId && proc.procedureId.trim() !== ""
           )
         }
         // Clean up empty order entries
         if (savedDraft.orders) {
-          savedDraft.orders = savedDraft.orders.filter((order: any) => 
+          savedDraft.orders = savedDraft.orders.filter((order: any) =>
             order?.chargeId && order.chargeId.trim() !== ""
           )
         }
@@ -371,19 +381,20 @@ export function PatientEncounterForm({
     if (!open) return
 
     const subscription = form.watch((value) => {
-      const hasData = value.patientId || value.doctorId || value.chiefComplaint || 
+      const hasData = value.patientId || value.doctorId || value.chiefComplaint ||
                       value.symptoms || value.historyOfPresentIllness || value.physicalExamination ||
                       value.diagnosis || value.treatment || value.notes ||
                       (value.medications && value.medications.length > 0) ||
                       (value.labTests && value.labTests.length > 0) ||
                       (value.procedures && value.procedures.length > 0) ||
                       (value.orders && value.orders.length > 0)
-      
+
       if (hasData) {
         saveDraftToStorage(value as any)
         setHasUnsavedChanges(true)
       } else {
-        clearDraftFromStorage()
+        // clearDraftFromStorage()
+        clearDraftFromStorage(data.patientId)
         setHasUnsavedChanges(false)
       }
     })
@@ -420,17 +431,53 @@ export function PatientEncounterForm({
     }
   }, [patientId, open])
 
+
+  useEffect(() => {
+  if (!open) return
+  if (!patientId) return
+
+  // Reset form when switching patients
+  form.reset({
+    patientId,
+    doctorId: initialDoctorId || "",
+    encounterDate: new Date(new Date().setHours(0, 0, 0, 0)),
+    visitType: "Outpatient",
+    medications: [],
+    labTests: [],
+    procedures: [],
+    orders: [],
+  })
+
+  setHasUnsavedChanges(false)
+}, [patientId])
+
+
   // Populate form with today's encounter data when patient data is loaded
+// Populate form with today's encounter data when patient data is loaded
   useEffect(() => {
     if (!open || !patientId) return
-    
+
     const encounterDate = form.getValues("encounterDate")
     if (!encounterDate) return
 
     const encounterDateStr = format(encounterDate, 'yyyy-MM-dd')
-    const currentLabTests = form.getValues("labTests") || []
-    const currentMedications = form.getValues("medications") || []
-    
+
+    // Check if we've already loaded data for this patient/date combination
+    const currentFormState = form.getValues()
+    const hasExistingData =
+      currentFormState.medications?.length > 0 ||
+      currentFormState.labTests?.length > 0 ||
+      currentFormState.procedures?.length > 0 ||
+      currentFormState.orders?.length > 0
+
+    // Skip prepopulation if there's already data (from draft or user input)
+    if (hasExistingData) {
+      console.log('⏭️ Skipping prepopulation - form already has data')
+      return
+    }
+
+    console.log('🔄 Prepopulating form for patient:', patientId, 'date:', encounterDateStr)
+
     // Get today's medical record (most recent one for this date)
     const todayRecord = patientHistory.find((record: any) => {
       const recordDateStr = format(new Date(record.visitDate), 'yyyy-MM-dd')
@@ -441,7 +488,7 @@ export function PatientEncounterForm({
     if (todayRecord) {
       const currentValues = form.getValues()
       const updates: any = {}
-      
+
       // Only populate if fields are empty (to avoid overwriting user input)
       if (!currentValues.chiefComplaint && todayRecord.chiefComplaint) {
         updates.chiefComplaint = todayRecord.chiefComplaint
@@ -467,7 +514,7 @@ export function PatientEncounterForm({
       if (!currentValues.notes && todayRecord.notes) {
         updates.notes = todayRecord.notes
       }
-      
+
       // Apply updates if any
       if (Object.keys(updates).length > 0) {
         setTimeout(() => {
@@ -482,9 +529,8 @@ export function PatientEncounterForm({
       }
     }
 
-    // Only populate if form arrays are empty (to avoid overwriting user input)
-    if (currentLabTests.length === 0 && patientLabResults.length > 0) {
-      // Get orders from encounter date and convert them to form format
+    // Prepopulate Lab Tests
+    if (patientLabResults.length > 0) {
       const encounterLabOrders = patientLabResults.filter((order: any) => {
         const orderDateStr = format(new Date(order.orderDate), 'yyyy-MM-dd')
         return orderDateStr === encounterDateStr && order.items && order.items.length > 0
@@ -501,18 +547,18 @@ export function PatientEncounterForm({
             })
           })
         })
-        
+
         if (labTestsToAdd.length > 0) {
-          // Use setTimeout to avoid state updates during render
+          console.log('✅ Prepopulating', labTestsToAdd.length, 'lab tests')
           setTimeout(() => {
             labTestsToAdd.forEach(test => appendLabTest(test))
-          }, 0)
+          }, 100)
         }
       }
     }
 
-    if (currentMedications.length === 0 && patientMedications.length > 0) {
-      // Get prescriptions from encounter date and convert them to form format
+    // Prepopulate Medications
+    if (patientMedications.length > 0) {
       const encounterPrescriptions = patientMedications.filter((prescription: any) => {
         const prescriptionDateStr = format(new Date(prescription.prescriptionDate), 'yyyy-MM-dd')
         return prescriptionDateStr === encounterDateStr && prescription.items && prescription.items.length > 0
@@ -532,20 +578,18 @@ export function PatientEncounterForm({
             })
           })
         })
-        
+
         if (medicationsToAdd.length > 0) {
-          // Use setTimeout to avoid state updates during render
+          console.log('✅ Prepopulating', medicationsToAdd.length, 'medications')
           setTimeout(() => {
             medicationsToAdd.forEach(med => appendMedication(med))
-          }, 0)
+          }, 200)
         }
       }
     }
 
-    // Load existing procedures for the encounter date
-    const currentProcedures = form.getValues("procedures") || []
-    if (currentProcedures.length === 0 && patientProcedures.length > 0 && procedures.length > 0) {
-      // Get procedures from encounter date and convert them to form format
+    // Prepopulate Procedures
+    if (patientProcedures.length > 0 && procedures.length > 0) {
       const encounterProcedures = patientProcedures.filter((procedure: any) => {
         const procedureDateStr = format(new Date(procedure.procedureDate), 'yyyy-MM-dd')
         return procedureDateStr === encounterDateStr && procedure.procedureId
@@ -554,7 +598,6 @@ export function PatientEncounterForm({
       if (encounterProcedures.length > 0) {
         const proceduresToAdd: any[] = []
         encounterProcedures.forEach((procedure: any) => {
-          // Check if procedure exists in the procedures catalog
           const existingProc = procedures.find(p => p.procedureId?.toString() === procedure.procedureId?.toString())
           if (existingProc) {
             proceduresToAdd.push({
@@ -564,22 +607,18 @@ export function PatientEncounterForm({
             })
           }
         })
-        
+
         if (proceduresToAdd.length > 0) {
-          // Use setTimeout to avoid state updates during render
+          console.log('✅ Prepopulating', proceduresToAdd.length, 'procedures')
           setTimeout(() => {
-            proceduresToAdd.forEach(proc => {
-              appendProcedure(proc)
-            })
-          }, 0)
+            proceduresToAdd.forEach(proc => appendProcedure(proc))
+          }, 300)
         }
       }
     }
 
-    // Load existing orders/consumables for the encounter date
-    const currentOrders = form.getValues("orders") || []
-    if (currentOrders.length === 0 && patientOrders.length > 0 && consumables.length > 0) {
-      // Get invoices/orders from encounter date and convert them to form format
+    // Prepopulate Orders/Consumables
+    if (patientOrders.length > 0 && consumables.length > 0) {
       const encounterOrders = patientOrders.filter((invoice: any) => {
         const invoiceDateStr = format(new Date(invoice.invoiceDate), 'yyyy-MM-dd')
         const hasConsumablesNote = invoice.notes && invoice.notes.toLowerCase().includes('consumables ordered')
@@ -590,24 +629,22 @@ export function PatientEncounterForm({
         const ordersToAdd: any[] = []
         encounterOrders.forEach((invoice: any) => {
           invoice.items.forEach((item: any) => {
-            // Find the consumable by chargeId - only add if it exists in consumables catalog
             const consumable = consumables.find((c: any) => c.chargeId?.toString() === item.chargeId?.toString())
             if (consumable && item.chargeId) {
               ordersToAdd.push({
                 chargeId: item.chargeId?.toString() || "",
-                quantity: item.quantity?.toString() || "1",
+                quantity: item.quantity || 1,
+                notes: item.notes || "",
               })
             }
           })
         })
-        
+
         if (ordersToAdd.length > 0) {
-          // Use setTimeout to avoid state updates during render
+          console.log('✅ Prepopulating', ordersToAdd.length, 'orders')
           setTimeout(() => {
-            ordersToAdd.forEach(order => {
-              appendOrder(order)
-            })
-          }, 0)
+            ordersToAdd.forEach(order => appendOrder(order))
+          }, 400)
         }
       }
     }
@@ -651,12 +688,12 @@ export function PatientEncounterForm({
         proceduresApi.getPatientProcedures(id).catch(() => []),
         billingApi.getInvoices(id).catch(() => []), // Get all invoices for the patient
       ])
-      
+
       // Fetch full order details with items for pending/in-progress orders to enable duplicate checking
       const labOrdersWithItems = await Promise.all(
         (labOrders || []).map(async (order: any) => {
           // Only fetch details for pending/in-progress orders (where duplicate checking matters)
-          if ((order.status === 'pending' || order.status === 'sample_collected' || order.status === 'in_progress') && 
+          if ((order.status === 'pending' || order.status === 'sample_collected' || order.status === 'in_progress') &&
               (!order.items || order.items.length === 0)) {
             try {
               const fullOrder = await laboratoryApi.getOrder(order.orderId.toString())
@@ -669,7 +706,7 @@ export function PatientEncounterForm({
           return order
         })
       )
-      
+
       // Fetch full prescription details with items (especially for today's prescriptions to populate form)
       const todayStr = format(new Date(), 'yyyy-MM-dd')
       const prescriptionsWithItems = await Promise.all(
@@ -688,7 +725,7 @@ export function PatientEncounterForm({
           return prescription
         })
       )
-      
+
       // Fetch invoice details for invoices that might contain consumables/orders
       // We'll filter by notes containing "Consumables ordered" and fetch their items
       let consumablesInvoices: any[] = []
@@ -697,7 +734,7 @@ export function PatientEncounterForm({
         const potentialConsumableInvoices = invoices.filter((invoice: any) => {
           return invoice.notes && invoice.notes.toLowerCase().includes('consumables ordered')
         })
-        
+
         // Fetch full invoice details (including items) for these invoices
         if (potentialConsumableInvoices.length > 0) {
           const invoicesWithItems = await Promise.all(
@@ -711,7 +748,7 @@ export function PatientEncounterForm({
               }
             })
           )
-          
+
           consumablesInvoices = invoicesWithItems.filter(inv => inv && inv.items && inv.items.length > 0)
         }
       }
@@ -741,16 +778,16 @@ export function PatientEncounterForm({
     try {
       const inventoryItems = await pharmacyApi.getDrugInventory()
       const inventoryMap: Record<number, { totalQuantity: number; hasStock: boolean; sellPrice: number | null }> = {}
-      
+
       inventoryItems.forEach((item: any) => {
         const medId = item.medicationId
         const quantity = parseInt(item.quantity || 0)
         const sellPrice = item.sellPrice ? parseFloat(item.sellPrice) : null
-        
+
         if (!inventoryMap[medId]) {
           inventoryMap[medId] = { totalQuantity: 0, hasStock: false, sellPrice: null }
         }
-        
+
         inventoryMap[medId].totalQuantity += quantity
         if (quantity > 0) {
           inventoryMap[medId].hasStock = true
@@ -759,7 +796,7 @@ export function PatientEncounterForm({
           }
         }
       })
-      
+
       setSelectedMedicationsInventory(inventoryMap)
     } catch (error) {
       console.error("Error loading inventory data:", error)
@@ -789,7 +826,7 @@ export function PatientEncounterForm({
           const med = data.medications[i]
           const medId = parseInt(med.medicationId)
           const inventoryStatus = getInventoryStatus(medId)
-          
+
           if (inventoryStatus?.hasStock && (!med.quantity || med.quantity.trim() === '')) {
             form.setError(`medications.${i}.quantity`, {
               type: 'manual',
@@ -835,7 +872,7 @@ export function PatientEncounterForm({
           const medId = parseInt(med.medicationId)
           const inventoryStatus = getInventoryStatus(medId)
           const quantity = (inventoryStatus?.hasStock && med.quantity) ? parseInt(med.quantity) : null
-          
+
           return {
             medicationId: medId,
             dosage: med.dosage,
@@ -855,7 +892,7 @@ export function PatientEncounterForm({
           items,
         }
 
-        await pharmacyApi.createPrescription(prescriptionData)
+        //await pharmacyApi.createPrescription(prescriptionData)
       }
 
       // 3. Create lab test orders if any
@@ -887,39 +924,39 @@ export function PatientEncounterForm({
             })),
           }
 
-          const createdOrder = await laboratoryApi.createOrder(labOrderData)
-          createdOrders.push({ order: createdOrder, tests: testList })
+          //const createdOrder = await laboratoryApi.createOrder(labOrderData)
+         // createdOrders.push({ order: createdOrder, tests: testList })
         }
 
         // 4. Create invoice for lab tests
-        const invoiceItems = data.labTests.map((test: any) => {
-          const testType = testTypes.find(t => t.testTypeId.toString() === test.testTypeId)
-          const testCost = testType?.cost ? parseFloat(testType.cost) : 0
-          const testName = testType ? `${testType.testName}${testType.category ? ` (${testType.category})` : ''}` : 'Lab Test'
-          
-          return {
-            description: testName,
-            quantity: 1,
-            unitPrice: testCost,
-            totalPrice: testCost,
-            chargeId: null, // Lab tests may not have a service charge ID
-          }
-        }).filter(item => item.unitPrice > 0) // Only include tests with a cost
+        // const invoiceItems = data.labTests.map((test: any) => {
+        //   const testType = testTypes.find(t => t.testTypeId.toString() === test.testTypeId)
+        //   const testCost = testType?.cost ? parseFloat(testType.cost) : 0
+        //   const testName = testType ? `${testType.testName}${testType.category ? ` (${testType.category})` : ''}` : 'Lab Test'
 
-        if (invoiceItems.length > 0) {
-          const totalAmount = invoiceItems.reduce((sum: number, item: any) => sum + item.totalPrice, 0)
-          
-          const invoiceData = {
-            patientId: parseInt(data.patientId),
-            invoiceDate: format(data.encounterDate, 'yyyy-MM-dd'),
-            dueDate: format(new Date(data.encounterDate.getTime() + 30 * 24 * 60 * 60 * 1000), 'yyyy-MM-dd'), // 30 days from encounter date
-            status: 'pending',
-            items: invoiceItems,
-            notes: `Lab tests ordered during encounter on ${format(data.encounterDate, 'PPP')}. Order numbers: ${createdOrders.map((o: any) => o.order.orderNumber || o.order.orderId).join(', ')}`,
-          }
+        //   return {
+        //     description: testName,
+        //     quantity: 1,
+        //     unitPrice: testCost,
+        //     totalPrice: testCost,
+        //     chargeId: null, // Lab tests may not have a service charge ID
+        //   }
+        // }).filter(item => item.unitPrice > 0) // Only include tests with a cost
 
-          await billingApi.createInvoice(invoiceData)
-        }
+        // if (invoiceItems.length > 0) {
+        //   const totalAmount = invoiceItems.reduce((sum: number, item: any) => sum + item.totalPrice, 0)
+
+        //   const invoiceData = {
+        //     patientId: parseInt(data.patientId),
+        //     invoiceDate: format(data.encounterDate, 'yyyy-MM-dd'),
+        //     dueDate: format(new Date(data.encounterDate.getTime() + 30 * 24 * 60 * 60 * 1000), 'yyyy-MM-dd'), // 30 days from encounter date
+        //     status: 'pending',
+        //     items: invoiceItems,
+        //     notes: `Lab tests ordered during encounter on ${format(data.encounterDate, 'PPP')}. Order numbers: ${createdOrders.map((o: any) => o.order.orderNumber || o.order.orderId).join(', ')}`,
+        //   }
+
+        //   await billingApi.createInvoice(invoiceData)
+        // }
       }
 
       // 4. Create patient procedures if any
@@ -933,7 +970,7 @@ export function PatientEncounterForm({
             notes: procedure.notes || null,
             complications: procedure.complications || null,
           }
-          return proceduresApi.createPatientProcedure(procedureData)
+          //return proceduresApi.createPatientProcedure(procedureData)
         })
         await Promise.all(procedurePromises)
 
@@ -942,7 +979,7 @@ export function PatientEncounterForm({
           const proc = procedures.find((p: any) => p.procedureId?.toString() === procedure.procedureId)
           const procedureCost = proc?.cost ? parseFloat(proc.cost) : (proc?.chargeCost ? parseFloat(proc.chargeCost) : 0)
           const procedureName = proc?.procedureName || 'Procedure'
-          
+
           return {
             description: procedureName,
             quantity: 1,
@@ -954,7 +991,7 @@ export function PatientEncounterForm({
 
         if (procedureInvoiceItems.length > 0) {
           const totalAmount = procedureInvoiceItems.reduce((sum: number, item: any) => sum + item.totalPrice, 0)
-          
+
           const invoiceData = {
             patientId: parseInt(data.patientId),
             invoiceDate: format(data.encounterDate, 'yyyy-MM-dd'),
@@ -964,7 +1001,7 @@ export function PatientEncounterForm({
             notes: `Procedures performed during encounter on ${format(data.encounterDate, 'PPP')}.`,
           }
 
-          await billingApi.createInvoice(invoiceData)
+         // await billingApi.createInvoice(invoiceData)
         }
       }
 
@@ -976,7 +1013,7 @@ export function PatientEncounterForm({
           const quantity = order.quantity || 1
           const totalPrice = unitPrice * quantity
           const itemName = consumable?.name || 'Consumable'
-          
+
           return {
             description: itemName,
             quantity: quantity,
@@ -988,7 +1025,7 @@ export function PatientEncounterForm({
 
         if (orderInvoiceItems.length > 0) {
           const totalAmount = orderInvoiceItems.reduce((sum: number, item: any) => sum + item.totalPrice, 0)
-          
+
           const invoiceData = {
             patientId: parseInt(data.patientId),
             invoiceDate: format(data.encounterDate, 'yyyy-MM-dd'),
@@ -998,7 +1035,7 @@ export function PatientEncounterForm({
             notes: `Consumables ordered during encounter on ${format(data.encounterDate, 'PPP')}.`,
           }
 
-          await billingApi.createInvoice(invoiceData)
+        //  await billingApi.createInvoice(invoiceData)
         }
       }
 
@@ -1028,16 +1065,16 @@ export function PatientEncounterForm({
           })
         }
       }
-      
+
       // Clear draft after successful submission
-      clearDraftFromStorage()
+      clearDraftFromStorage(form.getValues('patientId'))
       setHasUnsavedChanges(false)
-      
+
       // Check for critical values AFTER saving encounter
       if (data.patientId) {
         // Reload patient data to get latest vitals
         await loadPatientData(data.patientId)
-        
+
         // Get the most recent vitals after reload
         // We need to fetch vitals again to check for critical values
         try {
@@ -1054,7 +1091,7 @@ export function PatientEncounterForm({
               glasgowComaScale: latestVitals.glasgowComaScale,
               bloodGlucose: latestVitals.bloodGlucose,
             }
-            
+
             const patientName = patientData ? getPatientName(patientData) : undefined
             await checkAndNotifyCriticalVitals(
               vitalsForCheck,
@@ -1067,7 +1104,7 @@ export function PatientEncounterForm({
           console.error('Error checking critical vitals after encounter save:', err)
         }
       }
-      
+
       if (onSuccess) {
         onSuccess()
       }
@@ -1081,43 +1118,138 @@ export function PatientEncounterForm({
     }
   }
 
-  // Draft management functions
-  const saveDraftToStorage = (data: Partial<EncounterFormValues>) => {
-    if (typeof window === 'undefined') return
-    try {
-      const dataToSave = {
-        ...data,
-        encounterDate: data.encounterDate instanceof Date 
-          ? data.encounterDate.toISOString() 
-          : data.encounterDate,
-      }
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave))
-    } catch (error) {
-      console.error('Error saving draft to localStorage:', error)
-    }
-  }
 
-  const loadDraftFromStorage = (): Partial<EncounterFormValues> | null => {
-    if (typeof window === 'undefined') return null
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY)
-      if (saved) {
-        return JSON.parse(saved)
-      }
-    } catch (error) {
-      console.error('Error loading draft from localStorage:', error)
+  const loadEncounterSideEffects = async (patientId: string) => {
+  if (!patientId) return
+
+  try {
+    // 1. Prescriptions
+    const prescriptions = await pharmacyApi.getPatientPrescriptions(patientId, {
+      activeOnly: true,
+    })
+
+    setPrescriptions(
+      prescriptions.map((p: any) => ({
+        prescriptionId: p.prescriptionId,
+        items: p.items,
+        status: p.status,
+        date: p.prescriptionDate,
+      }))
+    )
+
+    // 2. Lab orders
+    const labOrders = await laboratoryApi.getPatientOrders(patientId)
+
+    setLabTests(
+      labOrders.flatMap((order: any) =>
+        order.items.map((item: any) => ({
+          orderId: order.orderId,
+          testTypeId: item.testTypeId.toString(),
+          priority: order.priority,
+          clinicalIndication: item.notes,
+          status: order.status,
+        }))
+      )
+    )
+
+    // 3. Procedures
+    const procedures = await proceduresApi.getPatientProcedures(patientId)
+
+    setProcedures(
+      procedures.map((proc: any) => ({
+        procedureId: proc.procedureId.toString(),
+        notes: proc.notes,
+        complications: proc.complications,
+        date: proc.procedureDate,
+      }))
+    )
+
+    // 4. Consumables / Orders
+    const invoices = await billingApi.getPatientInvoices(patientId, {
+      type: 'consumables',
+    })
+
+    setOrders(
+      invoices.flatMap((inv: any) =>
+        inv.items.map((item: any) => ({
+          chargeId: item.chargeId?.toString(),
+          quantity: item.quantity,
+          description: item.description,
+        }))
+      )
+    )
+  } catch (err) {
+    console.error('Error loading encounter side-effects:', err)
+  }
+}
+
+  // Draft management functions
+ const saveDraftToStorage = (data) => {
+  if (typeof window === 'undefined') return
+  if (!data?.patientId) return
+
+  const key = getStorageKey(data.patientId)
+  if (!key) return
+
+  try {
+    const payload = {
+      data: {
+        ...data,
+        encounterDate:
+          data.encounterDate instanceof Date
+            ? data.encounterDate.toISOString()
+            : data.encounterDate,
+      },
+      savedAt: Date.now(),
     }
+
+    localStorage.setItem(key, JSON.stringify(payload))
+  } catch (error) {
+    console.error('Error saving draft to localStorage:', error)
+  }
+}
+
+const loadDraftFromStorage = (patientId) => {
+  if (typeof window === 'undefined') return null
+  if (!patientId) return null
+
+  const key = getStorageKey(patientId)
+  if (!key) return null
+
+  try {
+    const raw = localStorage.getItem(key)
+    if (!raw) return null
+
+    const parsed = JSON.parse(raw)
+    const { data, savedAt } = parsed || {}
+
+    // Expired → delete automatically
+    if (!savedAt || Date.now() - savedAt > DRAFT_TTL_MS) {
+      localStorage.removeItem(key)
+      return null
+    }
+
+    return data || null
+  } catch (error) {
+    console.error('Error loading draft from localStorage:', error)
     return null
   }
+}
 
-  const clearDraftFromStorage = () => {
-    if (typeof window === 'undefined') return
-    try {
-      localStorage.removeItem(STORAGE_KEY)
-    } catch (error) {
-      console.error('Error clearing draft from localStorage:', error)
-    }
+//let intcurrentPid=form.getValues("patientId");
+const clearDraftFromStorage = (patientId:any) => {
+  if (typeof window === 'undefined') return
+  if (!patientId) return
+
+  const key = getStorageKey(patientId)
+  if (!key) return
+
+  try {
+    localStorage.removeItem(key)
+  } catch (error) {
+    console.error('Error clearing draft from localStorage:', error)
   }
+}
 
   const handleDialogClose = (newOpenState: boolean) => {
     // If trying to close and there are unsaved changes, show confirmation but keep dialog open
@@ -1136,7 +1268,7 @@ export function PatientEncounterForm({
   }
 
   const handleConfirmClose = () => {
-    clearDraftFromStorage()
+    clearDraftFromStorage(form.getValues("patientId"))
     setHasUnsavedChanges(false)
     setShowCloseConfirm(false)
     onOpenChange(false)
@@ -1256,8 +1388,8 @@ export function PatientEncounterForm({
   const isMedicationAlreadyAdded = (medicationId: string) => {
     if (!medicationId) return false
     const currentMeds = form.watch("medications") || []
-    return currentMeds.some((med: any, index: number) => 
-      med.medicationId === medicationId && 
+    return currentMeds.some((med: any, index: number) =>
+      med.medicationId === medicationId &&
       (editingMedicationIndex === null || index !== editingMedicationIndex)
     )
   }
@@ -1266,7 +1398,7 @@ export function PatientEncounterForm({
     const currentMeds = form.watch("medications") || []
     const usedMedicationIds = new Set(
       currentMeds
-        .map((med: any, index: number) => 
+        .map((med: any, index: number) =>
           editingMedicationIndex !== null && index === editingMedicationIndex ? null : med.medicationId
         )
         .filter(Boolean)
@@ -1278,7 +1410,7 @@ export function PatientEncounterForm({
     const currentTests = form.watch("labTests") || []
     const usedTestTypeIds = new Set(
       currentTests
-        .map((test: any, index: number) => 
+        .map((test: any, index: number) =>
           editingLabTestIndex !== null && index === editingLabTestIndex ? null : test.testTypeId
         )
         .filter(Boolean)
@@ -1295,29 +1427,29 @@ export function PatientEncounterForm({
 
   const isTestTypeAlreadyAdded = (testTypeId: string) => {
     if (!testTypeId) return false
-    
+
     // Check if test is already in the current form
     const currentTests = form.watch("labTests") || []
-    const isInCurrentForm = currentTests.some((test: any, index: number) => 
-      test.testTypeId === testTypeId && 
+    const isInCurrentForm = currentTests.some((test: any, index: number) =>
+      test.testTypeId === testTypeId &&
       (editingLabTestIndex === null || index !== editingLabTestIndex)
     )
-    
+
     if (isInCurrentForm) return true
-    
+
     // Check if patient has a pending order for this test type
     // Note: This checks patientLabResults which may not have items populated
     // For more accurate checking, we'd need to enhance the API to include items in list responses
     if (patientId && patientLabResults.length > 0) {
       const hasPendingTest = patientLabResults.some((order: any) => {
         // Check if order is pending/in-progress and contains this test type
-        const isPending = order.status === 'pending' || 
-                         order.status === 'sample_collected' || 
+        const isPending = order.status === 'pending' ||
+                         order.status === 'sample_collected' ||
                          order.status === 'in_progress'
-        
+
         if (isPending && order.items && order.items.length > 0) {
-          return order.items.some((item: any) => 
-            item.testTypeId?.toString() === testTypeId || 
+          return order.items.some((item: any) =>
+            item.testTypeId?.toString() === testTypeId ||
             item.testType?.testTypeId?.toString() === testTypeId
           )
         }
@@ -1325,7 +1457,7 @@ export function PatientEncounterForm({
       })
       return hasPendingTest
     }
-    
+
     return false
   }
 
@@ -1567,11 +1699,11 @@ export function PatientEncounterForm({
           {(() => {
             // Normalize patientId to string for comparison
             const currentPatientId = patientId ? String(patientId).trim() : null
-            
+
             if (!currentPatientId) {
               return null
             }
-            
+
             // Debug logging
             console.log('🔍 [ENCOUNTER FORM] Checking for critical alerts:', {
               patientId: currentPatientId,
@@ -1584,12 +1716,12 @@ export function PatientEncounterForm({
                 alertsCount: n.alerts.length
               }))
             })
-            
+
             // Find matching notifications - compare as strings
             const patientNotifications = notifications.filter(n => {
               const notificationPatientId = String(n.patientId).trim()
               const match = notificationPatientId === currentPatientId
-              
+
               if (match) {
                 console.log('✅ [ENCOUNTER FORM] Found matching notification:', {
                   notificationPatientId,
@@ -1598,26 +1730,26 @@ export function PatientEncounterForm({
                   patientName: n.patientName
                 })
               }
-              
+
               return match
             })
-            
+
             if (patientNotifications.length === 0) {
               console.log('⚠️ [ENCOUNTER FORM] No notifications found for patient:', currentPatientId)
               return null
             }
-            
+
             const patientAlert = patientNotifications[0]
             const criticalAlerts = patientAlert.alerts.filter(a => a.severity === 'critical')
             const urgentAlerts = patientAlert.alerts.filter(a => a.severity === 'urgent')
-            
+
             console.log('✅ [ENCOUNTER FORM] Displaying critical alerts banner:', {
               criticalCount: criticalAlerts.length,
               urgentCount: urgentAlerts.length,
               totalAlerts: patientAlert.alerts.length,
               patientName: patientAlert.patientName
             })
-            
+
             return (
               <div className="mx-6 mt-4 mb-0 border-2 border-red-500 bg-red-50 dark:bg-red-950/20 rounded-lg p-4 flex-shrink-0">
                 <div className="flex items-start gap-3">
@@ -1634,7 +1766,7 @@ export function PatientEncounterForm({
                     <div className="space-y-1.5">
                       {patientAlert.alerts.slice(0, 3).map((alert, idx) => (
                         <div key={idx} className="text-xs bg-white dark:bg-red-900/30 p-2 rounded border border-red-200 dark:border-red-800">
-                          <span className="font-semibold">{alert.parameter}:</span> {alert.value} {alert.unit} 
+                          <span className="font-semibold">{alert.parameter}:</span> {alert.value} {alert.unit}
                           {alert.range && <span className="text-red-600 dark:text-red-400"> ({alert.range})</span>}
                           <Badge variant={alert.severity === 'critical' ? 'destructive' : 'secondary'} className="ml-2 text-xs">
                             {alert.severity}
@@ -1950,8 +2082,8 @@ export function PatientEncounterForm({
                               render={({ field }) => (
                                 <FormItem>
                                   <FormLabel>Doctor *</FormLabel>
-                                  <Select 
-                                    onValueChange={field.onChange} 
+                                  <Select
+                                    onValueChange={field.onChange}
                                     defaultValue={field.value || ""}
                                     disabled={!!initialDoctorId}
                                   >
@@ -2112,8 +2244,8 @@ export function PatientEncounterForm({
                   <Button type="button" variant="outline" onClick={() => handleDialogClose(false)}>
                     Cancel
                   </Button>
-                  <Button 
-                    type="button" 
+                  <Button
+                    type="button"
                     onClick={() => form.handleSubmit(onSubmit)()}
                     disabled={isSubmitting}
                     className="min-w-[140px]"
@@ -2358,10 +2490,10 @@ export function PatientEncounterForm({
                       <FormItem>
                         <FormLabel className="text-base font-semibold">History of Present Illness (HOPI)</FormLabel>
                         <FormControl>
-                          <Textarea 
-                            placeholder="Chronological narrative: When did symptoms start? How have they progressed? What makes them better or worse? Any associated symptoms? (e.g., 'Patient reports headache started 3 days ago, initially mild, now severe. Associated with nausea and photophobia. Worse in morning, better with rest.')" 
+                          <Textarea
+                            placeholder="Chronological narrative: When did symptoms start? How have they progressed? What makes them better or worse? Any associated symptoms? (e.g., 'Patient reports headache started 3 days ago, initially mild, now severe. Associated with nausea and photophobia. Worse in morning, better with rest.')"
                             className="min-h-[120px]"
-                            {...field} 
+                            {...field}
                           />
                         </FormControl>
                         <FormDescription>
@@ -2382,19 +2514,19 @@ export function PatientEncounterForm({
                       <FormItem>
                         <FormLabel className="text-base font-semibold">Physical Examination Findings</FormLabel>
                         <FormControl>
-                          <Textarea 
+                          <Textarea
                             placeholder="Document objective findings systematically:
 • Vital Signs: BP, HR, RR, Temp, SpO2
-• General Appearance: 
-• HEENT: 
-• Cardiovascular: 
-• Respiratory: 
-• Abdominal: 
-• Neurological: 
-• Musculoskeletal: 
+• General Appearance:
+• HEENT:
+• Cardiovascular:
+• Respiratory:
+• Abdominal:
+• Neurological:
+• Musculoskeletal:
 • Skin:"
                             className="min-h-[150px] font-mono text-sm"
-                            {...field} 
+                            {...field}
                           />
                         </FormControl>
                         <FormDescription>
@@ -2467,7 +2599,7 @@ export function PatientEncounterForm({
                           const diagnosisText = selectedDiagnoses
                             .map((d, idx) => {
                               const prefix = idx === 0 ? "1. Primary" : idx === 1 ? "2. Secondary" : `${idx + 1}.`;
-                              return d.icd10Code 
+                              return d.icd10Code
                                 ? `${prefix} ${d.icd10Code} - ${d.diagnosisName}`
                                 : `${prefix} ${d.diagnosisName}`;
                             })
@@ -2498,8 +2630,8 @@ export function PatientEncounterForm({
                                 }}
                               />
                               {selectedDiagnoses.length === 0 && (
-                                <Textarea 
-                                  placeholder="Or enter diagnosis manually (e.g., '1. Primary: Migraine headache\n2. Secondary: Hypertension')" 
+                                <Textarea
+                                  placeholder="Or enter diagnosis manually (e.g., '1. Primary: Migraine headache\n2. Secondary: Hypertension')"
                                   className="min-h-[100px]"
                                   value={field.value || ""}
                                   onChange={field.onChange}
@@ -2546,16 +2678,16 @@ export function PatientEncounterForm({
                       <FormItem>
                         <FormLabel className="text-base font-semibold">Treatment Plan</FormLabel>
                         <FormControl>
-                          <Textarea 
+                          <Textarea
                             placeholder="Detailed treatment plan:
 • Medications: (prescribed via Prescription tab)
-• Procedures: 
-• Lifestyle modifications: 
-• Follow-up instructions: 
+• Procedures:
+• Lifestyle modifications:
+• Follow-up instructions:
 • Patient education:
-• Referrals:" 
+• Referrals:"
                             className="min-h-[150px]"
-                            {...field} 
+                            {...field}
                           />
                         </FormControl>
                         <FormDescription>
@@ -2593,7 +2725,7 @@ export function PatientEncounterForm({
                             <SelectItem value="Other">Other</SelectItem>
                           </SelectContent>
                         </Select>
-                        
+
                         <FormDescription>
                           Select the outcome of this encounter. If "Follow-up Scheduled" is selected, you can schedule the next appointment below.
                         </FormDescription>
@@ -2609,7 +2741,7 @@ export function PatientEncounterForm({
                         <CheckCircle2 className="h-5 w-5 text-blue-600 dark:text-blue-400" />
                         <h4 className="text-base font-semibold">Schedule Next Appointment</h4>
                       </div>
-                      
+
                       <div className="grid grid-cols-2 gap-4">
                         <FormField
                           control={form.control}
@@ -2630,12 +2762,12 @@ export function PatientEncounterForm({
                                   </FormControl>
                                 </PopoverTrigger>
                                 <PopoverContent className="w-auto p-0" align="start">
-                                  <Calendar 
-                                    mode="single" 
-                                    selected={field.value} 
+                                  <Calendar
+                                    mode="single"
+                                    selected={field.value}
                                     onSelect={field.onChange}
                                     disabled={(date) => date < new Date(new Date().setHours(0, 0, 0, 0))}
-                                    initialFocus 
+                                    initialFocus
                                   />
                                 </PopoverContent>
                               </Popover>
@@ -2707,10 +2839,10 @@ export function PatientEncounterForm({
                           <FormItem>
                             <FormLabel>Reason for Follow-up (Optional)</FormLabel>
                             <FormControl>
-                              <Textarea 
-                                placeholder="Reason for follow-up appointment, review instructions, etc." 
+                              <Textarea
+                                placeholder="Reason for follow-up appointment, review instructions, etc."
                                 className="min-h-[80px]"
-                                {...field} 
+                                {...field}
                               />
                             </FormControl>
                             <FormMessage />
@@ -2730,10 +2862,10 @@ export function PatientEncounterForm({
                       <FormItem>
                         <FormLabel className="text-base font-semibold">Additional Clinical Notes</FormLabel>
                         <FormControl>
-                          <Textarea 
-                            placeholder="Any additional clinical notes, observations, patient counseling points, or special instructions" 
+                          <Textarea
+                            placeholder="Any additional clinical notes, observations, patient counseling points, or special instructions"
                             className="min-h-[100px]"
-                            {...field} 
+                            {...field}
                           />
                         </FormControl>
                         <FormDescription>
@@ -2837,16 +2969,16 @@ export function PatientEncounterForm({
                             {medicationFields.map((field, index) => {
                               const medData = form.watch(`medications.${index}`)
                               const medicationId = medData?.medicationId || ""
-                              
+
                               // Skip rows with empty medicationId
                               if (!medicationId || medicationId.trim() === "") {
                                 return null
                               }
-                              
+
                               const quantity = medData?.quantity || "0"
                               const medCost = getMedicationCost(medicationId, quantity)
                               const inventoryStatus = medicationId ? getInventoryStatus(parseInt(medicationId)) : null
-                              
+
                               return (
                                 <TableRow key={field.id}>
                                   <TableCell className="font-medium">
@@ -3517,9 +3649,9 @@ export function PatientEncounterForm({
                 setTempMedication(defaultMedication)
               }}
               disabled={
-                !tempMedication.medicationId || 
-                !tempMedication.dosage || 
-                !tempMedication.frequency || 
+                !tempMedication.medicationId ||
+                !tempMedication.dosage ||
+                !tempMedication.frequency ||
                 !tempMedication.duration ||
                 (editingMedicationIndex === null && isMedicationAlreadyAdded(tempMedication.medicationId)) ||
                 (tempMedication.medicationId && (() => {
@@ -3551,12 +3683,12 @@ export function PatientEncounterForm({
                   <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
                     Test Type *
                   </label>
-                  <Select 
+                  <Select
                     onValueChange={(value) => {
                       // Always update the state, even if it's a duplicate
                       // The validation will show a warning, but we allow the selection
                       setTempLabTest({ ...tempLabTest, testTypeId: value })
-                    }} 
+                    }}
                     value={tempLabTest.testTypeId || ""}
                   >
                     <SelectTrigger>
@@ -3588,8 +3720,8 @@ export function PatientEncounterForm({
                   <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
                     Priority *
                   </label>
-                  <Select 
-                    onValueChange={(value: "routine" | "urgent" | "stat") => setTempLabTest({ ...tempLabTest, priority: value })} 
+                  <Select
+                    onValueChange={(value: "routine" | "urgent" | "stat") => setTempLabTest({ ...tempLabTest, priority: value })}
                     value={tempLabTest.priority || "routine"}
                   >
                     <SelectTrigger>
@@ -3606,8 +3738,8 @@ export function PatientEncounterForm({
                   <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
                     Clinical Indication
                   </label>
-                  <Textarea 
-                    placeholder="Reason for ordering this test" 
+                  <Textarea
+                    placeholder="Reason for ordering this test"
                     value={tempLabTest.clinicalIndication || ""}
                     onChange={(e) => setTempLabTest({ ...tempLabTest, clinicalIndication: e.target.value })}
                   />
@@ -3671,8 +3803,8 @@ export function PatientEncounterForm({
               <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
                 Procedure *
               </label>
-              <Select 
-                onValueChange={(value) => setTempProcedure({ ...tempProcedure, procedureId: value })} 
+              <Select
+                onValueChange={(value) => setTempProcedure({ ...tempProcedure, procedureId: value })}
                 value={tempProcedure.procedureId || ""}
               >
                 <SelectTrigger>
@@ -3700,8 +3832,8 @@ export function PatientEncounterForm({
               <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
                 Notes
               </label>
-              <Textarea 
-                placeholder="Procedure notes and details" 
+              <Textarea
+                placeholder="Procedure notes and details"
                 value={tempProcedure.notes || ""}
                 onChange={(e) => setTempProcedure({ ...tempProcedure, notes: e.target.value })}
               />
@@ -3711,8 +3843,8 @@ export function PatientEncounterForm({
               <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
                 Complications
               </label>
-              <Textarea 
-                placeholder="Any complications or adverse events" 
+              <Textarea
+                placeholder="Any complications or adverse events"
                 value={tempProcedure.complications || ""}
                 onChange={(e) => setTempProcedure({ ...tempProcedure, complications: e.target.value })}
               />
@@ -3770,8 +3902,8 @@ export function PatientEncounterForm({
               <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
                 Consumable/Item *
               </label>
-              <Select 
-                onValueChange={(value) => setTempOrder({ ...tempOrder, chargeId: value })} 
+              <Select
+                onValueChange={(value) => setTempOrder({ ...tempOrder, chargeId: value })}
                 value={tempOrder.chargeId || ""}
               >
                 <SelectTrigger>
@@ -3810,8 +3942,8 @@ export function PatientEncounterForm({
               <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
                 Notes
               </label>
-              <Textarea 
-                placeholder="Additional notes about this order" 
+              <Textarea
+                placeholder="Additional notes about this order"
                 value={tempOrder.notes || ""}
                 onChange={(e) => setTempOrder({ ...tempOrder, notes: e.target.value })}
               />
