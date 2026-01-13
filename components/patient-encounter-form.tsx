@@ -892,7 +892,7 @@ export function PatientEncounterForm({
           items,
         }
 
-        //await pharmacyApi.createPrescription(prescriptionData)
+        await pharmacyApi.createPrescription(prescriptionData)
       }
 
       // 3. Create lab test orders if any
@@ -924,39 +924,39 @@ export function PatientEncounterForm({
             })),
           }
 
-          //const createdOrder = await laboratoryApi.createOrder(labOrderData)
-         // createdOrders.push({ order: createdOrder, tests: testList })
+          const createdOrder = await laboratoryApi.createOrder(labOrderData)
+         createdOrders.push({ order: createdOrder, tests: testList })
         }
 
-        // 4. Create invoice for lab tests
-        // const invoiceItems = data.labTests.map((test: any) => {
-        //   const testType = testTypes.find(t => t.testTypeId.toString() === test.testTypeId)
-        //   const testCost = testType?.cost ? parseFloat(testType.cost) : 0
-        //   const testName = testType ? `${testType.testName}${testType.category ? ` (${testType.category})` : ''}` : 'Lab Test'
+        //4. Create invoice for lab tests
+        const invoiceItems = data.labTests.map((test: any) => {
+          const testType = testTypes.find(t => t.testTypeId.toString() === test.testTypeId)
+          const testCost = testType?.cost ? parseFloat(testType.cost) : 0
+          const testName = testType ? `${testType.testName}${testType.category ? ` (${testType.category})` : ''}` : 'Lab Test'
 
-        //   return {
-        //     description: testName,
-        //     quantity: 1,
-        //     unitPrice: testCost,
-        //     totalPrice: testCost,
-        //     chargeId: null, // Lab tests may not have a service charge ID
-        //   }
-        // }).filter(item => item.unitPrice > 0) // Only include tests with a cost
+          return {
+            description: testName,
+            quantity: 1,
+            unitPrice: testCost,
+            totalPrice: testCost,
+            chargeId: null, // Lab tests may not have a service charge ID
+          }
+        }).filter(item => item.unitPrice > 0) // Only include tests with a cost
 
-        // if (invoiceItems.length > 0) {
-        //   const totalAmount = invoiceItems.reduce((sum: number, item: any) => sum + item.totalPrice, 0)
+        if (invoiceItems.length > 0) {
+          const totalAmount = invoiceItems.reduce((sum: number, item: any) => sum + item.totalPrice, 0)
 
-        //   const invoiceData = {
-        //     patientId: parseInt(data.patientId),
-        //     invoiceDate: format(data.encounterDate, 'yyyy-MM-dd'),
-        //     dueDate: format(new Date(data.encounterDate.getTime() + 30 * 24 * 60 * 60 * 1000), 'yyyy-MM-dd'), // 30 days from encounter date
-        //     status: 'pending',
-        //     items: invoiceItems,
-        //     notes: `Lab tests ordered during encounter on ${format(data.encounterDate, 'PPP')}. Order numbers: ${createdOrders.map((o: any) => o.order.orderNumber || o.order.orderId).join(', ')}`,
-        //   }
+          const invoiceData = {
+            patientId: parseInt(data.patientId),
+            invoiceDate: format(data.encounterDate, 'yyyy-MM-dd'),
+            dueDate: format(new Date(data.encounterDate.getTime() + 30 * 24 * 60 * 60 * 1000), 'yyyy-MM-dd'), // 30 days from encounter date
+            status: 'pending',
+            items: invoiceItems,
+            notes: `Lab tests ordered during encounter on ${format(data.encounterDate, 'PPP')}. Order numbers: ${createdOrders.map((o: any) => o.order.orderNumber || o.order.orderId).join(', ')}`,
+          }
 
-        //   await billingApi.createInvoice(invoiceData)
-        // }
+          await billingApi.createInvoice(invoiceData)
+        }
       }
 
       // 4. Create patient procedures if any
@@ -970,7 +970,7 @@ export function PatientEncounterForm({
             notes: procedure.notes || null,
             complications: procedure.complications || null,
           }
-          //return proceduresApi.createPatientProcedure(procedureData)
+           return proceduresApi.createPatientProcedure(procedureData)
         })
         await Promise.all(procedurePromises)
 
@@ -1001,7 +1001,7 @@ export function PatientEncounterForm({
             notes: `Procedures performed during encounter on ${format(data.encounterDate, 'PPP')}.`,
           }
 
-         // await billingApi.createInvoice(invoiceData)
+         await billingApi.createInvoice(invoiceData)
         }
       }
 
