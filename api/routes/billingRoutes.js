@@ -44,7 +44,7 @@ router.get('/charges', async (req, res) => {
         }
 
         query += ' ORDER BY name ASC';
-        
+
         const [rows] = await pool.query(query, params);
         res.status(200).json(rows);
     } catch (error) {
@@ -61,11 +61,11 @@ router.get('/charges/:id', async (req, res) => {
     try {
         const { id } = req.params;
         const [rows] = await pool.query('SELECT * FROM service_charges WHERE chargeId = ?', [id]);
-        
+
         if (rows.length === 0) {
             return res.status(404).json({ message: 'Service charge not found' });
         }
-        
+
         res.status(200).json(rows[0]);
     } catch (error) {
         console.error('Error fetching charge:', error);
@@ -80,7 +80,7 @@ router.get('/charges/:id', async (req, res) => {
 router.post('/charges', async (req, res) => {
     try {
         const { chargeCode, name, category, department, cost, description, status = 'Active', chargeType = 'Service', duration, unit } = req.body;
-        
+
         if (!name || !cost) {
             return res.status(400).json({ error: 'Name and cost are required' });
         }
@@ -91,7 +91,7 @@ router.post('/charges', async (req, res) => {
             // Generate code from name (e.g., "General Consultation" -> "GEN-CONS")
             const codeParts = name.toUpperCase().split(' ').slice(0, 2).map(part => part.substring(0, 3));
             finalChargeCode = codeParts.join('-');
-            
+
             // Ensure uniqueness
             let counter = 1;
             let [existing] = await pool.query('SELECT chargeId FROM service_charges WHERE chargeCode = ?', [finalChargeCode]);
@@ -112,7 +112,7 @@ router.post('/charges', async (req, res) => {
             'INSERT INTO service_charges (chargeCode, name, category, department, cost, description, status, chargeType, duration, unit) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
             [finalChargeCode, name, category || null, department || null, cost, description || null, status, chargeType, duration || null, unit || null]
         );
-        
+
         const [newCharge] = await pool.query('SELECT * FROM service_charges WHERE chargeId = ?', [result.insertId]);
         res.status(201).json(newCharge[0]);
     } catch (error) {
@@ -211,7 +211,7 @@ router.delete('/charges/:id', async (req, res) => {
 
         // Hard delete if not used
         const [result] = await pool.query('DELETE FROM service_charges WHERE chargeId = ?', [id]);
-        
+
         if (result.affectedRows === 0) {
             return res.status(404).json({ message: 'Service charge not found' });
         }
@@ -253,10 +253,10 @@ router.get('/invoices', async (req, res) => {
 router.get('/invoices/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        
+
         // Get invoice
         const [invoices] = await pool.execute(
-            `SELECT i.*, 
+            `SELECT i.*,
                     p.firstName as patientFirstName, p.lastName as patientLastName,
                     p.patientNumber, p.phone as patientPhone
              FROM invoices i
@@ -264,11 +264,11 @@ router.get('/invoices/:id', async (req, res) => {
              WHERE i.invoiceId = ?`,
             [id]
         );
-        
+
         if (invoices.length === 0) {
             return res.status(404).json({ message: 'Invoice not found' });
         }
-        
+
         // Get invoice items
         const [items] = await pool.execute(
             `SELECT ii.*, sc.name as chargeName, sc.chargeCode
@@ -278,7 +278,7 @@ router.get('/invoices/:id', async (req, res) => {
              ORDER BY ii.itemId`,
             [id]
         );
-        
+
         res.status(200).json({
             ...invoices[0],
             items: items
@@ -296,9 +296,9 @@ router.get('/invoices/:id', async (req, res) => {
 router.get('/invoices/patient/:patientId/pending', async (req, res) => {
     try {
         const { patientId } = req.params;
-        
+
         const [invoices] = await pool.execute(
-            `SELECT i.*, 
+            `SELECT i.*,
                     p.firstName as patientFirstName, p.lastName as patientLastName,
                     p.patientNumber
              FROM invoices i
@@ -307,7 +307,7 @@ router.get('/invoices/patient/:patientId/pending', async (req, res) => {
              ORDER BY i.invoiceDate DESC`,
             [patientId]
         );
-        
+
         // Get items for each invoice
         const invoicesWithItems = await Promise.all(invoices.map(async (invoice) => {
             const [items] = await pool.execute(
@@ -323,7 +323,7 @@ router.get('/invoices/patient/:patientId/pending', async (req, res) => {
                 items: items
             };
         }));
-        
+
         res.status(200).json(invoicesWithItems);
     } catch (error) {
         console.error('Error fetching pending invoices:', error);
@@ -353,18 +353,18 @@ router.post('/invoices', async (req, res) => {
         if (!finalInvoiceNumber) {
             const today = new Date().toISOString().split('T')[0].replace(/-/g, '');
             const datePrefix = `INV-${today}-`;
-            
+
             // Get the maximum invoice number for today (extract the numeric part after last dash)
             const [maxResult] = await connection.execute(
-                `SELECT MAX(CAST(SUBSTRING_INDEX(invoiceNumber, '-', -1) AS UNSIGNED)) as maxNum 
-                 FROM invoices 
+                `SELECT MAX(CAST(SUBSTRING_INDEX(invoiceNumber, '-', -1) AS UNSIGNED)) as maxNum
+                 FROM invoices
                  WHERE invoiceNumber LIKE CONCAT(?, '%')`,
                 [datePrefix]
             );
-            
+
             let nextNum = (maxResult[0]?.maxNum || 0) + 1;
             finalInvoiceNumber = `${datePrefix}${String(nextNum).padStart(4, '0')}`;
-            
+
             // Check if this number already exists (safety check for race conditions)
             let attempts = 0;
             while (attempts < 100) {
@@ -372,7 +372,7 @@ router.post('/invoices', async (req, res) => {
                     'SELECT invoiceId FROM invoices WHERE invoiceNumber = ?',
                     [finalInvoiceNumber]
                 );
-                
+
                 if (existing.length === 0) {
                     break; // Number is available
                 }
@@ -381,11 +381,11 @@ router.post('/invoices', async (req, res) => {
                 finalInvoiceNumber = `${datePrefix}${String(nextNum).padStart(4, '0')}`;
                 attempts++;
             }
-            
+
             if (attempts >= 100) {
                 await connection.rollback();
                 connection.release();
-                return res.status(500).json({ 
+                return res.status(500).json({
                     message: 'Failed to generate unique invoice number',
                     error: 'Please try again.'
                 });
@@ -418,26 +418,26 @@ router.post('/invoices', async (req, res) => {
             if (insertError.code === 'ER_DUP_ENTRY' || insertError.errno === 1062) {
                 const today = new Date().toISOString().split('T')[0].replace(/-/g, '');
                 const datePrefix = `INV-${today}-`;
-                
+
                         // Get max number and find next available
                         const [maxResult] = await connection.execute(
-                            `SELECT MAX(CAST(SUBSTRING_INDEX(invoiceNumber, '-', -1) AS UNSIGNED)) as maxNum 
-                             FROM invoices 
+                            `SELECT MAX(CAST(SUBSTRING_INDEX(invoiceNumber, '-', -1) AS UNSIGNED)) as maxNum
+                             FROM invoices
                              WHERE invoiceNumber LIKE CONCAT(?, '%')`,
                             [datePrefix]
                         );
-                
+
                 let retryNum = (maxResult[0]?.maxNum || 0) + 1;
                 let foundAvailable = false;
                 let retryAttempts = 0;
-                
+
                 while (!foundAvailable && retryAttempts < 100) {
                     const testNumber = `${datePrefix}${String(retryNum).padStart(4, '0')}`;
                     const [existing] = await connection.execute(
                         'SELECT invoiceId FROM invoices WHERE invoiceNumber = ?',
                         [testNumber]
                     );
-                    
+
                     if (existing.length === 0) {
                         finalInvoiceNumber = testNumber;
                         foundAvailable = true;
@@ -446,16 +446,16 @@ router.post('/invoices', async (req, res) => {
                         retryAttempts++;
                     }
                 }
-                
+
                 if (!foundAvailable) {
                     await connection.rollback();
                     connection.release();
-                    return res.status(500).json({ 
+                    return res.status(500).json({
                         message: 'Failed to generate unique invoice number',
                         error: 'Please try again.'
                     });
                 }
-                
+
                 // Retry insert with new number
                 [result] = await connection.execute(
                     `INSERT INTO invoices (invoiceNumber, patientId, invoiceDate, dueDate, totalAmount, balance, status, notes, createdBy)
@@ -499,7 +499,7 @@ router.post('/invoices', async (req, res) => {
 
         // Get the created invoice with items
         const [invoices] = await connection.execute(
-            `SELECT i.*, 
+            `SELECT i.*,
                     p.firstName as patientFirstName, p.lastName as patientLastName,
                     p.patientNumber, p.phone as patientPhone
              FROM invoices i
@@ -564,7 +564,7 @@ router.put('/invoices/:id', async (req, res) => {
         if (items && items.length > 0) {
             // Calculate new total
             const totalAmount = items.reduce((sum, item) => sum + (parseFloat(item.totalPrice) || 0), 0);
-            
+
             // Get current paid amount
             const [current] = await connection.execute('SELECT paidAmount FROM invoices WHERE invoiceId = ?', [id]);
             const paidAmount = parseFloat(current[0]?.paidAmount || 0);
@@ -607,7 +607,7 @@ router.put('/invoices/:id', async (req, res) => {
 
         // Get updated invoice
         const [invoices] = await connection.execute(
-            `SELECT i.*, 
+            `SELECT i.*,
                     p.firstName as patientFirstName, p.lastName as patientLastName,
                     p.patientNumber, p.phone as patientPhone
              FROM invoices i
@@ -660,7 +660,7 @@ router.delete('/invoices/:id', async (req, res) => {
 
         // Otherwise, delete it (items will be deleted via CASCADE)
         await pool.execute('DELETE FROM invoices WHERE invoiceId = ?', [id]);
-        
+
         res.status(200).json({ message: 'Invoice deleted successfully' });
     } catch (error) {
         console.error('Error deleting invoice:', error);
@@ -706,7 +706,7 @@ router.post('/invoices/:id/payment', async (req, res) => {
 
         // Update invoice
         await connection.execute(
-            `UPDATE invoices 
+            `UPDATE invoices
             SET paidAmount = ?, balance = ?, status = ?, paymentMethod = ?, updatedAt = NOW()
             WHERE invoiceId = ?`,
             [newPaid, outstanding, newStatus, paymentMethod || invoice.paymentMethod, id]
@@ -721,44 +721,54 @@ router.post('/invoices/:id/payment', async (req, res) => {
                     const prescMatch = invoice.notes.match(/Prescription:\s*([A-Z0-9-]+)/);
                     if (prescMatch && prescMatch[1]) {
                         const prescriptionNumber = prescMatch[1].trim();
-                        
+
                         // Find the prescription
                         const [prescriptions] = await connection.execute(
                             'SELECT prescriptionId, patientId FROM prescriptions WHERE prescriptionNumber = ?',
                             [prescriptionNumber]
                         );
-                        
+
                         if (prescriptions.length > 0) {
                             const prescription = prescriptions[0];
-                            
-                            // Check if pharmacy queue entry already exists for this prescription
-                            const [existingQueue] = await connection.execute(
-                                `SELECT queueId FROM queue_entries 
-                                 WHERE patientId = ? AND servicePoint = 'pharmacy' 
-                                 AND notes LIKE ? AND status NOT IN ('completed', 'cancelled')`,
-                                [prescription.patientId, `%Prescription: ${prescriptionNumber}%`]
+
+                            // Validate that prescription is still pending (not already dispensed)
+                            const [prescriptionStatus] = await connection.execute(
+                                'SELECT status FROM prescriptions WHERE prescriptionId = ?',
+                                [prescription.prescriptionId]
                             );
-                            
-                            if (existingQueue.length === 0) {
-                                // Generate ticket number for pharmacy queue
-                                const [pharmacyCount] = await connection.execute(
-                                    'SELECT COUNT(*) as count FROM queue_entries WHERE DATE(arrivalTime) = CURDATE() AND servicePoint = "pharmacy"'
+
+                            if (prescriptionStatus.length > 0 && prescriptionStatus[0].status === 'pending') {
+                                // Check if pharmacy queue entry already exists for this prescription
+                                const [existingQueue] = await connection.execute(
+                                    `SELECT queueId FROM queue_entries
+                                     WHERE patientId = ? AND servicePoint = 'pharmacy'
+                                     AND notes LIKE ? AND status NOT IN ('completed', 'cancelled')`,
+                                    [prescription.patientId, `%Prescription: ${prescriptionNumber}%`]
                                 );
-                                const pharmacyTicketNum = pharmacyCount[0].count + 1;
-                                const pharmacyTicketNumber = `P-${String(pharmacyTicketNum).padStart(3, '0')}`;
-                                
-                                // Create pharmacy queue entry
-                                await connection.execute(
-                                    `INSERT INTO queue_entries 
-                                    (patientId, ticketNumber, servicePoint, priority, status, notes, createdBy)
-                                    VALUES (?, ?, 'pharmacy', 'normal', 'waiting', ?, ?)`,
-                                    [
-                                        prescription.patientId,
-                                        pharmacyTicketNumber,
-                                        `Prescription: ${prescriptionNumber}`,
-                                        userId || null
-                                    ]
-                                );
+
+                                if (existingQueue.length === 0) {
+                                    // Generate ticket number for pharmacy queue
+                                    const [pharmacyCount] = await connection.execute(
+                                        'SELECT COUNT(*) as count FROM queue_entries WHERE DATE(arrivalTime) = CURDATE() AND servicePoint = "pharmacy"'
+                                    );
+                                    const pharmacyTicketNum = pharmacyCount[0].count + 1;
+                                    const pharmacyTicketNumber = `P-${String(pharmacyTicketNum).padStart(3, '0')}`;
+
+                                    // Create pharmacy queue entry
+                                    await connection.execute(
+                                        `INSERT INTO queue_entries
+                                        (patientId, ticketNumber, servicePoint, priority, status, notes, createdBy)
+                                        VALUES (?, ?, 'pharmacy', 'normal', 'waiting', ?, ?)`,
+                                        [
+                                            prescription.patientId,
+                                            pharmacyTicketNumber,
+                                            `Prescription: ${prescriptionNumber}`,
+                                            userId || null
+                                        ]
+                                    );
+                                }
+                            } else {
+                                console.log(`Prescription ${prescriptionNumber} is not pending (status: ${prescriptionStatus[0]?.status || 'unknown'}) - skipping pharmacy queue addition`);
                             }
                         }
                     }
@@ -767,7 +777,7 @@ router.post('/invoices/:id/payment', async (req, res) => {
                     // Don't fail the payment if pharmacy queue creation fails
                 }
             }
-            
+
             // Check if it's a consultation fee invoice from triage - create consultation queue entry
             if (invoice.notes && invoice.notes.includes('Consultation charge from triage')) {
                 try {
@@ -775,33 +785,33 @@ router.post('/invoices/:id/payment', async (req, res) => {
                     const triageMatch = invoice.notes.match(/triage\s+([A-Z0-9-]+)/i);
                     if (triageMatch && triageMatch[1]) {
                         const triageNumber = triageMatch[1].trim();
-                        
+
                         // Find the triage assessment to get assigned doctor and priority
                         const [triageAssessments] = await connection.execute(
-                            `SELECT triageId, patientId, assignedToDoctorId, assignedToDepartment, 
-                             triageCategory, triagedBy 
-                             FROM triage_assessments 
+                            `SELECT triageId, patientId, assignedToDoctorId, assignedToDepartment,
+                             triageCategory, triagedBy
+                             FROM triage_assessments
                              WHERE triageNumber = ?`,
                             [triageNumber]
                         );
-                        
+
                         if (triageAssessments.length > 0) {
                             const triage = triageAssessments[0];
-                            
+
                             // Determine queue priority based on triage category
                             let queuePriority = 'normal';
                             if (triage.triageCategory === 'red') queuePriority = 'emergency';
                             else if (triage.triageCategory === 'yellow') queuePriority = 'urgent';
-                            
+
                             // Check if consultation queue entry already exists for this patient today
                             const [existingConsultation] = await connection.execute(
-                                `SELECT queueId FROM queue_entries 
-                                 WHERE patientId = ? AND servicePoint = 'consultation' 
-                                 AND DATE(arrivalTime) = CURDATE() 
+                                `SELECT queueId FROM queue_entries
+                                 WHERE patientId = ? AND servicePoint = 'consultation'
+                                 AND DATE(arrivalTime) = CURDATE()
                                  AND status NOT IN ('completed', 'cancelled')`,
                                 [triage.patientId]
                             );
-                            
+
                             if (existingConsultation.length === 0) {
                                 // Generate ticket number for consultation queue
                                 const [consultationCount] = await connection.execute(
@@ -809,10 +819,10 @@ router.post('/invoices/:id/payment', async (req, res) => {
                                 );
                                 const consultationTicketNum = consultationCount[0].count + 1;
                                 const consultationTicketNumber = `CON-${String(consultationTicketNum).padStart(3, '0')}`;
-                                
+
                                 // Create consultation queue entry
                                 await connection.execute(
-                                    `INSERT INTO queue_entries 
+                                    `INSERT INTO queue_entries
                                     (patientId, doctorId, ticketNumber, servicePoint, priority, status, notes, createdBy)
                                     VALUES (?, ?, ?, 'consultation', ?, 'waiting', ?, ?)`,
                                     [
@@ -841,8 +851,8 @@ router.post('/invoices/:id/payment', async (req, res) => {
             // Only consider invoices that require payment (pending or partial status, or balance > 0)
             const [allPatientInvoices] = await connection.execute(
                 `SELECT invoiceId, invoiceNumber, status, balance, totalAmount, paidAmount
-                 FROM invoices 
-                 WHERE patientId = ? 
+                 FROM invoices
+                 WHERE patientId = ?
                    AND status NOT IN ('draft', 'cancelled')`,
                 [invoice.patientId]
             );
@@ -866,10 +876,10 @@ router.post('/invoices/:id/payment', async (req, res) => {
             if (allPatientInvoices.length > 0 && allInvoicesPaid) {
                 // Find all active cashier queue entries for this patient
                 const [cashierQueues] = await connection.execute(
-                    `SELECT queueId, ticketNumber, status 
-                     FROM queue_entries 
-                     WHERE patientId = ? 
-                       AND servicePoint = 'cashier' 
+                    `SELECT queueId, ticketNumber, status
+                     FROM queue_entries
+                     WHERE patientId = ?
+                       AND servicePoint = 'cashier'
                        AND status NOT IN ('completed', 'cancelled')`,
                     [invoice.patientId]
                 );
@@ -879,8 +889,8 @@ router.post('/invoices/:id/payment', async (req, res) => {
                     for (const queueEntry of cashierQueues) {
                         try {
                             await connection.execute(
-                                `UPDATE queue_entries 
-                                 SET status = 'completed', endTime = NOW(), updatedAt = NOW() 
+                                `UPDATE queue_entries
+                                 SET status = 'completed', endTime = NOW(), updatedAt = NOW()
                                  WHERE queueId = ?`,
                                 [queueEntry.queueId]
                             );
@@ -901,7 +911,7 @@ router.post('/invoices/:id/payment', async (req, res) => {
 
         // Get updated invoice
         const [updated] = await connection.execute(
-            `SELECT i.*, 
+            `SELECT i.*,
                     p.firstName as patientFirstName, p.lastName as patientLastName,
                     p.patientNumber, p.phone as patientPhone
              FROM invoices i
@@ -939,7 +949,7 @@ router.post('/invoices/:id/payment', async (req, res) => {
 router.get('/invoices/stats/summary', async (req, res) => {
     try {
         const [stats] = await pool.execute(`
-            SELECT 
+            SELECT
                 COUNT(*) as totalInvoices,
                 SUM(CASE WHEN status = 'pending' THEN totalAmount ELSE 0 END) as pendingAmount,
                 SUM(CASE WHEN status = 'paid' THEN totalAmount ELSE 0 END) as paidAmount,
@@ -952,7 +962,7 @@ router.get('/invoices/stats/summary', async (req, res) => {
             FROM invoices
             WHERE status != 'cancelled'
         `);
-        
+
         res.status(200).json(stats[0] || {
             totalInvoices: 0,
             pendingAmount: 0,
@@ -981,8 +991,8 @@ router.get('/mobile-payment-logs', async (req, res) => {
         const offset = (parseInt(page) - 1) * parseInt(limit);
 
         let query = `
-            SELECT mpl.*, 
-                   u.firstName as createdByFirstName, 
+            SELECT mpl.*,
+                   u.firstName as createdByFirstName,
                    u.lastName as createdByLastName
             FROM mobile_payment_logs mpl
             LEFT JOIN users u ON mpl.createdBy = u.userId
@@ -1066,8 +1076,8 @@ router.get('/mobile-payment-logs/:id', async (req, res) => {
     try {
         const { id } = req.params;
         const [rows] = await pool.execute(
-            `SELECT mpl.*, 
-                    u.firstName as createdByFirstName, 
+            `SELECT mpl.*,
+                    u.firstName as createdByFirstName,
                     u.lastName as createdByLastName
              FROM mobile_payment_logs mpl
              LEFT JOIN users u ON mpl.createdBy = u.userId
@@ -1110,7 +1120,7 @@ router.post('/mobile-payment-logs', async (req, res) => {
         }
 
         const [result] = await pool.execute(
-            `INSERT INTO mobile_payment_logs 
+            `INSERT INTO mobile_payment_logs
              (name, amount, refNo, phoneNumber, mobileProvider, accountNumber, transactionDate, notes, createdBy)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
@@ -1127,8 +1137,8 @@ router.post('/mobile-payment-logs', async (req, res) => {
         );
 
         const [newLog] = await pool.execute(
-            `SELECT mpl.*, 
-                    u.firstName as createdByFirstName, 
+            `SELECT mpl.*,
+                    u.firstName as createdByFirstName,
                     u.lastName as createdByLastName
              FROM mobile_payment_logs mpl
              LEFT JOIN users u ON mpl.createdBy = u.userId
@@ -1201,8 +1211,8 @@ router.put('/mobile-payment-logs/:id', async (req, res) => {
         );
 
         const [updated] = await pool.execute(
-            `SELECT mpl.*, 
-                    u.firstName as createdByFirstName, 
+            `SELECT mpl.*,
+                    u.firstName as createdByFirstName,
                     u.lastName as createdByLastName
              FROM mobile_payment_logs mpl
              LEFT JOIN users u ON mpl.createdBy = u.userId
@@ -1240,7 +1250,7 @@ router.delete('/mobile-payment-logs/:id', async (req, res) => {
 
         await pool.execute('DELETE FROM mobile_payment_logs WHERE logId = ?', [id]);
 
-        res.status(200).json({ 
+        res.status(200).json({
             message: 'Mobile payment log deleted successfully',
             logId: id
         });
@@ -1286,7 +1296,7 @@ router.get('/specialist-charges', async (req, res) => {
         }
 
         query += ' ORDER BY sc.effectiveFrom DESC, sc.createdAt DESC';
-        
+
         const [rows] = await pool.query(query, params);
         res.status(200).json(rows);
     } catch (error) {
@@ -1311,11 +1321,11 @@ router.get('/specialist-charges/:id', async (req, res) => {
             LEFT JOIN users u ON sc.doctorId = u.userId
             WHERE sc.specialistChargeId = ?
         `, [id]);
-        
+
         if (rows.length === 0) {
             return res.status(404).json({ message: 'Specialist charge not found' });
         }
-        
+
         res.status(200).json(rows[0]);
     } catch (error) {
         console.error('Error fetching specialist charge:', error);
@@ -1330,7 +1340,7 @@ router.get('/specialist-charges/:id', async (req, res) => {
 router.post('/specialist-charges', async (req, res) => {
     try {
         const { chargeId, doctorId, amount, effectiveFrom, effectiveTo } = req.body;
-        
+
         if (!chargeId || !doctorId || !amount || !effectiveFrom) {
             return res.status(400).json({ error: 'Charge, doctor, amount, and effectiveFrom date are required' });
         }
@@ -1351,7 +1361,7 @@ router.post('/specialist-charges', async (req, res) => {
             'INSERT INTO specialist_charges (chargeId, doctorId, amount, effectiveFrom, effectiveTo) VALUES (?, ?, ?, ?, ?)',
             [chargeId, doctorId, amount, effectiveFrom, effectiveTo || null]
         );
-        
+
         const [newCharge] = await pool.query(`
             SELECT sc.*,
                    ch.chargeCode, ch.name as chargeName,
@@ -1361,7 +1371,7 @@ router.post('/specialist-charges', async (req, res) => {
             LEFT JOIN users u ON sc.doctorId = u.userId
             WHERE sc.specialistChargeId = ?
         `, [result.insertId]);
-        
+
         res.status(201).json(newCharge[0]);
     } catch (error) {
         console.error('Error creating specialist charge:', error);
@@ -1429,7 +1439,7 @@ router.put('/specialist-charges/:id', async (req, res) => {
             LEFT JOIN users u ON sc.doctorId = u.userId
             WHERE sc.specialistChargeId = ?
         `, [id]);
-        
+
         res.status(200).json(updated[0]);
     } catch (error) {
         console.error('Error updating specialist charge:', error);
@@ -1446,7 +1456,7 @@ router.delete('/specialist-charges/:id', async (req, res) => {
         const { id } = req.params;
 
         const [result] = await pool.query('DELETE FROM specialist_charges WHERE specialistChargeId = ?', [id]);
-        
+
         if (result.affectedRows === 0) {
             return res.status(404).json({ message: 'Specialist charge not found' });
         }
@@ -1487,7 +1497,7 @@ router.get('/consumables-charges', async (req, res) => {
         }
 
         query += ' ORDER BY cc.effectiveFrom DESC, cc.createdAt DESC';
-        
+
         const [rows] = await pool.query(query, params);
         res.status(200).json(rows);
     } catch (error) {
@@ -1510,11 +1520,11 @@ router.get('/consumables-charges/:id', async (req, res) => {
             LEFT JOIN service_charges ch ON cc.chargeId = ch.chargeId
             WHERE cc.consumableChargeId = ?
         `, [id]);
-        
+
         if (rows.length === 0) {
             return res.status(404).json({ message: 'Consumables charge not found' });
         }
-        
+
         res.status(200).json(rows[0]);
     } catch (error) {
         console.error('Error fetching consumables charge:', error);
@@ -1529,7 +1539,7 @@ router.get('/consumables-charges/:id', async (req, res) => {
 router.post('/consumables-charges', async (req, res) => {
     try {
         const { chargeId, amount, effectiveFrom, effectiveTo } = req.body;
-        
+
         if (!chargeId || !amount || !effectiveFrom) {
             return res.status(400).json({ error: 'Charge, amount, and effectiveFrom date are required' });
         }
@@ -1544,7 +1554,7 @@ router.post('/consumables-charges', async (req, res) => {
             'INSERT INTO consumables_charges (chargeId, amount, effectiveFrom, effectiveTo) VALUES (?, ?, ?, ?)',
             [chargeId, amount, effectiveFrom, effectiveTo || null]
         );
-        
+
         const [newCharge] = await pool.query(`
             SELECT cc.*,
                    ch.chargeCode, ch.name as chargeName
@@ -1552,7 +1562,7 @@ router.post('/consumables-charges', async (req, res) => {
             LEFT JOIN service_charges ch ON cc.chargeId = ch.chargeId
             WHERE cc.consumableChargeId = ?
         `, [result.insertId]);
-        
+
         res.status(201).json(newCharge[0]);
     } catch (error) {
         console.error('Error creating consumables charge:', error);
@@ -1609,7 +1619,7 @@ router.put('/consumables-charges/:id', async (req, res) => {
             LEFT JOIN service_charges ch ON cc.chargeId = ch.chargeId
             WHERE cc.consumableChargeId = ?
         `, [id]);
-        
+
         res.status(200).json(updated[0]);
     } catch (error) {
         console.error('Error updating consumables charge:', error);
@@ -1626,7 +1636,7 @@ router.delete('/consumables-charges/:id', async (req, res) => {
         const { id } = req.params;
 
         const [result] = await pool.query('DELETE FROM consumables_charges WHERE consumableChargeId = ?', [id]);
-        
+
         if (result.affectedRows === 0) {
             return res.status(404).json({ message: 'Consumables charge not found' });
         }

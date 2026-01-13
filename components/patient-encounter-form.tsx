@@ -20,7 +20,8 @@ import {
   Clock,
   Eye,
   Activity,
-  Stethoscope
+  Stethoscope,
+  User
 } from "lucide-react"
 import { format } from "date-fns"
 
@@ -68,10 +69,11 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { patientApi, doctorsApi, pharmacyApi, laboratoryApi, medicalRecordsApi, billingApi, proceduresApi, serviceChargeApi, appointmentsApi } from "@/lib/api"
+import { patientApi, doctorsApi, pharmacyApi, laboratoryApi, medicalRecordsApi, billingApi, proceduresApi, serviceChargeApi, appointmentsApi, queueApi } from "@/lib/api"
 import { useCriticalNotifications } from "@/lib/critical-notifications-context"
 import { checkAndNotifyCriticalVitals } from "@/lib/critical-vitals-utils"
 import { toast } from "@/components/ui/use-toast"
+import { useAuth } from "@/lib/auth/auth-context"
 
 const DRAFT_TTL_MS = 24 * 60 * 60 * 1000 // 24 hours
 
@@ -91,6 +93,7 @@ const medicationSchema = z.object({
   }),
   quantity: z.string().optional(),
   instructions: z.string().optional(),
+  alreadySaved: z.boolean().optional(), // Track if already saved
 })
 
 const labTestSchema = z.object({
@@ -99,6 +102,7 @@ const labTestSchema = z.object({
   }),
   priority: z.enum(["routine", "urgent", "stat"]).default("routine"),
   clinicalIndication: z.string().optional(),
+  alreadySaved: z.boolean().optional(), // Track if already saved
 })
 
 const procedureSchema = z.object({
@@ -107,6 +111,7 @@ const procedureSchema = z.object({
   }),
   notes: z.string().optional(),
   complications: z.string().optional(),
+  alreadySaved: z.boolean().optional(), // Track if already saved
 })
 
 const orderSchema = z.object({
@@ -117,6 +122,7 @@ const orderSchema = z.object({
     message: "Quantity must be at least 1.",
   }),
   notes: z.string().optional(),
+  alreadySaved: z.boolean().optional(), // Track if already saved
 })
 
 const encounterFormSchema = z.object({
@@ -204,11 +210,13 @@ export function PatientEncounterForm({
   initialPatientId,
   initialDoctorId
 }: PatientEncounterFormProps) {
+  const { user } = useAuth()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [doctors, setDoctors] = useState<any[]>([])
   const [testTypes, setTestTypes] = useState<any[]>([])
   const [medications, setMedications] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
+  const [isLoadingData, setIsLoadingData] = useState(false) // Prevent multiple simultaneous loads
   const [error, setError] = useState<string | null>(null)
   const [selectedMedicationsInventory, setSelectedMedicationsInventory] = useState<Record<number, { totalQuantity: number; hasStock: boolean; sellPrice: number | null }>>({})
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
@@ -235,6 +243,58 @@ export function PatientEncounterForm({
   const [editingMedicationIndex, setEditingMedicationIndex] = useState<number | null>(null)
   const [addMedicationDialogOpen, setAddMedicationDialogOpen] = useState(false)
   const [tempMedication, setTempMedication] = useState<MedicationValues>(defaultMedication)
+  const [isQuantityManuallyEdited, setIsQuantityManuallyEdited] = useState(false)
+
+  // Helper function to extract numeric value from text
+  const extractNumber = (text: string): number => {
+    if (!text) return 0
+    // Match first number in the string (including decimals)
+    const match = text.match(/(\d+\.?\d*)/)
+    return match ? parseFloat(match[1]) : 0
+  }
+
+  // Auto-calculate quantity based on dosage, frequency, and duration
+  useEffect(() => {
+    if (isQuantityManuallyEdited || !addMedicationDialogOpen) return
+
+    const dosage = extractNumber(tempMedication.dosage || "")
+    const frequencyText = (tempMedication.frequency || "").toLowerCase()
+    const duration = extractNumber(tempMedication.duration || "")
+
+    // Extract frequency - handle common patterns
+    let frequency = extractNumber(tempMedication.frequency || "")
+    if (frequency === 0) {
+      // Try to parse common frequency patterns
+      if (frequencyText.includes("once") || frequencyText.includes("1x")) frequency = 1
+      else if (frequencyText.includes("twice") || frequencyText.includes("2x")) frequency = 2
+      else if (frequencyText.includes("three") || frequencyText.includes("thrice") || frequencyText.includes("3x")) frequency = 3
+      else if (frequencyText.includes("four") || frequencyText.includes("4x")) frequency = 4
+      else if (frequencyText.includes("five") || frequencyText.includes("5x")) frequency = 5
+      else if (frequencyText.includes("six") || frequencyText.includes("6x")) frequency = 6
+    }
+
+    // Calculate quantity: dosage * frequency * duration
+    if (dosage > 0 && frequency > 0 && duration > 0) {
+      const calculatedQuantity = Math.ceil(dosage * frequency * duration)
+      setTempMedication(prev => ({
+        ...prev,
+        quantity: calculatedQuantity.toString()
+      }))
+    } else if (dosage === 0 || frequency === 0 || duration === 0) {
+      // Clear quantity if any required field is empty
+      setTempMedication(prev => ({
+        ...prev,
+        quantity: prev.quantity || ""
+      }))
+    }
+  }, [tempMedication.dosage, tempMedication.frequency, tempMedication.duration, addMedicationDialogOpen, isQuantityManuallyEdited])
+
+  // Reset manual edit flag when dialog opens/closes
+  useEffect(() => {
+    if (addMedicationDialogOpen) {
+      setIsQuantityManuallyEdited(false)
+    }
+  }, [addMedicationDialogOpen])
 
   // Patient data state
   const [patientData, setPatientData] = useState<any>(null)
@@ -317,6 +377,15 @@ export function PatientEncounterForm({
     }
   }, [open, patientId, notifications])
 
+  // Reset loading state when dialog closes
+  useEffect(() => {
+    if (!open) {
+      setLoading(false)
+      setIsLoadingData(false)
+      setError(null)
+    }
+  }, [open])
+
   // Load saved draft when form opens
   useEffect(() => {
     if (open) {
@@ -351,9 +420,21 @@ export function PatientEncounterForm({
         form.reset(savedDraft)
         setHasUnsavedChanges(true)
       } else {
+        // Auto-fill doctor with logged-in user if not set and user is a doctor
+        let doctorId = initialDoctorId || ""
+        if (!doctorId && user?.id && doctors.length > 0) {
+          const currentUserAsDoctor = doctors.find((doctor: any) =>
+            doctor.userId?.toString() === user.id.toString() ||
+            doctor.id?.toString() === user.id.toString()
+          )
+          if (currentUserAsDoctor) {
+            doctorId = currentUserAsDoctor.userId?.toString() || currentUserAsDoctor.id?.toString() || ""
+          }
+        }
+
         form.reset({
           patientId: initialPatientId || "",
-          doctorId: initialDoctorId || "",
+          doctorId: doctorId,
           encounterDate: new Date(new Date().setHours(0, 0, 0, 0)), // Today's date at midnight
           visitType: "Outpatient",
           department: "",
@@ -374,7 +455,7 @@ export function PatientEncounterForm({
       }
       setError(null)
     }
-  }, [open, form, initialPatientId, initialDoctorId])
+  }, [open, form, initialPatientId, initialDoctorId, user, doctors])
 
   // Auto-save form data to localStorage
   useEffect(() => {
@@ -436,10 +517,22 @@ export function PatientEncounterForm({
   if (!open) return
   if (!patientId) return
 
+  // Auto-fill doctor with logged-in user if not provided and user is a doctor
+  let doctorId = initialDoctorId || ""
+  if (!doctorId && user?.id && doctors.length > 0) {
+    const currentUserAsDoctor = doctors.find((doctor: any) =>
+      doctor.userId?.toString() === user.id.toString() ||
+      doctor.id?.toString() === user.id.toString()
+    )
+    if (currentUserAsDoctor) {
+      doctorId = currentUserAsDoctor.userId?.toString() || currentUserAsDoctor.id?.toString() || ""
+    }
+  }
+
   // Reset form when switching patients
   form.reset({
     patientId,
-    doctorId: initialDoctorId || "",
+    doctorId: doctorId,
     encounterDate: new Date(new Date().setHours(0, 0, 0, 0)),
     visitType: "Outpatient",
     medications: [],
@@ -449,7 +542,7 @@ export function PatientEncounterForm({
   })
 
   setHasUnsavedChanges(false)
-}, [patientId])
+}, [patientId, initialDoctorId, user, doctors, form])
 
 
   // Populate form with today's encounter data when patient data is loaded
@@ -544,6 +637,7 @@ export function PatientEncounterForm({
               testTypeId: item.testTypeId?.toString() || item.testType?.testTypeId?.toString() || "",
               priority: order.priority || "routine",
               clinicalIndication: item.notes || item.clinicalIndication || "",
+              alreadySaved: true, // Mark as already saved since it's from existing order
             })
           })
         })
@@ -575,6 +669,7 @@ export function PatientEncounterForm({
               duration: item.duration || "",
               quantity: item.quantity?.toString() || "",
               instructions: item.instructions || "",
+              alreadySaved: true, // Mark as already saved since it's from existing prescription
             })
           })
         })
@@ -604,6 +699,7 @@ export function PatientEncounterForm({
               procedureId: procedure.procedureId?.toString() || "",
               notes: procedure.notes || "",
               complications: procedure.complications || "",
+              alreadySaved: true, // Mark as already saved since it's from existing procedure
             })
           }
         })
@@ -635,6 +731,7 @@ export function PatientEncounterForm({
                 chargeId: item.chargeId?.toString() || "",
                 quantity: item.quantity || 1,
                 notes: item.notes || "",
+                alreadySaved: true, // Mark as already saved since it's from existing invoice
               })
             }
           })
@@ -651,7 +748,22 @@ export function PatientEncounterForm({
   }, [patientLabResults, patientMedications, patientProcedures, patientOrders, patientHistory, open, patientId, appendLabTest, appendMedication, appendProcedure, appendOrder, form, procedures, consumables])
 
   const loadData = async () => {
+    // Prevent multiple simultaneous calls
+    if (isLoadingData) {
+      console.log('loadData already in progress, skipping...')
+      return
+    }
+
+    // Add timeout to prevent infinite loading
+    const timeoutId = setTimeout(() => {
+      console.warn('loadData is taking too long, clearing loading state')
+      setLoading(false)
+      setIsLoadingData(false)
+      setError('Loading is taking longer than expected. Please try again.')
+    }, 30000) // 30 second timeout
+
     try {
+      setIsLoadingData(true)
       setLoading(true)
       setError(null)
       const [doctorsData, testTypesData, medicationsData, proceduresData, consumablesData] = await Promise.all([
@@ -661,17 +773,52 @@ export function PatientEncounterForm({
         proceduresApi.getAll(undefined, undefined, true), // Get active procedures
         serviceChargeApi.getAll(undefined, undefined, undefined, undefined, 'Consumable'), // Get consumables
       ])
+
+      // Clear timeout if data loads successfully
+      clearTimeout(timeoutId)
       setDoctors(doctorsData)
       setTestTypes(testTypesData)
       setMedications(medicationsData)
       setProcedures(proceduresData || [])
       setConsumables(consumablesData || [])
-      await loadInventoryData()
+
+      // Auto-fill doctor field with logged-in user if they are a doctor
+      // Do this in a try-catch to prevent form.setValue from blocking loading state
+      try {
+        if (user?.id && doctorsData.length > 0 && !initialDoctorId) {
+          const currentUserAsDoctor = doctorsData.find((doctor: any) =>
+            doctor.userId?.toString() === user.id.toString() ||
+            doctor.id?.toString() === user.id.toString()
+          )
+
+          if (currentUserAsDoctor) {
+            const doctorId = currentUserAsDoctor.userId?.toString() || currentUserAsDoctor.id?.toString()
+            if (doctorId) {
+              form.setValue('doctorId', doctorId)
+              console.log('✅ Auto-filled doctor field with logged-in user:', user.name || user.username)
+            }
+          }
+        }
+      } catch (formError) {
+        console.error('Error auto-filling doctor field:', formError)
+        // Don't block loading state if form.setValue fails
+      }
+
+      // Load inventory data in background (non-blocking)
+      // Don't await it so it doesn't block the main loading indicator
+      loadInventoryData().catch((error) => {
+        console.error("Error loading inventory data (non-blocking):", error)
+        // Don't set error state for inventory loading failures as it's not critical
+      })
     } catch (err: any) {
+      clearTimeout(timeoutId)
       setError(err.message || 'Failed to load data')
       console.error('Error loading form data:', err)
     } finally {
+      // Always clear loading state, even if there was an error
+      clearTimeout(timeoutId)
       setLoading(false)
+      setIsLoadingData(false)
     }
   }
 
@@ -866,9 +1013,10 @@ export function PatientEncounterForm({
 
       const medicalRecord = await medicalRecordsApi.create(medicalRecordData)
 
-      // 2. Create prescription if medications exist
-      if (data.medications && data.medications.length > 0) {
-        const items = data.medications.map((med) => {
+      // 2. Create prescription if medications exist (only unsaved ones)
+      const unsavedMedications = data.medications?.filter((med: any) => !med.alreadySaved) || []
+      if (unsavedMedications.length > 0) {
+        const items = unsavedMedications.map((med) => {
           const medId = parseInt(med.medicationId)
           const inventoryStatus = getInventoryStatus(medId)
           const quantity = (inventoryStatus?.hasStock && med.quantity) ? parseInt(med.quantity) : null
@@ -895,10 +1043,11 @@ export function PatientEncounterForm({
         await pharmacyApi.createPrescription(prescriptionData)
       }
 
-      // 3. Create lab test orders if any
-      if (data.labTests && data.labTests.length > 0) {
+      // 3. Create lab test orders if any (only unsaved ones)
+      const unsavedLabTests = data.labTests?.filter((test: any) => !test.alreadySaved) || []
+      if (unsavedLabTests.length > 0) {
         // Group tests by priority - create one order per priority level
-        const testsByPriority = data.labTests.reduce((acc: any, test: any) => {
+        const testsByPriority = unsavedLabTests.reduce((acc: any, test: any) => {
           const priority = test.priority || 'routine'
           if (!acc[priority]) {
             acc[priority] = []
@@ -925,43 +1074,16 @@ export function PatientEncounterForm({
           }
 
           const createdOrder = await laboratoryApi.createOrder(labOrderData)
-         createdOrders.push({ order: createdOrder, tests: testList })
+          createdOrders.push({ order: createdOrder, tests: testList })
         }
-
-        //4. Create invoice for lab tests
-        const invoiceItems = data.labTests.map((test: any) => {
-          const testType = testTypes.find(t => t.testTypeId.toString() === test.testTypeId)
-          const testCost = testType?.cost ? parseFloat(testType.cost) : 0
-          const testName = testType ? `${testType.testName}${testType.category ? ` (${testType.category})` : ''}` : 'Lab Test'
-
-          return {
-            description: testName,
-            quantity: 1,
-            unitPrice: testCost,
-            totalPrice: testCost,
-            chargeId: null, // Lab tests may not have a service charge ID
-          }
-        }).filter(item => item.unitPrice > 0) // Only include tests with a cost
-
-        if (invoiceItems.length > 0) {
-          const totalAmount = invoiceItems.reduce((sum: number, item: any) => sum + item.totalPrice, 0)
-
-          const invoiceData = {
-            patientId: parseInt(data.patientId),
-            invoiceDate: format(data.encounterDate, 'yyyy-MM-dd'),
-            dueDate: format(new Date(data.encounterDate.getTime() + 30 * 24 * 60 * 60 * 1000), 'yyyy-MM-dd'), // 30 days from encounter date
-            status: 'pending',
-            items: invoiceItems,
-            notes: `Lab tests ordered during encounter on ${format(data.encounterDate, 'PPP')}. Order numbers: ${createdOrders.map((o: any) => o.order.orderNumber || o.order.orderId).join(', ')}`,
-          }
-
-          await billingApi.createInvoice(invoiceData)
-        }
+        // Note: Invoice creation and cashier queue addition are handled automatically by the API route
+        // No need to create invoice here - it's done in api/routes/laboratoryRoutes.js
       }
 
-      // 4. Create patient procedures if any
-      if (data.procedures && data.procedures.length > 0) {
-        const procedurePromises = data.procedures.map((procedure: any) => {
+      // 4. Create patient procedures if any (only unsaved ones)
+      const unsavedProcedures = data.procedures?.filter((proc: any) => !proc.alreadySaved) || []
+      if (unsavedProcedures.length > 0) {
+        const procedurePromises = unsavedProcedures.map((procedure: any) => {
           const procedureData = {
             patientId: parseInt(data.patientId),
             procedureId: parseInt(procedure.procedureId),
@@ -973,41 +1095,14 @@ export function PatientEncounterForm({
            return proceduresApi.createPatientProcedure(procedureData)
         })
         await Promise.all(procedurePromises)
-
-        // Create invoice items for procedures
-        const procedureInvoiceItems = data.procedures.map((procedure: any) => {
-          const proc = procedures.find((p: any) => p.procedureId?.toString() === procedure.procedureId)
-          const procedureCost = proc?.cost ? parseFloat(proc.cost) : (proc?.chargeCost ? parseFloat(proc.chargeCost) : 0)
-          const procedureName = proc?.procedureName || 'Procedure'
-
-          return {
-            description: procedureName,
-            quantity: 1,
-            unitPrice: procedureCost,
-            totalPrice: procedureCost,
-            chargeId: proc?.chargeId || null,
-          }
-        }).filter(item => item.unitPrice > 0)
-
-        if (procedureInvoiceItems.length > 0) {
-          const totalAmount = procedureInvoiceItems.reduce((sum: number, item: any) => sum + item.totalPrice, 0)
-
-          const invoiceData = {
-            patientId: parseInt(data.patientId),
-            invoiceDate: format(data.encounterDate, 'yyyy-MM-dd'),
-            dueDate: format(new Date(data.encounterDate.getTime() + 30 * 24 * 60 * 60 * 1000), 'yyyy-MM-dd'),
-            status: 'pending',
-            items: procedureInvoiceItems,
-            notes: `Procedures performed during encounter on ${format(data.encounterDate, 'PPP')}.`,
-          }
-
-         await billingApi.createInvoice(invoiceData)
-        }
+        // Note: Invoice creation and cashier queue addition are handled automatically by the API route
+        // No need to create invoice here - it's done in api/routes/proceduresRoutes.js
       }
 
-      // 5. Create orders/consumables invoice if any
-      if (data.orders && data.orders.length > 0) {
-        const orderInvoiceItems = data.orders.map((order: any) => {
+      // 5. Create orders/consumables invoice if any (only unsaved ones)
+      const unsavedOrders = data.orders?.filter((order: any) => !order.alreadySaved) || []
+      if (unsavedOrders.length > 0) {
+        const orderInvoiceItems = unsavedOrders.map((order: any) => {
           const consumable = consumables.find((c: any) => c.chargeId?.toString() === order.chargeId)
           const unitPrice = consumable?.cost ? parseFloat(consumable.cost) : 0
           const quantity = order.quantity || 1
@@ -1035,7 +1130,21 @@ export function PatientEncounterForm({
             notes: `Consumables ordered during encounter on ${format(data.encounterDate, 'PPP')}.`,
           }
 
-        //  await billingApi.createInvoice(invoiceData)
+          await billingApi.createInvoice(invoiceData)
+
+          // Add patient to cashier queue for consumables payment (check for duplicates first)
+          try {
+            await queueApi.create({
+              patientId: parseInt(data.patientId),
+              servicePoint: 'cashier',
+              priority: 'normal',
+              notes: `Consumables payment - Encounter: ${format(data.encounterDate, 'PPP')}`
+            })
+          } catch (queueError: any) {
+            // Queue API already handles duplicate checking, so if it fails it's likely a duplicate
+            // Don't fail the encounter save if queue addition fails
+            console.log('Queue entry for consumables:', queueError?.response?.isDuplicate ? 'Patient already in queue' : queueError.message)
+          }
         }
       }
 
@@ -1387,11 +1496,18 @@ const clearDraftFromStorage = (patientId:any) => {
 
   const isMedicationAlreadyAdded = (medicationId: string) => {
     if (!medicationId) return false
+
+    // Check if medication is already in the current form
     const currentMeds = form.watch("medications") || []
-    return currentMeds.some((med: any, index: number) =>
+    const isInCurrentForm = currentMeds.some((med: any, index: number) =>
       med.medicationId === medicationId &&
       (editingMedicationIndex === null || index !== editingMedicationIndex)
     )
+
+    if (isInCurrentForm) return true
+
+    // Also check if patient has a pending prescription for this medication
+    return isMedicationAlreadyPrescribed(medicationId)
   }
 
   const getAvailableMedications = () => {
@@ -1437,25 +1553,64 @@ const clearDraftFromStorage = (patientId:any) => {
 
     if (isInCurrentForm) return true
 
-    // Check if patient has a pending order for this test type
-    // Note: This checks patientLabResults which may not have items populated
-    // For more accurate checking, we'd need to enhance the API to include items in list responses
+    // Check if patient has an existing order for this test type that hasn't been resulted yet
+    // Only block if the test has not been completed or has no results
     if (patientId && patientLabResults.length > 0) {
-      const hasPendingTest = patientLabResults.some((order: any) => {
-        // Check if order is pending/in-progress and contains this test type
-        const isPending = order.status === 'pending' ||
-                         order.status === 'sample_collected' ||
-                         order.status === 'in_progress'
-
-        if (isPending && order.items && order.items.length > 0) {
-          return order.items.some((item: any) =>
+      const hasUnresultedTest = patientLabResults.some((order: any) => {
+        // Check if order contains this test type
+        if (order.items && order.items.length > 0) {
+          const testItem = order.items.find((item: any) =>
             item.testTypeId?.toString() === testTypeId ||
             item.testType?.testTypeId?.toString() === testTypeId
           )
+
+          if (testItem) {
+            // Check if test is still pending/in-progress (not resulted)
+            const isNotResulted = order.status === 'pending' ||
+                                 order.status === 'sample_collected' ||
+                                 order.status === 'in_progress'
+
+            // If test is completed, check if it has results
+            if (order.status === 'completed') {
+              // Check if test item has results
+              const hasResults = testItem.results && testItem.results.length > 0
+              // Only block if completed but no results yet
+              return !hasResults
+            }
+
+            // Block if pending/in-progress (no results yet)
+            return isNotResulted
+          }
         }
         return false
       })
-      return hasPendingTest
+      return hasUnresultedTest
+    }
+
+    return false
+  }
+
+  const isMedicationAlreadyPrescribed = (medicationId: string) => {
+    if (!medicationId || !patientId) return false
+
+    // Check if patient has a pending/non-dispensed prescription for this medication
+    if (patientMedications.length > 0) {
+      const hasPendingPrescription = patientMedications.some((prescription: any) => {
+        // Check if prescription is pending (not dispensed)
+        const isPending = prescription.status === 'pending' || prescription.status === 'active'
+
+        if (isPending && prescription.items && prescription.items.length > 0) {
+          // Check if any item in this prescription matches the medication
+          return prescription.items.some((item: any) => {
+            const itemMedicationId = item.medicationId?.toString() || item.medication?.medicationId?.toString()
+            // Also check if item is not yet dispensed
+            const isNotDispensed = item.status === 'pending' || !item.dispensed
+            return itemMedicationId === medicationId && isNotDispensed
+          })
+        }
+        return false
+      })
+      return hasPendingPrescription
     }
 
     return false
@@ -1688,12 +1843,173 @@ const clearDraftFromStorage = (patientId:any) => {
     <>
       <Dialog open={open} onOpenChange={handleDialogClose}>
         <DialogContent className="sm:max-w-[95vw] max-w-[95vw] h-[95vh] max-h-[95vh] overflow-hidden flex flex-col p-0">
-          <DialogHeader className="px-6 pt-6 pb-4 border-b flex-shrink-0">
-            <DialogTitle className="text-2xl">Patient Encounter</DialogTitle>
-            <DialogDescription>
-              Comprehensive patient consultation, documentation, and treatment planning
-            </DialogDescription>
-          </DialogHeader>
+          <Form {...form}>
+            <form onSubmit={form.handleSubmit(onSubmit)} className="flex-1 flex flex-col overflow-hidden min-h-0">
+              {/* Combined Compact Header - Title, Patient Info, Visit Type/Dept, Date, Doctor */}
+              <div className="px-4 py-2 border-b bg-primary/5 flex-shrink-0 sticky top-0 z-10">
+                <div className="flex items-center justify-between gap-3">
+                  {/* Left: Title and Patient Info */}
+                  <div className="flex items-center gap-3 flex-1 min-w-0">
+                    {(() => {
+                      const visitType = form.watch("visitType") || "Outpatient"
+                      const encounterTitle = visitType === "Inpatient"
+                        ? "Inpatient Encounter"
+                        : visitType === "Emergency"
+                        ? "Emergency Encounter"
+                        : "Patient Encounter"
+                      return (
+                        <div className="font-semibold text-sm text-foreground/80 whitespace-nowrap">{encounterTitle}</div>
+                      )
+                    })()}
+                    {patientId && patientData ? (
+                      <>
+                        <Separator orientation="vertical" className="h-4" />
+                        <div className="rounded-full bg-primary/10 p-1 flex-shrink-0">
+                          <User className="h-3.5 w-3.5 text-primary" />
+                        </div>
+                        <div className="flex items-center gap-2 flex-1 min-w-0">
+                          <div className="font-semibold text-sm truncate">{getPatientName(patientData)}</div>
+                          <Separator orientation="vertical" className="h-3" />
+                          <div className="text-xs text-muted-foreground flex items-center gap-1.5 flex-wrap">
+                            <span className="font-mono">{patientData.patientNumber || `ID: ${patientId}`}</span>
+                            {patientData.gender && (
+                              <>
+                                <span className="text-muted-foreground/40">•</span>
+                                <span>{patientData.gender}</span>
+                              </>
+                            )}
+                            {patientData.dateOfBirth && (() => {
+                              const dob = new Date(patientData.dateOfBirth)
+                              const today = new Date()
+                              const age = today.getFullYear() - dob.getFullYear() - (today.getMonth() < dob.getMonth() || (today.getMonth() === dob.getMonth() && today.getDate() < dob.getDate()) ? 1 : 0)
+                              return age > 0 ? (
+                                <>
+                                  <span className="text-muted-foreground/40">•</span>
+                                  <span>{age}y</span>
+                                </>
+                              ) : null
+                            })()}
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="flex-1">
+                        <FormField
+                          control={form.control}
+                          name="patientId"
+                          render={({ field }) => (
+                            <FormItem className="mb-0">
+                              <FormControl>
+                                <PatientCombobox
+                                  value={field.value}
+                                  onValueChange={(value) => {
+                                    field.onChange(value)
+                                  }}
+                                  placeholder="Select patient..."
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+                    )}
+
+                    {/* Visit Type and Department Display */}
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <FormField
+                        control={form.control}
+                        name="visitType"
+                        render={({ field }) => (
+                          <Badge variant={field.value === "Inpatient" ? "default" : field.value === "Emergency" ? "destructive" : "secondary"} className="text-xs font-normal">
+                            {field.value || "Outpatient"}
+                          </Badge>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="department"
+                        render={({ field }) => (
+                          field.value ? (
+                            <Badge variant="outline" className="text-xs font-normal">
+                              {field.value}
+                            </Badge>
+                          ) : null
+                        )}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Right: Encounter Date and Doctor */}
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <FormField
+                      control={form.control}
+                      name="encounterDate"
+                      render={({ field }) => (
+                        <FormItem className="w-[140px] mb-0">
+                          <FormControl>
+                            <Popover>
+                              <PopoverTrigger asChild>
+                                <Button
+                                  variant="outline"
+                                  type="button"
+                                  className="w-full justify-start text-left font-normal h-8 text-xs px-2"
+                                >
+                                  <CalendarIcon className="mr-1.5 h-3 w-3" />
+                                  {field.value ? format(field.value, "MMM d, yyyy") : "Date"}
+                                </Button>
+                              </PopoverTrigger>
+                              <PopoverContent className="w-auto p-0" align="end">
+                                <Calendar
+                                  mode="single"
+                                  selected={field.value}
+                                  onSelect={field.onChange}
+                                  initialFocus
+                                />
+                              </PopoverContent>
+                            </Popover>
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <Separator orientation="vertical" className="h-5" />
+
+                    <FormField
+                      control={form.control}
+                      name="doctorId"
+                      render={({ field }) => (
+                        <FormItem className="w-[160px] mb-0">
+                          <FormControl>
+                            <Select
+                              onValueChange={field.onChange}
+                              value={field.value || ""}
+                              disabled={!!initialDoctorId}
+                            >
+                              <SelectTrigger className="h-8 text-xs px-2">
+                                <SelectValue placeholder="Doctor..." />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {doctors.map((doctor) => (
+                                  <SelectItem key={doctor.userId} value={doctor.userId.toString()}>
+                                    {getDoctorName(doctor)}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    {loadingPatientData && (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground flex-shrink-0" />
+                    )}
+                  </div>
+                </div>
+              </div>
 
           {/* Critical Alerts Banner for Current Patient */}
           {(() => {
@@ -1783,23 +2099,20 @@ const clearDraftFromStorage = (patientId:any) => {
                 </div>
               </div>
             )
-          })()}
+            })()}
 
-          <div className="flex-1 overflow-hidden flex flex-col min-h-0">
-            {error && (
-              <div className="mx-6 mt-4 p-3 text-sm text-red-500 bg-red-50 rounded-md flex-shrink-0">
-                {error}
-              </div>
-            )}
-            {loading && (
-              <div className="flex items-center justify-center py-4 flex-shrink-0">
-                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                <span className="ml-2 text-sm text-muted-foreground">Loading data...</span>
-              </div>
-            )}
-
-            <Form {...form}>
-              <form onSubmit={form.handleSubmit(onSubmit)} className="flex-1 flex flex-col overflow-hidden min-h-0">
+              <div className="flex-1 overflow-hidden flex flex-col min-h-0">
+                {error && (
+                  <div className="mx-6 mt-4 p-3 text-sm text-red-500 bg-red-50 rounded-md flex-shrink-0">
+                    {error}
+                  </div>
+                )}
+                {loading && (
+                  <div className="flex items-center justify-center py-4 flex-shrink-0">
+                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                    <span className="ml-2 text-sm text-muted-foreground">Loading data...</span>
+                  </div>
+                )}
                 {/* Tabs Container - Moved to Top */}
                 <Tabs value={activeTab} onValueChange={(value) => {
                   if (value === "prescription") {
@@ -1827,46 +2140,46 @@ const clearDraftFromStorage = (patientId:any) => {
                     setActiveTab(value)
                   }
                 }} className="flex-1 flex flex-col overflow-hidden min-h-0">
-                  {/* Sticky Tabs Navigation */}
-                  <div className="px-6 py-3 border-b bg-background flex-shrink-0">
-                    <TabsList className="grid w-full grid-cols-8">
-                      <TabsTrigger value="encounter">
-                        <FileText className="h-4 w-4 mr-2" />
-                        Encounter
+                  {/* Sticky Tabs Navigation - Compact */}
+                  <div className="px-4 py-1.5 border-b bg-background flex-shrink-0">
+                    <TabsList className="grid w-full grid-cols-8 h-auto gap-1">
+                      <TabsTrigger value="encounter" className="py-1.5 h-auto text-xs">
+                        <FileText className="h-3 w-3 mr-1" />
+                        <span>Encounter</span>
                       </TabsTrigger>
-                      <TabsTrigger value="symptoms">
-                        <Activity className="h-4 w-4 mr-2" />
-                        Symptoms
+                      <TabsTrigger value="symptoms" className="py-1.5 h-auto text-xs">
+                        <Activity className="h-3 w-3 mr-1" />
+                        <span>Symptoms</span>
                       </TabsTrigger>
-                      <TabsTrigger value="diagnosis">
-                        <CheckCircle2 className="h-4 w-4 mr-2" />
-                        Diagnosis
+                      <TabsTrigger value="diagnosis" className="py-1.5 h-auto text-xs">
+                        <CheckCircle2 className="h-3 w-3 mr-1" />
+                        <span>Diagnosis</span>
                       </TabsTrigger>
-                      <TabsTrigger value="lab">
-                        <Flask className="h-4 w-4 mr-2" />
-                        Lab Tests
+                      <TabsTrigger value="lab" className="py-1.5 h-auto text-xs">
+                        <Flask className="h-3 w-3 mr-1" />
+                        <span>Lab Tests</span>
                       </TabsTrigger>
-                      <TabsTrigger value="prescription">
-                        <Pills className="h-4 w-4 mr-2" />
-                        Prescription
+                      <TabsTrigger value="prescription" className="py-1.5 h-auto text-xs">
+                        <Pills className="h-3 w-3 mr-1" />
+                        <span>Prescription</span>
                       </TabsTrigger>
-                      <TabsTrigger value="procedures" onClick={() => {
+                      <TabsTrigger value="procedures" className="py-1.5 h-auto text-xs" onClick={() => {
                         setProceduresSheetOpen(true)
                         setActiveTab("encounter") // Keep encounter tab active
                       }}>
-                        <Stethoscope className="h-4 w-4 mr-2" />
-                        Procedures
+                        <Stethoscope className="h-3 w-3 mr-1" />
+                        <span>Procedures</span>
                       </TabsTrigger>
-                      <TabsTrigger value="orders" onClick={() => {
+                      <TabsTrigger value="orders" className="py-1.5 h-auto text-xs" onClick={() => {
                         setOrdersSheetOpen(true)
                         setActiveTab("encounter") // Keep encounter tab active
                       }}>
-                        <Package className="h-4 w-4 mr-2" />
-                        Orders
+                        <Package className="h-3 w-3 mr-1" />
+                        <span>Orders</span>
                       </TabsTrigger>
-                      <TabsTrigger value="history">
-                        <History className="h-4 w-4 mr-2" />
-                        History
+                      <TabsTrigger value="history" className="py-1.5 h-auto text-xs">
+                        <History className="h-3 w-3 mr-1" />
+                        <span>History</span>
                       </TabsTrigger>
                     </TabsList>
                   </div>
@@ -1879,20 +2192,10 @@ const clearDraftFromStorage = (patientId:any) => {
                         {/* Patient Summary Panel */}
                         {patientId && patientData && (
                           <Card className="border-l-4 border-l-primary">
-                            <CardHeader className="pb-3">
-                              <div className="flex items-center justify-between">
-                                <div>
-                                  <CardTitle className="text-lg">{getPatientName(patientData)}</CardTitle>
-                                  <CardDescription>
-                                    {patientData.patientNumber} • {patientData.gender} • {patientData.dateOfBirth ? new Date(patientData.dateOfBirth).toLocaleDateString() : 'N/A'}
-                                  </CardDescription>
-                                </div>
-                                {loadingPatientData && (
-                                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                                )}
-                              </div>
+                            <CardHeader className="pb-2 pt-3">
+                              <CardTitle className="text-base">Quick Summary</CardTitle>
                             </CardHeader>
-                            <CardContent>
+                            <CardContent className="pt-2">
                               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                                 {/* Today's Vitals */}
                                 <div className="space-y-2">
@@ -2052,122 +2355,6 @@ const clearDraftFromStorage = (patientId:any) => {
                           </Card>
                         )}
 
-                        {/* Encounter Form Fields */}
-                        <div className="space-y-4">
-                          <h3 className="text-lg font-semibold">Encounter Details</h3>
-                          <div className="grid grid-cols-2 gap-4">
-                            <FormField
-                              control={form.control}
-                              name="patientId"
-                              render={({ field }) => (
-                                <FormItem className="flex flex-col">
-                                  <FormLabel>Patient *</FormLabel>
-                                  <FormControl>
-                                    <PatientCombobox
-                                      value={field.value}
-                                      onValueChange={(value) => {
-                                        field.onChange(value)
-                                      }}
-                                      placeholder="Search patient by name, ID, or number..."
-                                      disabled={!!initialPatientId}
-                                    />
-                                  </FormControl>
-                                  <FormMessage />
-                                </FormItem>
-                              )}
-                            />
-                            <FormField
-                              control={form.control}
-                              name="doctorId"
-                              render={({ field }) => (
-                                <FormItem>
-                                  <FormLabel>Doctor *</FormLabel>
-                                  <Select
-                                    onValueChange={field.onChange}
-                                    defaultValue={field.value || ""}
-                                    disabled={!!initialDoctorId}
-                                  >
-                                    <FormControl>
-                                      <SelectTrigger>
-                                        <SelectValue placeholder="Select doctor" />
-                                      </SelectTrigger>
-                                    </FormControl>
-                                    <SelectContent>
-                                      {doctors.map((doctor) => (
-                                        <SelectItem key={doctor.userId} value={doctor.userId.toString()}>
-                                          {getDoctorName(doctor)} {doctor.department && ` - ${doctor.department}`}
-                                        </SelectItem>
-                                      ))}
-                                    </SelectContent>
-                                  </Select>
-                                  <FormMessage />
-                                </FormItem>
-                              )}
-                            />
-                          </div>
-
-                          <div className="grid grid-cols-3 gap-4">
-                            <FormField
-                              control={form.control}
-                              name="encounterDate"
-                              render={({ field }) => (
-                                <FormItem className="flex flex-col">
-                                  <FormLabel>Encounter Date *</FormLabel>
-                                  <Popover>
-                                    <PopoverTrigger asChild>
-                                      <FormControl>
-                                        <Button
-                                          variant={"outline"}
-                                          disabled={true}
-                                          className={`w-full pl-3 text-left font-normal ${!field.value ? "text-muted-foreground" : ""}`}
-                                        >
-                                          {field.value ? format(field.value, "PPP") : <span>Select date</span>}
-                                          <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-                                        </Button>
-                                      </FormControl>
-                                    </PopoverTrigger>
-                                  </Popover>
-                                  <FormMessage />
-                                </FormItem>
-                              )}
-                            />
-                            <FormField
-                              control={form.control}
-                              name="visitType"
-                              render={({ field }) => (
-                                <FormItem>
-                                  <FormLabel>Visit Type</FormLabel>
-                                  <Select onValueChange={field.onChange} value={field.value || ""}>
-                                    <FormControl>
-                                      <SelectTrigger>
-                                        <SelectValue placeholder="Select visit type" />
-                                      </SelectTrigger>
-                                    </FormControl>
-                                    <SelectContent>
-                                      <SelectItem value="Outpatient">Outpatient</SelectItem>
-                                      <SelectItem value="Inpatient">Inpatient</SelectItem>
-                                      <SelectItem value="Emergency">Emergency</SelectItem>
-                                    </SelectContent>
-                                  </Select>
-                                  <FormMessage />
-                                </FormItem>
-                              )}
-                            />
-                            <FormField
-                              control={form.control}
-                              name="department"
-                              render={({ field }) => (
-                                <FormItem>
-                                  <FormLabel>Department</FormLabel>
-                                  <FormControl>
-                                    <Input placeholder="e.g., Cardiology" {...field} />
-                                  </FormControl>
-                                  <FormMessage />
-                                </FormItem>
-                              )}
-                            />
-                          </div>
-                        </div>
                       </div>
                     </ScrollArea>
                   </TabsContent>
@@ -2238,9 +2425,10 @@ const clearDraftFromStorage = (patientId:any) => {
                     </div>
                   </TabsContent>
                 </Tabs>
+              </div>
 
-                {/* Fixed Footer - Always visible above sheets */}
-                <DialogFooter className="px-6 py-4 border-t bg-background flex-shrink-0 z-[100] relative shadow-lg">
+              {/* Fixed Footer - Always visible above sheets */}
+              <DialogFooter className="px-6 py-4 border-t bg-background flex-shrink-0 z-[100] relative shadow-lg">
                   <Button type="button" variant="outline" onClick={() => handleDialogClose(false)}>
                     Cancel
                   </Button>
@@ -2256,7 +2444,6 @@ const clearDraftFromStorage = (patientId:any) => {
                 </DialogFooter>
               </form>
             </Form>
-          </div>
         </DialogContent>
       </Dialog>
 
@@ -2936,6 +3123,7 @@ const clearDraftFromStorage = (patientId:any) => {
                       onClick={() => {
                         setEditingMedicationIndex(null)
                         setTempMedication(defaultMedication)
+                        setIsQuantityManuallyEdited(false) // Reset when adding new medication
                         setAddMedicationDialogOpen(true)
                       }}
                     >
@@ -3035,6 +3223,7 @@ const clearDraftFromStorage = (patientId:any) => {
                                           setEditingMedicationIndex(index)
                                           const medData = form.getValues(`medications.${index}`)
                                           setTempMedication(medData || defaultMedication)
+                                          setIsQuantityManuallyEdited(true) // When editing, treat as manually edited
                                           setAddMedicationDialogOpen(true)
                                         }}
                                         className="h-8 w-8 p-0"
@@ -3507,7 +3696,7 @@ const clearDraftFromStorage = (patientId:any) => {
               {isMedicationAlreadyAdded(tempMedication.medicationId || "") && editingMedicationIndex === null && (
                 <p className="text-xs text-destructive flex items-center gap-1">
                   <AlertTriangle className="h-3 w-3" />
-                  This medication has already been added to the prescription
+                  This medication already has a pending prescription that has not been dispensed yet. Please check existing prescriptions.
                 </p>
               )}
               {tempMedication.medicationId && (() => {
@@ -3539,7 +3728,10 @@ const clearDraftFromStorage = (patientId:any) => {
                 <Input
                   placeholder="1 tablet"
                   value={tempMedication.dosage || ""}
-                  onChange={(e) => setTempMedication({ ...tempMedication, dosage: e.target.value })}
+                  onChange={(e) => {
+                    setTempMedication({ ...tempMedication, dosage: e.target.value })
+                    setIsQuantityManuallyEdited(false) // Reset manual edit flag when dosage changes
+                  }}
                 />
               </div>
               <div className="space-y-2">
@@ -3549,7 +3741,10 @@ const clearDraftFromStorage = (patientId:any) => {
                 <Input
                   placeholder="3 times daily"
                   value={tempMedication.frequency || ""}
-                  onChange={(e) => setTempMedication({ ...tempMedication, frequency: e.target.value })}
+                  onChange={(e) => {
+                    setTempMedication({ ...tempMedication, frequency: e.target.value })
+                    setIsQuantityManuallyEdited(false) // Reset manual edit flag when frequency changes
+                  }}
                 />
               </div>
             </div>
@@ -3561,7 +3756,10 @@ const clearDraftFromStorage = (patientId:any) => {
                 <Input
                   placeholder="7 days"
                   value={tempMedication.duration || ""}
-                  onChange={(e) => setTempMedication({ ...tempMedication, duration: e.target.value })}
+                  onChange={(e) => {
+                    setTempMedication({ ...tempMedication, duration: e.target.value })
+                    setIsQuantityManuallyEdited(false) // Reset manual edit flag when duration changes
+                  }}
                 />
               </div>
               <div className="space-y-2">
@@ -3575,11 +3773,24 @@ const clearDraftFromStorage = (patientId:any) => {
                 <Input
                   type="number"
                   min="1"
-                  placeholder="Enter quantity"
+                  placeholder="Auto-calculated"
                   value={tempMedication.quantity || ""}
-                  onChange={(e) => setTempMedication({ ...tempMedication, quantity: e.target.value })}
+                  onChange={(e) => {
+                    setTempMedication({ ...tempMedication, quantity: e.target.value })
+                    setIsQuantityManuallyEdited(true) // Mark as manually edited
+                  }}
+                  onFocus={() => setIsQuantityManuallyEdited(true)} // Mark as manually edited when focused
                   disabled={!tempMedication.medicationId || !getInventoryStatus(parseInt(tempMedication.medicationId))?.hasStock}
                 />
+                <p className="text-xs text-muted-foreground">
+                  {tempMedication.dosage && tempMedication.frequency && tempMedication.duration && !isQuantityManuallyEdited && (
+                    <span>Auto-calculated: {extractNumber(tempMedication.dosage)} × {(() => {
+                      const freq = extractNumber(tempMedication.frequency)
+                      return freq > 0 ? freq : "frequency"
+                    })()} × {extractNumber(tempMedication.duration)} days</span>
+                  )}
+                  {isQuantityManuallyEdited && <span className="text-blue-600">Manually edited</span>}
+                </p>
                 {tempMedication.medicationId && (() => {
                   const medId = parseInt(tempMedication.medicationId)
                   const inventoryStatus = getInventoryStatus(medId)
@@ -3617,6 +3828,7 @@ const clearDraftFromStorage = (patientId:any) => {
                 setAddMedicationDialogOpen(false)
                 setEditingMedicationIndex(null)
                 setTempMedication(defaultMedication)
+                setIsQuantityManuallyEdited(false)
               }}
             >
               Cancel
@@ -3712,7 +3924,7 @@ const clearDraftFromStorage = (patientId:any) => {
                   {isTestTypeAlreadyAdded(tempLabTest.testTypeId || "") && editingLabTestIndex === null && (
                     <p className="text-xs text-destructive flex items-center gap-1">
                       <AlertTriangle className="h-3 w-3" />
-                      This test has already been added to the order
+                      This test type already exists and has not been resulted yet. Please check existing orders.
                     </p>
                   )}
                 </div>

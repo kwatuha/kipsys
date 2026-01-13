@@ -53,10 +53,29 @@ async function createQueueEntry(connection, patientId, servicePoint, priority = 
 
 /**
  * Helper function specifically for adding patient to cashier queue
- * Always checks for duplicates to avoid multiple entries
+ * Always checks for duplicates and validates pending bills before adding
  */
 async function addPatientToCashierQueue(connection, patientId, notes = null, userId = null, priority = 'normal') {
-    return await createQueueEntry(connection, patientId, 'cashier', priority, notes, userId, true);
+    // Check for existing queue entry first
+    const existingQueueId = await checkExistingQueueEntry(connection, patientId, 'cashier');
+    if (existingQueueId) {
+        console.log(`Patient ${patientId} already exists in cashier queue (queueId: ${existingQueueId})`);
+        return existingQueueId;
+    }
+
+    // Validate that patient has pending bills before adding to cashier queue
+    const [pendingBills] = await connection.execute(
+        `SELECT COUNT(*) as unpaidCount FROM invoices
+         WHERE patientId = ? AND status NOT IN ('paid', 'cancelled', 'draft') AND balance > 0`,
+        [patientId]
+    );
+
+    if (pendingBills[0].unpaidCount === 0) {
+        console.log(`Patient ${patientId} has no pending bills - skipping cashier queue addition`);
+        return null; // Return null to indicate no queue entry was created
+    }
+
+    return await createQueueEntry(connection, patientId, 'cashier', priority, notes, userId, false); // false because we already checked for duplicates
 }
 
 /**
@@ -318,6 +337,43 @@ router.post('/cashier-to-pharmacy', async (req, res) => {
             );
         }
 
+        // Validate that patient has pending prescriptions before adding to pharmacy queue
+        const [pendingPrescriptions] = await connection.execute(
+            `SELECT COUNT(*) as pendingCount FROM prescriptions
+             WHERE patientId = ? AND status = 'pending'`,
+            [patientId]
+        );
+
+        if (pendingPrescriptions[0].pendingCount === 0) {
+            await connection.rollback();
+            connection.release();
+            return res.status(400).json({
+                message: 'Cannot add patient to pharmacy queue: Patient has no pending prescriptions to dispense.',
+                error: 'NO_PENDING_PRESCRIPTIONS'
+            });
+        }
+
+        // Check for existing pharmacy queue entry
+        const existingQueueId = await checkExistingQueueEntry(connection, patientId, 'pharmacy');
+        if (existingQueueId) {
+            const [existingEntry] = await connection.execute(
+                `SELECT q.*,
+                        p.firstName as patientFirstName, p.lastName as patientLastName,
+                        p.patientNumber
+                 FROM queue_entries q
+                 LEFT JOIN patients p ON q.patientId = p.patientId
+                 WHERE q.queueId = ?`,
+                [existingQueueId]
+            );
+            await connection.commit();
+            connection.release();
+            return res.status(200).json({
+                ...existingEntry[0],
+                message: 'Patient already exists in pharmacy queue',
+                isDuplicate: true
+            });
+        }
+
         // Create queue entry for pharmacy
         const newQueueId = await createQueueEntry(
             connection,
@@ -325,7 +381,8 @@ router.post('/cashier-to-pharmacy', async (req, res) => {
             'pharmacy',
             priority,
             prescriptionId ? `Prescription ID: ${prescriptionId}` : 'Drug collection',
-            userId
+            userId,
+            false // Already checked for duplicates
         );
 
         await connection.commit();

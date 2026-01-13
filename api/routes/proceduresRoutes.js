@@ -416,43 +416,78 @@ router.post('/patient', async (req, res) => {
             [result.insertId]
         );
 
-        // Add patient to cashier queue for payment (check for duplicates first)
-        try {
-            // Check if patient already exists in cashier queue
-            const [existingQueue] = await connection.execute(
-                `SELECT queueId FROM queue_entries
-                 WHERE patientId = ? AND servicePoint = 'cashier'
-                 AND status IN ('waiting', 'called', 'serving')`,
-                [patientId]
-            );
-
-            if (existingQueue.length === 0) {
-                // Patient not in cashier queue, add them
-                const [cashierCount] = await connection.execute(
-                    'SELECT COUNT(*) as count FROM queue_entries WHERE DATE(arrivalTime) = CURDATE() AND servicePoint = "cashier"'
-                );
-                const ticketNum = cashierCount[0].count + 1;
-                const ticketNumber = `C-${String(ticketNum).padStart(3, '0')}`;
-
-                await connection.execute(
-                    `INSERT INTO queue_entries
-                    (patientId, ticketNumber, servicePoint, priority, status, notes, createdBy)
-                    VALUES (?, ?, 'cashier', 'normal', 'waiting', ?, ?)`,
-                    [
-                        patientId,
-                        ticketNumber,
-                        `Procedure payment - ${finalProcedureName || 'Procedure'}`,
-                        userId
-                    ]
-                );
-                console.log(`Added patient ${patientId} to cashier queue for procedure: ${finalProcedureName}`);
-            } else {
-                console.log(`Patient ${patientId} already exists in cashier queue (queueId: ${existingQueue[0].queueId}) - skipping duplicate entry`);
-            }
-        } catch (queueError) {
-            // Log error but don't fail the procedure creation if queue addition fails
-            console.error('Error adding patient to cashier queue after procedure:', queueError);
+        // Get procedure cost for invoice creation
+        let procedureCost = 0;
+        if (newPatientProcedure[0].cost) {
+            procedureCost = parseFloat(newPatientProcedure[0].cost);
+        } else if (newPatientProcedure[0].chargeCost) {
+            procedureCost = parseFloat(newPatientProcedure[0].chargeCost);
         }
+
+        // Create Invoice if procedure has a cost
+        if (procedureCost > 0) {
+            try {
+                const today = new Date().toISOString().split('T')[0].replace(/-/g, '');
+                const datePrefix = `INV-${today}-`;
+
+                const [maxResult] = await connection.execute(
+                    `SELECT MAX(CAST(SUBSTRING_INDEX(invoiceNumber, '-', -1) AS UNSIGNED)) as maxNum
+                     FROM invoices WHERE invoiceNumber LIKE CONCAT(?, '%')`, [datePrefix]
+                );
+                let nextNum = (maxResult[0]?.maxNum || 0) + 1;
+                let invoiceNumber = `${datePrefix}${String(nextNum).padStart(4, '0')}`;
+
+                const [invResult] = await connection.execute(
+                    `INSERT INTO invoices (invoiceNumber, patientId, invoiceDate, totalAmount, balance, status, notes, createdBy)
+                     VALUES (?, ?, CURDATE(), ?, ?, 'pending', ?, ?)`,
+                    [invoiceNumber, patientId, procedureCost, procedureCost, `Procedure payment - ${finalProcedureName || 'Procedure'}`, userId]
+                );
+
+                // Add invoice item
+                await connection.execute(
+                    `INSERT INTO invoice_items (invoiceId, description, quantity, unitPrice, totalPrice, chargeId)
+                     VALUES (?, ?, 1, ?, ?, ?)`,
+                    [invResult.insertId, finalProcedureName || 'Procedure', procedureCost, procedureCost, newPatientProcedure[0].chargeId || null]
+                );
+
+                // Add patient to cashier queue for payment (check for duplicates first)
+                const [existingQueue] = await connection.execute(
+                    `SELECT queueId FROM queue_entries
+                     WHERE patientId = ? AND servicePoint = 'cashier'
+                     AND status IN ('waiting', 'called', 'serving')`,
+                    [patientId]
+                );
+
+                if (existingQueue.length === 0) {
+                    // Patient not in cashier queue, add them
+                    const [cashierCount] = await connection.execute(
+                        'SELECT COUNT(*) as count FROM queue_entries WHERE DATE(arrivalTime) = CURDATE() AND servicePoint = "cashier"'
+                    );
+                    const ticketNum = cashierCount[0].count + 1;
+                    const ticketNumber = `C-${String(ticketNum).padStart(3, '0')}`;
+
+                    await connection.execute(
+                        `INSERT INTO queue_entries
+                        (patientId, ticketNumber, servicePoint, priority, status, notes, createdBy)
+                        VALUES (?, ?, 'cashier', 'normal', 'waiting', ?, ?)`,
+                        [
+                            patientId,
+                            ticketNumber,
+                            `Procedure payment - ${finalProcedureName || 'Procedure'}`,
+                            userId
+                        ]
+                    );
+                    console.log(`Added patient ${patientId} to cashier queue for procedure: ${finalProcedureName}`);
+                } else {
+                    console.log(`Patient ${patientId} already exists in cashier queue (queueId: ${existingQueue[0].queueId}) - skipping duplicate entry`);
+                }
+            } catch (invoiceError) {
+                // Log error but don't fail the procedure creation if invoice/queue creation fails
+                console.error('Error creating invoice and cashier queue after procedure:', invoiceError);
+            }
+        }
+        // Note: If procedure has no cost, we don't add patient to cashier queue
+        // Only add to queue when there's an actual invoice to pay
 
         await connection.commit();
         res.status(201).json(newPatientProcedure[0]);

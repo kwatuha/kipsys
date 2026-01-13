@@ -71,6 +71,7 @@ router.post('/', async (req, res) => {
 
         // Check for duplicate entry if adding to cashier queue
         if (queueData.servicePoint === 'cashier') {
+            // First check if patient already exists in queue
             const [existingQueue] = await pool.execute(
                 `SELECT queueId FROM queue_entries
                  WHERE patientId = ? AND servicePoint = 'cashier'
@@ -93,6 +94,63 @@ router.post('/', async (req, res) => {
                     ...existingEntry[0],
                     message: 'Patient already exists in cashier queue',
                     isDuplicate: true
+                });
+            }
+
+            // Validate that patient has pending bills before adding to cashier queue
+            const [pendingBills] = await pool.execute(
+                `SELECT COUNT(*) as unpaidCount FROM invoices
+                 WHERE patientId = ? AND status NOT IN ('paid', 'cancelled', 'draft') AND balance > 0`,
+                [queueData.patientId]
+            );
+
+            if (pendingBills[0].unpaidCount === 0) {
+                return res.status(400).json({
+                    message: 'Cannot add patient to cashier queue: Patient has no pending bills.',
+                    error: 'NO_PENDING_BILLS'
+                });
+            }
+        }
+
+        // Check for duplicate entry and validate pending prescriptions if adding to pharmacy queue
+        if (queueData.servicePoint === 'pharmacy') {
+            // First check if patient already exists in queue
+            const [existingQueue] = await pool.execute(
+                `SELECT queueId FROM queue_entries
+                 WHERE patientId = ? AND servicePoint = 'pharmacy'
+                 AND status IN ('waiting', 'called', 'serving')`,
+                [queueData.patientId]
+            );
+
+            if (existingQueue.length > 0) {
+                // Patient already in pharmacy queue, return existing entry
+                const [existingEntry] = await pool.execute(
+                    `SELECT q.*,
+                            p.firstName as patientFirstName, p.lastName as patientLastName,
+                            p.phone as patientPhone, p.patientNumber
+                     FROM queue_entries q
+                     LEFT JOIN patients p ON q.patientId = p.patientId
+                     WHERE q.queueId = ?`,
+                    [existingQueue[0].queueId]
+                );
+                return res.status(200).json({
+                    ...existingEntry[0],
+                    message: 'Patient already exists in pharmacy queue',
+                    isDuplicate: true
+                });
+            }
+
+            // Validate that patient has pending prescriptions before adding to pharmacy queue
+            const [pendingPrescriptions] = await pool.execute(
+                `SELECT COUNT(*) as pendingCount FROM prescriptions
+                 WHERE patientId = ? AND status = 'pending'`,
+                [queueData.patientId]
+            );
+
+            if (pendingPrescriptions[0].pendingCount === 0) {
+                return res.status(400).json({
+                    message: 'Cannot add patient to pharmacy queue: Patient has no pending prescriptions to dispense.',
+                    error: 'NO_PENDING_PRESCRIPTIONS'
                 });
             }
         }
@@ -615,6 +673,142 @@ router.post('/cashier/check-and-complete', async (req, res) => {
         await connection.rollback();
         console.error('Error in manual cashier check:', error);
         res.status(500).json({ message: 'Error in manual cashier check', error: error.message });
+    } finally {
+        connection.release();
+    }
+});
+
+/**
+ * @route POST /api/queue/cashier/cleanup
+ * @description Remove patients from cashier queue who have no pending bills
+ */
+router.post('/cashier/cleanup', async (req, res) => {
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
+
+        // Find all active cashier queue entries
+        const [cashierQueues] = await connection.execute(
+            `SELECT queueId, patientId, ticketNumber
+             FROM queue_entries
+             WHERE servicePoint = 'cashier'
+               AND status NOT IN ('completed', 'cancelled')`
+        );
+
+        const removedQueues = [];
+        const keptQueues = [];
+
+        for (const queue of cashierQueues) {
+            // Check if patient has pending bills
+            const [pendingBills] = await connection.execute(
+                `SELECT COUNT(*) as unpaidCount FROM invoices
+                 WHERE patientId = ? AND status NOT IN ('paid', 'cancelled', 'draft') AND balance > 0`,
+                [queue.patientId]
+            );
+
+            if (pendingBills[0].unpaidCount === 0) {
+                // Patient has no pending bills, cancel this queue entry
+                await connection.execute(
+                    `UPDATE queue_entries
+                     SET status = 'cancelled', endTime = NOW(), updatedAt = NOW(),
+                         notes = CONCAT(COALESCE(notes, ''), ' - Auto-cancelled: No pending bills')
+                     WHERE queueId = ?`,
+                    [queue.queueId]
+                );
+                removedQueues.push({
+                    queueId: queue.queueId,
+                    ticketNumber: queue.ticketNumber,
+                    patientId: queue.patientId
+                });
+            } else {
+                keptQueues.push({
+                    queueId: queue.queueId,
+                    ticketNumber: queue.ticketNumber,
+                    patientId: queue.patientId
+                });
+            }
+        }
+
+        await connection.commit();
+        res.status(200).json({
+            message: `Cleanup completed. Removed ${removedQueues.length} entries, kept ${keptQueues.length} entries.`,
+            removed: removedQueues,
+            kept: keptQueues,
+            removedCount: removedQueues.length,
+            keptCount: keptQueues.length
+        });
+    } catch (error) {
+        await connection.rollback();
+        console.error('Error cleaning up cashier queue:', error);
+        res.status(500).json({ message: 'Error cleaning up cashier queue', error: error.message });
+    } finally {
+        connection.release();
+    }
+});
+
+/**
+ * @route POST /api/queue/pharmacy/cleanup
+ * @description Remove patients from pharmacy queue who have no pending prescriptions
+ */
+router.post('/pharmacy/cleanup', async (req, res) => {
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
+
+        // Find all active pharmacy queue entries
+        const [pharmacyQueues] = await connection.execute(
+            `SELECT queueId, patientId, ticketNumber
+             FROM queue_entries
+             WHERE servicePoint = 'pharmacy'
+               AND status NOT IN ('completed', 'cancelled')`
+        );
+
+        const removedQueues = [];
+        const keptQueues = [];
+
+        for (const queue of pharmacyQueues) {
+            // Check if patient has pending prescriptions
+            const [pendingPrescriptions] = await connection.execute(
+                `SELECT COUNT(*) as pendingCount FROM prescriptions
+                 WHERE patientId = ? AND status = 'pending'`,
+                [queue.patientId]
+            );
+
+            if (pendingPrescriptions[0].pendingCount === 0) {
+                // Patient has no pending prescriptions, cancel this queue entry
+                await connection.execute(
+                    `UPDATE queue_entries
+                     SET status = 'cancelled', endTime = NOW(), updatedAt = NOW(),
+                         notes = CONCAT(COALESCE(notes, ''), ' - Auto-cancelled: No pending prescriptions')
+                     WHERE queueId = ?`,
+                    [queue.queueId]
+                );
+                removedQueues.push({
+                    queueId: queue.queueId,
+                    ticketNumber: queue.ticketNumber,
+                    patientId: queue.patientId
+                });
+            } else {
+                keptQueues.push({
+                    queueId: queue.queueId,
+                    ticketNumber: queue.ticketNumber,
+                    patientId: queue.patientId
+                });
+            }
+        }
+
+        await connection.commit();
+        res.status(200).json({
+            message: `Cleanup completed. Removed ${removedQueues.length} entries, kept ${keptQueues.length} entries.`,
+            removed: removedQueues,
+            kept: keptQueues,
+            removedCount: removedQueues.length,
+            keptCount: keptQueues.length
+        });
+    } catch (error) {
+        await connection.rollback();
+        console.error('Error cleaning up pharmacy queue:', error);
+        res.status(500).json({ message: 'Error cleaning up pharmacy queue', error: error.message });
     } finally {
         connection.release();
     }
