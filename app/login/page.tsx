@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useLayoutEffect } from "react"
+import { useState, useEffect } from "react"
 import { useAuth } from "@/lib/auth/auth-context"
 import { useRouter, usePathname } from "next/navigation"
 import { Button } from "@/components/ui/button"
@@ -13,53 +13,48 @@ export default function LoginPage() {
   const { login, isLoading, isAuthenticated } = useAuth()
   const router = useRouter()
   const pathname = usePathname()
+
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState("")
   const [isRedirecting, setIsRedirecting] = useState(false)
 
-  // Only redirect if already authenticated and we're on the login page
-  // Use useLayoutEffect to prevent flickering (runs synchronously before paint)
-  useLayoutEffect(() => {
-    if (!isLoading && isAuthenticated && pathname === "/login" && !isRedirecting) {
+  // 1. Handle automatic redirection if user arrives already logged in
+  useEffect(() => {
+    if (!isLoading && isAuthenticated && pathname === "/login") {
       setIsRedirecting(true)
-      // Immediate redirect
       router.replace("/")
     }
-  }, [isAuthenticated, isLoading, router, pathname, isRedirecting])
+  }, [isAuthenticated, isLoading, router, pathname])
 
+  // 2. Handle the "Sign In" click
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError("")
-    const result = await login(username, password)
-    if (result.success) {
-      router.replace("/")
-    } else {
-      setError(result.error || "Login failed")
+
+    try {
+      const result = await login(username, password)
+      if (result.success) {
+        setIsRedirecting(true)
+        // FORCE a hard reload to ensure Middleware/Server sees the new session
+        // This stops the "flicker loop" on the first login
+        window.location.href = "/"
+      } else {
+        setError(result.error || "Invalid username or password")
+      }
+    } catch (err) {
+      setError("An unexpected error occurred. Please try again.")
     }
   }
 
-  // Early return: Show loading state while checking authentication OR if authenticated/redirecting
-  // This prevents flickering by showing loading during both auth check and redirect
-  // Check isRedirecting first to prevent any flicker during redirect
-  if (isRedirecting) {
+  // Loading Screen for Auth checks and Active Redirects
+  if (isLoading || (isAuthenticated && pathname === "/login") || isRedirecting) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-blue-100">
         <div className="text-center">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground mx-auto mb-4" />
-          <p className="text-sm text-muted-foreground">Redirecting...</p>
-        </div>
-      </div>
-    )
-  }
-
-  if (isLoading || isAuthenticated) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-blue-100">
-        <div className="text-center">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground mx-auto mb-4" />
-          <p className="text-sm text-muted-foreground">
-            {isAuthenticated ? "Redirecting..." : "Loading..."}
+          <Loader2 className="h-10 w-10 animate-spin text-[#0f4c75] mx-auto mb-4" />
+          <p className="text-sm font-medium text-[#0f4c75]">
+            Securely logging you in...
           </p>
         </div>
       </div>
@@ -83,20 +78,15 @@ export default function LoginPage() {
                   <p className="text-sm text-muted-foreground">
                     Hospital Management Information System
                   </p>
-                  <p className="text-xs text-muted-foreground/80 italic pt-1">
-                    For Quality Healthcare Service Delivery
-                  </p>
                 </div>
               </div>
             </div>
           </CardHeader>
-          
+
           <CardContent className="space-y-6">
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="username" className="text-sm font-medium">
-                  Username
-                </Label>
+                <Label htmlFor="username">Username</Label>
                 <Input
                   id="username"
                   type="text"
@@ -105,14 +95,12 @@ export default function LoginPage() {
                   onChange={(e) => setUsername(e.target.value)}
                   disabled={isLoading}
                   className="h-11"
-                  autoComplete="username"
+                  required
                 />
               </div>
-              
+
               <div className="space-y-2">
-                <Label htmlFor="password" className="text-sm font-medium">
-                  Password
-                </Label>
+                <Label htmlFor="password">Password</Label>
                 <Input
                   id="password"
                   type="password"
@@ -121,62 +109,49 @@ export default function LoginPage() {
                   onChange={(e) => setPassword(e.target.value)}
                   disabled={isLoading}
                   className="h-11"
-                  autoComplete="current-password"
+                  required
                 />
               </div>
-              
+
               {error && (
                 <div className="flex items-center gap-2 rounded-md bg-destructive/10 border border-destructive/20 p-3 text-sm text-destructive">
                   <AlertCircle className="h-4 w-4 shrink-0" />
                   <span>{error}</span>
                 </div>
               )}
-              
+
               <Button
                 type="submit"
-                className="w-full h-11 text-base font-medium"
+                className="w-full h-11 text-base font-medium bg-[#0f4c75] hover:bg-[#1b5e8a]"
                 disabled={isLoading}
               >
                 {isLoading ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Signing In...
-                  </>
+                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Signing In...</>
                 ) : (
                   "Sign In"
                 )}
               </Button>
             </form>
-            
+
             <div className="pt-4 border-t">
               <div className="rounded-lg bg-muted/50 p-4 space-y-3">
-                <h3 className="text-sm font-semibold text-foreground">
-                  Test Credentials
-                </h3>
+                <h3 className="text-sm font-semibold text-foreground">Test Credentials</h3>
                 <div className="space-y-2.5 text-xs">
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
-                    <span className="font-medium text-foreground">Admin:</span>
-                    <code className="px-2.5 py-1 rounded-md bg-background border text-xs font-mono text-foreground">
-                      admin / admin123
-                    </code>
+                  <div className="flex justify-between items-center">
+                    <span className="font-medium">Admin:</span>
+                    <code className="bg-background px-2 py-0.5 rounded border">admin / admin123</code>
                   </div>
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
-                    <span className="font-medium text-foreground">Doctor:</span>
-                    <code className="px-2.5 py-1 rounded-md bg-background border text-xs font-mono text-foreground">
-                      doctor1 / password123
-                    </code>
+                  <div className="flex justify-between items-center">
+                    <span className="font-medium">Doctor:</span>
+                    <code className="bg-background px-2 py-0.5 rounded border">doctor1 / password123</code>
                   </div>
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
-                    <span className="font-medium text-foreground">Nurse:</span>
-                    <code className="px-2.5 py-1 rounded-md bg-background border text-xs font-mono text-foreground">
-                      nurse1 / password123
-                    </code>
+                  <div className="flex justify-between items-center">
+                    <span className="font-medium">Nurse:</span>
+                    <code className="bg-background px-2 py-0.5 rounded border">nurse1 / password123</code>
                   </div>
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
-                    <span className="font-medium text-foreground">Pharmacist:</span>
-                    <code className="px-2.5 py-1 rounded-md bg-background border text-xs font-mono text-foreground">
-                      pharmacist1 / password123
-                    </code>
+                  <div className="flex justify-between items-center">
+                    <span className="font-medium">Pharmacist:</span>
+                    <code className="bg-background px-2 py-0.5 rounded border">pharmacist1 / password123</code>
                   </div>
                 </div>
               </div>

@@ -4,9 +4,34 @@ const router = express.Router();
 const pool = require('../config/db');
 
 /**
- * Helper function to create queue entry
+ * Helper function to check if patient exists in queue for a specific service point
+ * Returns queueId if exists, null otherwise
  */
-async function createQueueEntry(connection, patientId, servicePoint, priority = 'normal', notes = null, userId = null) {
+async function checkExistingQueueEntry(connection, patientId, servicePoint) {
+    const [existing] = await connection.execute(
+        `SELECT queueId FROM queue_entries
+         WHERE patientId = ? AND servicePoint = ?
+         AND status IN ('waiting', 'called', 'serving')`,
+        [patientId, servicePoint]
+    );
+    return existing.length > 0 ? existing[0].queueId : null;
+}
+
+/**
+ * Helper function to create queue entry with duplicate check
+ * For cashier queue, checks if patient already exists before adding
+ */
+async function createQueueEntry(connection, patientId, servicePoint, priority = 'normal', notes = null, userId = null, checkDuplicate = true) {
+    // Check for existing queue entry if checkDuplicate is true (default for cashier)
+    if (checkDuplicate || servicePoint === 'cashier') {
+        const existingQueueId = await checkExistingQueueEntry(connection, patientId, servicePoint);
+        if (existingQueueId) {
+            // Patient already in queue, return existing queue ID
+            console.log(`Patient ${patientId} already exists in ${servicePoint} queue (queueId: ${existingQueueId})`);
+            return existingQueueId;
+        }
+    }
+
     // Generate ticket number
     const [count] = await connection.execute(
         'SELECT COUNT(*) as count FROM queue_entries WHERE DATE(arrivalTime) = CURDATE() AND servicePoint = ?',
@@ -17,13 +42,21 @@ async function createQueueEntry(connection, patientId, servicePoint, priority = 
     const ticketNumber = `${servicePointPrefix}-${String(ticketNum).padStart(3, '0')}`;
 
     const [result] = await connection.execute(
-        `INSERT INTO queue_entries 
+        `INSERT INTO queue_entries
         (patientId, ticketNumber, servicePoint, priority, status, notes, createdBy)
         VALUES (?, ?, ?, ?, 'waiting', ?, ?)`,
         [patientId, ticketNumber, servicePoint, priority, notes, userId]
     );
 
     return result.insertId;
+}
+
+/**
+ * Helper function specifically for adding patient to cashier queue
+ * Always checks for duplicates to avoid multiple entries
+ */
+async function addPatientToCashierQueue(connection, patientId, notes = null, userId = null, priority = 'normal') {
+    return await createQueueEntry(connection, patientId, 'cashier', priority, notes, userId, true);
 }
 
 /**
@@ -54,19 +87,21 @@ router.post('/triage-to-cashier', async (req, res) => {
         }
 
         // Create queue entry for cashier (consultation fees payment)
+        // createQueueEntry will automatically check for duplicates when servicePoint is 'cashier'
         const queueId = await createQueueEntry(
             connection,
             patientId,
             'cashier',
             priority,
             `Consultation fees payment - Service: ${servicePoint || 'consultation'}`,
-            userId
+            userId,
+            true // checkDuplicate = true
         );
 
         await connection.commit();
 
         const [queueEntry] = await connection.execute(
-            `SELECT q.*, 
+            `SELECT q.*,
                     p.firstName as patientFirstName, p.lastName as patientLastName,
                     p.patientNumber
              FROM queue_entries q
@@ -123,7 +158,7 @@ router.post('/cashier-to-consultation', async (req, res) => {
         await connection.commit();
 
         const [queueEntry] = await connection.execute(
-            `SELECT q.*, 
+            `SELECT q.*,
                     p.firstName as patientFirstName, p.lastName as patientLastName,
                     p.patientNumber
              FROM queue_entries q
@@ -180,7 +215,7 @@ router.post('/consultation-to-lab', async (req, res) => {
         await connection.commit();
 
         const [queueEntry] = await connection.execute(
-            `SELECT q.*, 
+            `SELECT q.*,
                     p.firstName as patientFirstName, p.lastName as patientLastName,
                     p.patientNumber
              FROM queue_entries q
@@ -225,19 +260,21 @@ router.post('/prescription-to-cashier', async (req, res) => {
         }
 
         // Create queue entry for cashier (drug payment)
+        // createQueueEntry will automatically check for duplicates when servicePoint is 'cashier'
         const newQueueId = await createQueueEntry(
             connection,
             patientId,
             'cashier',
             priority,
             prescriptionId ? `Drug payment - Prescription ID: ${prescriptionId}` : 'Drug payment',
-            userId
+            userId,
+            true // checkDuplicate = true
         );
 
         await connection.commit();
 
         const [queueEntry] = await connection.execute(
-            `SELECT q.*, 
+            `SELECT q.*,
                     p.firstName as patientFirstName, p.lastName as patientLastName,
                     p.patientNumber
              FROM queue_entries q
@@ -294,7 +331,7 @@ router.post('/cashier-to-pharmacy', async (req, res) => {
         await connection.commit();
 
         const [queueEntry] = await connection.execute(
-            `SELECT q.*, 
+            `SELECT q.*,
                     p.firstName as patientFirstName, p.lastName as patientLastName,
                     p.patientNumber
              FROM queue_entries q
@@ -334,7 +371,7 @@ router.get('/queue/:id/time-summary', async (req, res) => {
         const now = new Date();
 
         // Calculate time differences
-        const waitTime = entry.calledTime 
+        const waitTime = entry.calledTime
             ? calculateTimeDifference(entry.arrivalTime, entry.calledTime)
             : (entry.status === 'waiting' ? calculateTimeDifference(entry.arrivalTime, now) : null);
 
@@ -380,7 +417,7 @@ router.get('/patients/:id/queue-history', async (req, res) => {
         const { id } = req.params;
 
         const [queues] = await pool.execute(
-            `SELECT q.*, 
+            `SELECT q.*,
                     p.firstName as patientFirstName, p.lastName as patientLastName,
                     p.patientNumber
              FROM queue_entries q
@@ -392,7 +429,7 @@ router.get('/patients/:id/queue-history', async (req, res) => {
 
         // Add time calculations for each queue entry
         const queuesWithTime = queues.map(entry => {
-            const waitTime = entry.calledTime 
+            const waitTime = entry.calledTime
                 ? calculateTimeDifference(entry.arrivalTime, entry.calledTime)
                 : (entry.status === 'waiting' ? calculateTimeDifference(entry.arrivalTime, new Date()) : null);
 

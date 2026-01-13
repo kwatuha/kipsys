@@ -13,7 +13,7 @@ router.get('/', async (req, res) => {
         const offset = (page - 1) * limit;
 
         let query = `
-            SELECT t.*, 
+            SELECT t.*,
                    p.patientId, p.firstName, p.lastName, p.patientNumber,
                    u.firstName as triagedByFirstName, u.lastName as triagedByLastName,
                    vs.systolicBP, vs.diastolicBP, vs.heartRate, vs.respiratoryRate,
@@ -78,7 +78,7 @@ router.get('/:id', async (req, res) => {
         const { id } = req.params;
 
         const [rows] = await pool.query(
-            `SELECT t.*, 
+            `SELECT t.*,
                     p.patientId, p.firstName, p.lastName, p.patientNumber,
                     u.firstName as triagedByFirstName, u.lastName as triagedByLastName,
                     vs.systolicBP, vs.diastolicBP, vs.heartRate, vs.respiratoryRate,
@@ -111,8 +111,8 @@ router.post('/', async (req, res) => {
     try {
         await connection.beginTransaction();
 
-        const { 
-            patientId, chiefComplaint, temperature, bloodPressure, heartRate, 
+        const {
+            patientId, chiefComplaint, temperature, bloodPressure, heartRate,
             respiratoryRate, oxygenSaturation, painLevel, priority, notes, triagedBy,
             assignedToDoctorId, assignedToDepartment, servicePoint
         } = req.body;
@@ -161,18 +161,18 @@ router.post('/', async (req, res) => {
         let result;
         let triageNumber;
         const today = new Date().toISOString().split('T')[0];
-        
+
         try {
             // Get the maximum triage number across ALL dates (due to global UNIQUE constraint)
             const [maxResult] = await connection.execute(
-                `SELECT MAX(CAST(SUBSTRING(triageNumber, 5) AS UNSIGNED)) as maxNum 
-                 FROM triage_assessments 
+                `SELECT MAX(CAST(SUBSTRING(triageNumber, 5) AS UNSIGNED)) as maxNum
+                 FROM triage_assessments
                  WHERE triageNumber LIKE 'TRI-%'`
             );
-            
+
             let nextNum = (maxResult[0]?.maxNum || 0) + 1;
             triageNumber = `TRI-${String(nextNum).padStart(6, '0')}`;
-            
+
             // Check if this number already exists (safety check)
             let attempts = 0;
             while (attempts < 100) {
@@ -180,7 +180,7 @@ router.post('/', async (req, res) => {
                     'SELECT triageId FROM triage_assessments WHERE triageNumber = ?',
                     [triageNumber]
                 );
-                
+
                 if (existing.length === 0) {
                     break; // Number is available
                 }
@@ -189,28 +189,28 @@ router.post('/', async (req, res) => {
                 triageNumber = `TRI-${String(nextNum).padStart(6, '0')}`;
                 attempts++;
             }
-            
+
             if (attempts >= 100) {
                 await connection.rollback();
                 connection.release();
-                return res.status(500).json({ 
+                return res.status(500).json({
                     message: 'Failed to generate unique triage number',
                     error: 'Please try again.'
                 });
             }
-            
+
             // Update sequence table for today (for tracking purposes)
             await connection.execute(
-                `INSERT INTO triage_sequence (date_key, last_number) 
+                `INSERT INTO triage_sequence (date_key, last_number)
                  VALUES (?, ?)
                  ON DUPLICATE KEY UPDATE last_number = ?`,
                 [today, nextNum, nextNum]
             );
-            
+
             // Insert triage assessment
             [result] = await connection.execute(
                 `INSERT INTO triage_assessments (
-                    triageNumber, patientId, triageDate, chiefComplaint, triageCategory, 
+                    triageNumber, patientId, triageDate, chiefComplaint, triageCategory,
                     priorityLevel, status, notes, triagedBy, assignedToDoctorId, assignedToDepartment
                 )
                 VALUES (?, ?, NOW(), ?, ?, ?, 'pending', ?, ?, ?, ?)`,
@@ -226,29 +226,29 @@ router.post('/', async (req, res) => {
                     assignedToDepartment || null
                 ]
             );
-            
+
         } catch (insertError) {
             // Handle duplicate key error - find next available number
             if (insertError.code === 'ER_DUP_ENTRY' || insertError.errno === 1062) {
                 try {
                     // Get max number and find next available
                     const [maxResult] = await connection.execute(
-                        `SELECT MAX(CAST(SUBSTRING(triageNumber, 5) AS UNSIGNED)) as maxNum 
-                         FROM triage_assessments 
+                        `SELECT MAX(CAST(SUBSTRING(triageNumber, 5) AS UNSIGNED)) as maxNum
+                         FROM triage_assessments
                          WHERE triageNumber LIKE 'TRI-%'`
                     );
-                    
+
                     let retryNum = (maxResult[0]?.maxNum || 0) + 1;
                     let foundAvailable = false;
                     let retryAttempts = 0;
-                    
+
                     while (!foundAvailable && retryAttempts < 100) {
                         const testNumber = `TRI-${String(retryNum).padStart(6, '0')}`;
                         const [existing] = await connection.execute(
                             'SELECT triageId FROM triage_assessments WHERE triageNumber = ?',
                             [testNumber]
                         );
-                        
+
                         if (existing.length === 0) {
                             triageNumber = testNumber;
                             foundAvailable = true;
@@ -257,28 +257,28 @@ router.post('/', async (req, res) => {
                             retryAttempts++;
                         }
                     }
-                    
+
                     if (!foundAvailable) {
                         await connection.rollback();
                         connection.release();
-                        return res.status(500).json({ 
+                        return res.status(500).json({
                             message: 'Failed to generate unique triage number',
                             error: 'Please try again.'
                         });
                     }
-                    
+
                     // Update sequence
                     await connection.execute(
-                        `INSERT INTO triage_sequence (date_key, last_number) 
+                        `INSERT INTO triage_sequence (date_key, last_number)
                          VALUES (?, ?)
                          ON DUPLICATE KEY UPDATE last_number = ?`,
                         [today, retryNum, retryNum]
                     );
-                    
+
                     // Retry insert
                     [result] = await connection.execute(
                         `INSERT INTO triage_assessments (
-                            triageNumber, patientId, triageDate, chiefComplaint, triageCategory, 
+                            triageNumber, patientId, triageDate, chiefComplaint, triageCategory,
                             priorityLevel, status, notes, triagedBy, assignedToDoctorId, assignedToDepartment
                         )
                         VALUES (?, ?, NOW(), ?, ?, ?, 'pending', ?, ?, ?, ?)`,
@@ -298,7 +298,7 @@ router.post('/', async (req, res) => {
                     await connection.rollback();
                     connection.release();
                     console.error('Error retrying triage number generation:', retryError);
-                    return res.status(500).json({ 
+                    return res.status(500).json({
                         message: 'Failed to generate unique triage number',
                         error: 'Please try again.'
                     });
@@ -307,7 +307,7 @@ router.post('/', async (req, res) => {
                 throw insertError;
             }
         }
-        
+
         const triageId = result.insertId;
 
         // Insert vital signs
@@ -317,18 +317,18 @@ router.post('/', async (req, res) => {
             const parsed = parseInt(value);
             return !isNaN(parsed) ? parsed : null;
         };
-        
+
         const safeParseFloat = (value) => {
             if (!value || value === '' || value === null || value === undefined) return null;
             const parsed = parseFloat(value);
             return !isNaN(parsed) ? parsed : null;
         };
-        
+
         if (temperature || systolicBP || heartRate || respiratoryRate || oxygenSaturation || painLevel) {
             await connection.query(
                 `INSERT INTO vital_signs (
                     patientId, recordedDate, systolicBP, diastolicBP, heartRate,
-                    respiratoryRate, temperature, oxygenSaturation, painScore, 
+                    respiratoryRate, temperature, oxygenSaturation, painScore,
                     context, triageId, recordedBy
                 )
                 VALUES (?, NOW(), ?, ?, ?, ?, ?, ?, ?, 'triage', ?, ?)`,
@@ -356,10 +356,10 @@ router.post('/', async (req, res) => {
         try {
             // Get consultation charge (General Consultation)
             const [consultationCharges] = await connection.execute(
-                `SELECT chargeId, cost, name 
-                 FROM service_charges 
-                 WHERE name LIKE '%Consultation%' AND status = 'Active' 
-                 ORDER BY chargeId ASC 
+                `SELECT chargeId, cost, name
+                 FROM service_charges
+                 WHERE name LIKE '%Consultation%' AND status = 'Active'
+                 ORDER BY chargeId ASC
                  LIMIT 1`
             );
 
@@ -371,18 +371,18 @@ router.post('/', async (req, res) => {
                     // Generate invoice number (same approach as triage numbers to avoid duplicates)
                     const today = new Date().toISOString().split('T')[0].replace(/-/g, '');
                     const datePrefix = `INV-${today}-`;
-                    
+
                     // Get the maximum invoice number for today (extract the numeric part after last dash)
                     const [maxResult] = await connection.execute(
-                        `SELECT MAX(CAST(SUBSTRING_INDEX(invoiceNumber, '-', -1) AS UNSIGNED)) as maxNum 
-                         FROM invoices 
+                        `SELECT MAX(CAST(SUBSTRING_INDEX(invoiceNumber, '-', -1) AS UNSIGNED)) as maxNum
+                         FROM invoices
                          WHERE invoiceNumber LIKE CONCAT(?, '%')`,
                         [datePrefix]
                     );
-                    
+
                     let nextNum = (maxResult[0]?.maxNum || 0) + 1;
                     let invoiceNumber = `${datePrefix}${String(nextNum).padStart(4, '0')}`;
-                    
+
                     // Check if this number already exists (safety check for race conditions)
                     let attempts = 0;
                     while (attempts < 100) {
@@ -390,7 +390,7 @@ router.post('/', async (req, res) => {
                             'SELECT invoiceId FROM invoices WHERE invoiceNumber = ?',
                             [invoiceNumber]
                         );
-                        
+
                         if (existing.length === 0) {
                             break; // Number is available
                         }
@@ -399,11 +399,11 @@ router.post('/', async (req, res) => {
                         invoiceNumber = `${datePrefix}${String(nextNum).padStart(4, '0')}`;
                         attempts++;
                     }
-                    
+
                     if (attempts >= 100) {
                         await connection.rollback();
                         connection.release();
-                        return res.status(500).json({ 
+                        return res.status(500).json({
                             message: 'Failed to generate unique invoice number',
                             error: 'Please try again.'
                         });
@@ -429,23 +429,23 @@ router.post('/', async (req, res) => {
                         if (insertError.code === 'ER_DUP_ENTRY' || insertError.errno === 1062) {
                             // Get max number and find next available
                             const [retryMaxResult] = await connection.execute(
-                                `SELECT MAX(CAST(SUBSTRING_INDEX(invoiceNumber, '-', -1) AS UNSIGNED)) as maxNum 
-                                 FROM invoices 
+                                `SELECT MAX(CAST(SUBSTRING_INDEX(invoiceNumber, '-', -1) AS UNSIGNED)) as maxNum
+                                 FROM invoices
                                  WHERE invoiceNumber LIKE CONCAT(?, '%')`,
                                 [datePrefix]
                             );
-                            
+
                             let retryNum = (retryMaxResult[0]?.maxNum || 0) + 1;
                             let foundAvailable = false;
                             let retryAttempts = 0;
-                            
+
                             while (!foundAvailable && retryAttempts < 100) {
                                 const testNumber = `${datePrefix}${String(retryNum).padStart(4, '0')}`;
                                 const [existing] = await connection.execute(
                                     'SELECT invoiceId FROM invoices WHERE invoiceNumber = ?',
                                     [testNumber]
                                 );
-                                
+
                                 if (existing.length === 0) {
                                     invoiceNumber = testNumber;
                                     foundAvailable = true;
@@ -454,16 +454,16 @@ router.post('/', async (req, res) => {
                                     retryAttempts++;
                                 }
                             }
-                            
+
                             if (!foundAvailable) {
                                 await connection.rollback();
                                 connection.release();
-                                return res.status(500).json({ 
+                                return res.status(500).json({
                                     message: 'Failed to generate unique invoice number',
                                     error: 'Please try again.'
                                 });
                             }
-                            
+
                             // Retry insert with new number
                             [invoiceResult] = await connection.execute(
                                 `INSERT INTO invoices (invoiceNumber, patientId, invoiceDate, totalAmount, balance, status, notes, createdBy)
@@ -498,14 +498,12 @@ router.post('/', async (req, res) => {
                     );
 
                     // Create cashier queue entry for consultation fees payment
-                    // Check if cashier queue entry already exists for this consultation invoice
+                    // Check if patient already exists in cashier queue (any active entry)
                     const [existingCashier] = await connection.execute(
-                        `SELECT queueId FROM queue_entries 
-                         WHERE patientId = ? AND servicePoint = 'cashier' 
-                         AND DATE(arrivalTime) = CURDATE() 
-                         AND notes LIKE ?
-                         AND status NOT IN ('completed', 'cancelled')`,
-                        [patientId, `%Triage: ${triageNumber}%`]
+                        `SELECT queueId FROM queue_entries
+                         WHERE patientId = ? AND servicePoint = 'cashier'
+                         AND status IN ('waiting', 'called', 'serving')`,
+                        [patientId]
                     );
 
                     if (existingCashier.length === 0) {
@@ -518,7 +516,7 @@ router.post('/', async (req, res) => {
 
                         // Create queue entry for cashier (consultation fees payment)
                         await connection.execute(
-                            `INSERT INTO queue_entries 
+                            `INSERT INTO queue_entries
                             (patientId, ticketNumber, servicePoint, priority, status, notes, createdBy)
                             VALUES (?, ?, 'cashier', ?, 'waiting', ?, ?)`,
                             [
@@ -547,7 +545,7 @@ router.post('/', async (req, res) => {
 
         // Fetch the created record
         const [newTriage] = await connection.query(
-            `SELECT t.*, 
+            `SELECT t.*,
                     p.patientId, p.firstName, p.lastName, p.patientNumber,
                     u.firstName as triagedByFirstName, u.lastName as triagedByLastName,
                     vs.systolicBP, vs.diastolicBP, vs.heartRate, vs.respiratoryRate,
@@ -580,9 +578,9 @@ router.put('/:id', async (req, res) => {
         await connection.beginTransaction();
 
         const { id } = req.params;
-        const { 
-            chiefComplaint, temperature, bloodPressure, heartRate, 
-            respiratoryRate, oxygenSaturation, painLevel, priority, status, notes 
+        const {
+            chiefComplaint, temperature, bloodPressure, heartRate,
+            respiratoryRate, oxygenSaturation, painLevel, priority, status, notes
         } = req.body;
 
         // Check if triage exists
@@ -625,7 +623,7 @@ router.put('/:id', async (req, res) => {
         }
 
         // Update vital signs if provided
-        if (temperature !== undefined || bloodPressure !== undefined || heartRate !== undefined || 
+        if (temperature !== undefined || bloodPressure !== undefined || heartRate !== undefined ||
             respiratoryRate !== undefined || oxygenSaturation !== undefined || painLevel !== undefined) {
             const [vitalExists] = await connection.query(
                 'SELECT vitalSignId FROM vital_signs WHERE triageId = ?',
@@ -640,13 +638,13 @@ router.put('/:id', async (req, res) => {
                     const parsed = parseInt(value);
                     return !isNaN(parsed) ? parsed : null;
                 };
-                
+
                 const safeParseFloat = (value) => {
                     if (!value || value === '' || value === null || value === undefined) return null;
                     const parsed = parseFloat(value);
                     return !isNaN(parsed) ? parsed : null;
                 };
-                
+
                 const vitalUpdates = [];
                 const vitalValues = [];
                 if (temperature !== undefined) {
@@ -688,17 +686,17 @@ router.put('/:id', async (req, res) => {
                     const parsed = parseInt(value);
                     return !isNaN(parsed) ? parsed : null;
                 };
-                
+
                 const safeParseFloat = (value) => {
                     if (!value || value === '' || value === null || value === undefined) return null;
                     const parsed = parseFloat(value);
                     return !isNaN(parsed) ? parsed : null;
                 };
-                
+
                 await connection.query(
                     `INSERT INTO vital_signs (
                         patientId, recordedDate, systolicBP, diastolicBP, heartRate,
-                        respiratoryRate, temperature, oxygenSaturation, painScore, 
+                        respiratoryRate, temperature, oxygenSaturation, painScore,
                         context, triageId, recordedBy
                     )
                     VALUES (?, NOW(), ?, ?, ?, ?, ?, ?, ?, 'triage', ?, ?)`,
@@ -751,7 +749,7 @@ router.put('/:id', async (req, res) => {
 
         // Fetch updated record
         const [updated] = await connection.query(
-            `SELECT t.*, 
+            `SELECT t.*,
                     p.patientId, p.firstName, p.lastName, p.patientNumber,
                     u.firstName as triagedByFirstName, u.lastName as triagedByLastName,
                     vs.systolicBP, vs.diastolicBP, vs.heartRate, vs.respiratoryRate,

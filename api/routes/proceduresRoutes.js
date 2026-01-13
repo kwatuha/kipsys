@@ -11,7 +11,7 @@ router.get('/', async (req, res) => {
     try {
         const { search, category, isActive, chargeId } = req.query;
         let query = `
-            SELECT 
+            SELECT
                 p.*,
                 sc.chargeCode, sc.name as chargeName, sc.cost as chargeCost,
                 sc.chargeType, sc.status as chargeStatus
@@ -63,7 +63,7 @@ router.get('/:id', async (req, res) => {
     try {
         const { id } = req.params;
         const [rows] = await pool.execute(
-            `SELECT 
+            `SELECT
                 p.*,
                 sc.chargeCode, sc.name as chargeName, sc.cost as chargeCost,
                 sc.chargeType, sc.status as chargeStatus
@@ -151,7 +151,7 @@ router.post('/', async (req, res) => {
         );
 
         const [newProcedure] = await connection.execute(
-            `SELECT 
+            `SELECT
                 p.*,
                 sc.chargeCode, sc.name as chargeName, sc.cost as chargeCost,
                 sc.chargeType, sc.status as chargeStatus
@@ -243,7 +243,7 @@ router.put('/:id', async (req, res) => {
         );
 
         const [updated] = await connection.execute(
-            `SELECT 
+            `SELECT
                 p.*,
                 sc.chargeCode, sc.name as chargeName, sc.cost as chargeCost,
                 sc.chargeType, sc.status as chargeStatus
@@ -314,7 +314,7 @@ router.get('/patient/:patientId', async (req, res) => {
         const { date, procedureId } = req.query;
 
         let query = `
-            SELECT 
+            SELECT
                 pp.*,
                 p.procedureCode, p.procedureName, p.category, p.description, p.duration, p.cost,
                 p.chargeId,
@@ -386,7 +386,7 @@ router.post('/patient', async (req, res) => {
         }
 
         const [result] = await connection.execute(
-            `INSERT INTO patient_procedures 
+            `INSERT INTO patient_procedures
             (patientId, procedureId, procedureCode, procedureName, procedureDate, performedBy, notes, complications)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
             [
@@ -402,7 +402,7 @@ router.post('/patient', async (req, res) => {
         );
 
         const [newPatientProcedure] = await connection.execute(
-            `SELECT 
+            `SELECT
                 pp.*,
                 p.procedureCode, p.procedureName, p.category, p.description, p.duration, p.cost,
                 p.chargeId,
@@ -415,6 +415,44 @@ router.post('/patient', async (req, res) => {
             WHERE pp.patientProcedureId = ?`,
             [result.insertId]
         );
+
+        // Add patient to cashier queue for payment (check for duplicates first)
+        try {
+            // Check if patient already exists in cashier queue
+            const [existingQueue] = await connection.execute(
+                `SELECT queueId FROM queue_entries
+                 WHERE patientId = ? AND servicePoint = 'cashier'
+                 AND status IN ('waiting', 'called', 'serving')`,
+                [patientId]
+            );
+
+            if (existingQueue.length === 0) {
+                // Patient not in cashier queue, add them
+                const [cashierCount] = await connection.execute(
+                    'SELECT COUNT(*) as count FROM queue_entries WHERE DATE(arrivalTime) = CURDATE() AND servicePoint = "cashier"'
+                );
+                const ticketNum = cashierCount[0].count + 1;
+                const ticketNumber = `C-${String(ticketNum).padStart(3, '0')}`;
+
+                await connection.execute(
+                    `INSERT INTO queue_entries
+                    (patientId, ticketNumber, servicePoint, priority, status, notes, createdBy)
+                    VALUES (?, ?, 'cashier', 'normal', 'waiting', ?, ?)`,
+                    [
+                        patientId,
+                        ticketNumber,
+                        `Procedure payment - ${finalProcedureName || 'Procedure'}`,
+                        userId
+                    ]
+                );
+                console.log(`Added patient ${patientId} to cashier queue for procedure: ${finalProcedureName}`);
+            } else {
+                console.log(`Patient ${patientId} already exists in cashier queue (queueId: ${existingQueue[0].queueId}) - skipping duplicate entry`);
+            }
+        } catch (queueError) {
+            // Log error but don't fail the procedure creation if queue addition fails
+            console.error('Error adding patient to cashier queue after procedure:', queueError);
+        }
 
         await connection.commit();
         res.status(201).json(newPatientProcedure[0]);

@@ -9,17 +9,17 @@ const pool = require('../config/db');
 router.get('/', async (req, res) => {
     try {
         const { servicePoint, status, includeCompleted } = req.query;
-        
+
         // We include 'hasPendingBills' using a subquery to identify patients with unpaid invoices
         // This is crucial for the UI to show warning icons/indicators
         let query = `
-            SELECT q.*, 
+            SELECT q.*,
                    p.firstName as patientFirstName, p.lastName as patientLastName,
                    p.phone as patientPhone, p.patientNumber,
                    EXISTS (
-                       SELECT 1 FROM invoices i 
-                       WHERE i.patientId = q.patientId 
-                       AND i.status NOT IN ('paid', 'cancelled', 'draft') 
+                       SELECT 1 FROM invoices i
+                       WHERE i.patientId = q.patientId
+                       AND i.status NOT IN ('paid', 'cancelled', 'draft')
                        AND i.balance > 0
                    ) as hasPendingBills
             FROM queue_entries q
@@ -46,7 +46,7 @@ router.get('/', async (req, res) => {
         query += ` ORDER BY q.arrivalTime ASC`;
 
         const [rows] = await pool.execute(query, params);
-        
+
         // Convert the EXISTS result (usually 1 or 0) to a clean boolean
         const results = rows.map(row => ({
             ...row,
@@ -69,29 +69,59 @@ router.post('/', async (req, res) => {
         const queueData = req.body;
         const userId = req.user?.id || null;
 
+        // Check for duplicate entry if adding to cashier queue
+        if (queueData.servicePoint === 'cashier') {
+            const [existingQueue] = await pool.execute(
+                `SELECT queueId FROM queue_entries
+                 WHERE patientId = ? AND servicePoint = 'cashier'
+                 AND status IN ('waiting', 'called', 'serving')`,
+                [queueData.patientId]
+            );
+
+            if (existingQueue.length > 0) {
+                // Patient already in cashier queue, return existing entry
+                const [existingEntry] = await pool.execute(
+                    `SELECT q.*,
+                            p.firstName as patientFirstName, p.lastName as patientLastName,
+                            p.phone as patientPhone, p.patientNumber
+                     FROM queue_entries q
+                     LEFT JOIN patients p ON q.patientId = p.patientId
+                     WHERE q.queueId = ?`,
+                    [existingQueue[0].queueId]
+                );
+                return res.status(200).json({
+                    ...existingEntry[0],
+                    message: 'Patient already exists in cashier queue',
+                    isDuplicate: true
+                });
+            }
+        }
+
         // Generate ticket number if not provided by client
         if (!queueData.ticketNumber) {
             const [count] = await pool.execute(
-                'SELECT COUNT(*) as count FROM queue_entries WHERE DATE(arrivalTime) = CURDATE()'
+                'SELECT COUNT(*) as count FROM queue_entries WHERE DATE(arrivalTime) = CURDATE() AND servicePoint = ?',
+                [queueData.servicePoint || 'general']
             );
             const ticketNum = count[0].count + 1;
             // Ticket format: S-001 (ServicePoint first letter - Count)
-            queueData.ticketNumber = `${queueData.servicePoint.substring(0, 1).toUpperCase()}-${String(ticketNum).padStart(3, '0')}`;
+            const servicePointPrefix = (queueData.servicePoint || 'general').substring(0, 1).toUpperCase();
+            queueData.ticketNumber = `${servicePointPrefix}-${String(ticketNum).padStart(3, '0')}`;
         }
 
         // Detailed explicit null/undefined checks from original file
-        const estimatedWaitTime = queueData.estimatedWaitTime !== undefined && queueData.estimatedWaitTime !== null && queueData.estimatedWaitTime !== '' 
-            ? parseInt(queueData.estimatedWaitTime) 
+        const estimatedWaitTime = queueData.estimatedWaitTime !== undefined && queueData.estimatedWaitTime !== null && queueData.estimatedWaitTime !== ''
+            ? parseInt(queueData.estimatedWaitTime)
             : null;
-        const notes = queueData.notes !== undefined && queueData.notes !== null && queueData.notes !== '' 
-            ? queueData.notes 
+        const notes = queueData.notes !== undefined && queueData.notes !== null && queueData.notes !== ''
+            ? queueData.notes
             : null;
-        const doctorId = queueData.doctorId !== undefined && queueData.doctorId !== null && queueData.doctorId !== '' 
-            ? parseInt(queueData.doctorId) 
+        const doctorId = queueData.doctorId !== undefined && queueData.doctorId !== null && queueData.doctorId !== ''
+            ? parseInt(queueData.doctorId)
             : null;
 
         const [result] = await pool.execute(
-            `INSERT INTO queue_entries 
+            `INSERT INTO queue_entries
             (patientId, doctorId, ticketNumber, servicePoint, priority, status, estimatedWaitTime, notes, createdBy)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
@@ -108,7 +138,12 @@ router.post('/', async (req, res) => {
         );
 
         const [newEntry] = await pool.execute(
-            'SELECT * FROM queue_entries WHERE queueId = ?',
+            `SELECT q.*,
+                    p.firstName as patientFirstName, p.lastName as patientLastName,
+                    p.phone as patientPhone, p.patientNumber
+             FROM queue_entries q
+             LEFT JOIN patients p ON q.patientId = p.patientId
+             WHERE q.queueId = ?`,
             [result.insertId]
         );
 
@@ -127,7 +162,7 @@ router.get('/:id', async (req, res) => {
     try {
         const { id } = req.params;
         const [rows] = await pool.execute(
-            `SELECT q.*, 
+            `SELECT q.*,
                    p.firstName as patientFirstName, p.lastName as patientLastName,
                    p.phone as patientPhone, p.patientNumber
             FROM queue_entries q
@@ -197,7 +232,7 @@ router.put('/:id', async (req, res) => {
         );
 
         const [updated] = await pool.execute(
-            `SELECT q.*, 
+            `SELECT q.*,
                    p.firstName as patientFirstName, p.lastName as patientLastName,
                    p.phone as patientPhone, p.patientNumber
             FROM queue_entries q
@@ -231,15 +266,15 @@ router.put('/:id/status', async (req, res) => {
         // 2. NEW LOGIC: If trying to complete a Cashier entry, check for unpaid bills
         if (status === 'completed' && entry.servicePoint === 'cashier') {
             const [bills] = await pool.execute(
-                `SELECT COUNT(*) as unpaidCount FROM invoices 
+                `SELECT COUNT(*) as unpaidCount FROM invoices
                  WHERE patientId = ? AND status NOT IN ('paid', 'cancelled', 'draft') AND balance > 0`,
                 [entry.patientId]
             );
 
             if (bills[0].unpaidCount > 0) {
-                return res.status(400).json({ 
+                return res.status(400).json({
                     message: 'Cannot complete cashier queue: Patient has pending bills.',
-                    unpaidCount: bills[0].unpaidCount 
+                    unpaidCount: bills[0].unpaidCount
                 });
             }
         }
@@ -264,7 +299,7 @@ router.put('/:id/status', async (req, res) => {
         );
 
         const [updated] = await pool.execute(
-            `SELECT q.*, 
+            `SELECT q.*,
                    p.firstName as patientFirstName, p.lastName as patientLastName,
                    p.phone as patientPhone, p.patientNumber
             FROM queue_entries q
@@ -307,16 +342,16 @@ router.post('/:id/archive', async (req, res) => {
         // NEW LOGIC: Block archiving for cashier point if patient still owes money
         if (queue.servicePoint === 'cashier') {
             const [bills] = await connection.execute(
-                `SELECT COUNT(*) as unpaidCount FROM invoices 
+                `SELECT COUNT(*) as unpaidCount FROM invoices
                  WHERE patientId = ? AND status NOT IN ('paid', 'cancelled', 'draft') AND balance > 0`,
                 [queue.patientId]
             );
 
             if (bills[0].unpaidCount > 0) {
                 await connection.rollback();
-                return res.status(400).json({ 
+                return res.status(400).json({
                     message: 'Cannot archive: Patient still has pending bills at Cashier.',
-                    unpaidCount: bills[0].unpaidCount 
+                    unpaidCount: bills[0].unpaidCount
                 });
             }
         }
@@ -328,18 +363,18 @@ router.post('/:id/archive', async (req, res) => {
 
         if (queue.arrivalTime) {
             const arrival = new Date(queue.arrivalTime);
-            
+
             if (queue.calledTime) {
                 const called = new Date(queue.calledTime);
                 waitTimeMinutes = Math.floor((called - arrival) / 60000);
             }
-            
+
             if (queue.startTime && queue.endTime) {
                 const start = new Date(queue.startTime);
                 const end = new Date(queue.endTime);
                 serviceTimeMinutes = Math.floor((end - start) / 60000);
             }
-            
+
             if (queue.endTime) {
                 const end = new Date(queue.endTime);
                 totalTimeMinutes = Math.floor((end - arrival) / 60000);
@@ -348,8 +383,8 @@ router.post('/:id/archive', async (req, res) => {
 
         // Insert into history table
         await connection.execute(
-            `INSERT INTO queue_history 
-            (queueId, patientId, ticketNumber, servicePoint, priority, status, 
+            `INSERT INTO queue_history
+            (queueId, patientId, ticketNumber, servicePoint, priority, status,
              estimatedWaitTime, arrivalTime, calledTime, startTime, endTime, notes, createdBy,
              waitTimeMinutes, serviceTimeMinutes, totalTimeMinutes)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -380,7 +415,7 @@ router.post('/:id/archive', async (req, res) => {
         );
 
         await connection.commit();
-        res.status(200).json({ 
+        res.status(200).json({
             message: 'Queue entry archived successfully',
             waitTimeMinutes,
             serviceTimeMinutes,
@@ -405,7 +440,7 @@ router.get('/history', async (req, res) => {
         const offset = (page - 1) * limit;
 
         let query = `
-            SELECT qh.*, 
+            SELECT qh.*,
                    p.firstName as patientFirstName, p.lastName as patientLastName,
                    p.phone as patientPhone, p.patientNumber
             FROM queue_history qh
@@ -457,7 +492,7 @@ router.post('/archive-completed', async (req, res) => {
 
         // Get all completed entries
         const [completedEntries] = await connection.execute(
-            `SELECT * FROM queue_entries 
+            `SELECT * FROM queue_entries
              WHERE status IN ('completed', 'cancelled')`
         );
 
@@ -476,8 +511,8 @@ router.post('/archive-completed', async (req, res) => {
 
             // Insert into history
             await connection.execute(
-                `INSERT INTO queue_history 
-                (queueId, patientId, ticketNumber, servicePoint, priority, status, 
+                `INSERT INTO queue_history
+                (queueId, patientId, ticketNumber, servicePoint, priority, status,
                  estimatedWaitTime, arrivalTime, calledTime, startTime, endTime, notes, createdBy,
                  waitTimeMinutes, serviceTimeMinutes, totalTimeMinutes)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -550,7 +585,7 @@ router.post('/cashier/check-and-complete', async (req, res) => {
         }
 
         const [invoices] = await connection.execute(
-            `SELECT invoiceId, status, balance FROM invoices 
+            `SELECT invoiceId, status, balance FROM invoices
              WHERE patientId = ? AND status NOT IN ('draft', 'cancelled')`,
             [targetPatientId]
         );
@@ -560,7 +595,7 @@ router.post('/cashier/check-and-complete', async (req, res) => {
         const completedQueues = [];
         if (allPaid) {
             const [cashierQueues] = await connection.execute(
-                `SELECT queueId FROM queue_entries 
+                `SELECT queueId FROM queue_entries
                  WHERE patientId = ? AND servicePoint = 'cashier' AND status NOT IN ('completed', 'cancelled')`,
                 [targetPatientId]
             );

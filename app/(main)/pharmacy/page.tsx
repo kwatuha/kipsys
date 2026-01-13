@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
-import { Search, FileText, Package, Plus, Edit, Loader2, MoreVertical, Eye, CheckCircle, XCircle, Trash2, History, ArrowRight, Sliders, Download, Printer } from "lucide-react"
+import { Search, FileText, Package, Plus, Edit, Loader2, MoreVertical, Eye, CheckCircle, XCircle, Trash2, History, ArrowRight, Sliders, Download, Printer, Pill, AlertCircle } from "lucide-react"
 import Link from "next/link"
 import { AddPrescriptionForm } from "@/components/add-prescription-form"
 import { MedicationForm } from "@/components/medication-form"
@@ -15,6 +15,7 @@ import { DrugInventoryForm } from "@/components/drug-inventory-form"
 import { BatchTraceability } from "@/components/batch-traceability"
 import { DrugInventoryHistoryDialog } from "@/components/drug-inventory-history-dialog"
 import { StockAdjustmentForm } from "@/components/stock-adjustment-form"
+import { DispenseMedicationDialog } from "@/components/dispense-medication-dialog"
 import { pharmacyApi } from "@/lib/api"
 import {
   DropdownMenu,
@@ -97,7 +98,7 @@ export default function PharmacyPage() {
   const [prescriptionStatusFilter, setPrescriptionStatusFilter] = useState<string>("")
   const [prescriptionSearch, setPrescriptionSearch] = useState("")
   const [medicationSearch, setMedicationSearch] = useState("")
-  
+
   // Medication form state
   const [isAddMedicationOpen, setIsAddMedicationOpen] = useState(false)
   const [isEditMedicationOpen, setIsEditMedicationOpen] = useState(false)
@@ -106,13 +107,15 @@ export default function PharmacyPage() {
   const [medicationToDelete, setMedicationToDelete] = useState<Medication | null>(null)
   const [isDeletingMedication, setIsDeletingMedication] = useState(false)
   const [deleteMedicationError, setDeleteMedicationError] = useState<string | null>(null)
-  
+
   // Prescription actions state
   const [viewPrescriptionOpen, setViewPrescriptionOpen] = useState(false)
   const [selectedPrescription, setSelectedPrescription] = useState<any | null>(null)
   const [loadingPrescriptionDetails, setLoadingPrescriptionDetails] = useState(false)
   const [updatingStatus, setUpdatingStatus] = useState<string | null>(null)
-  
+  const [dispenseDialogOpen, setDispenseDialogOpen] = useState(false)
+  const [selectedPatientForDispense, setSelectedPatientForDispense] = useState<{patientId: number, patientName: string} | null>(null)
+
   // Drug Inventory state
   const [drugInventory, setDrugInventory] = useState<DrugInventoryItem[]>([])
   const [loadingDrugInventory, setLoadingDrugInventory] = useState(true)
@@ -509,22 +512,22 @@ export default function PharmacyPage() {
             <CardContent>
               <div className="flex items-center justify-between mb-4">
                 <div className="flex gap-2">
-                  <Button 
-                    variant={prescriptionStatusFilter === "" ? "default" : "outline"} 
+                  <Button
+                    variant={prescriptionStatusFilter === "" ? "default" : "outline"}
                     size="sm"
                     onClick={() => setPrescriptionStatusFilter("")}
                   >
                     All
                   </Button>
-                  <Button 
-                    variant={prescriptionStatusFilter === "pending" ? "default" : "outline"} 
+                  <Button
+                    variant={prescriptionStatusFilter === "pending" ? "default" : "outline"}
                     size="sm"
                     onClick={() => setPrescriptionStatusFilter("pending")}
                   >
                     Pending
                   </Button>
-                  <Button 
-                    variant={prescriptionStatusFilter === "dispensed" ? "default" : "outline"} 
+                  <Button
+                    variant={prescriptionStatusFilter === "dispensed" ? "default" : "outline"}
                     size="sm"
                     onClick={() => setPrescriptionStatusFilter("dispensed")}
                   >
@@ -533,9 +536,9 @@ export default function PharmacyPage() {
                 </div>
                 <div className="relative w-64">
                   <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input 
-                    type="search" 
-                    placeholder="Search prescriptions..." 
+                  <Input
+                    type="search"
+                    placeholder="Search prescriptions..."
                     className="w-full pl-8"
                     value={prescriptionSearch}
                     onChange={(e) => setPrescriptionSearch(e.target.value)}
@@ -573,7 +576,7 @@ export default function PharmacyPage() {
                             </TableCell>
                             <TableCell>{getDoctorName(prescription)}</TableCell>
                             <TableCell>
-                              {prescription.prescriptionDate 
+                              {prescription.prescriptionDate
                                 ? new Date(prescription.prescriptionDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
                                 : '-'}
                             </TableCell>
@@ -597,14 +600,29 @@ export default function PharmacyPage() {
                                   {prescription.status === 'pending' && (
                                     <>
                                       <DropdownMenuSeparator />
-                                      <DropdownMenuItem 
-                                        onClick={() => handleUpdatePrescriptionStatus(prescription.prescriptionId, 'dispensed')}
-                                        disabled={updatingStatus === prescription.prescriptionId.toString()}
-                                      >
-                                        <CheckCircle className="mr-2 h-4 w-4" />
-                                        {updatingStatus === prescription.prescriptionId.toString() ? 'Dispensing...' : 'Mark as Dispensed'}
-                                      </DropdownMenuItem>
-                                      <DropdownMenuItem 
+                                      {prescription.invoiceStatus === 'paid' ? (
+                                        <DropdownMenuItem
+                                          onClick={() => {
+                                            const patientName = prescription.firstName && prescription.lastName
+                                              ? `${prescription.firstName} ${prescription.lastName}`
+                                              : prescription.patientNumber || 'Unknown Patient'
+                                            setSelectedPatientForDispense({
+                                              patientId: prescription.patientId,
+                                              patientName: patientName
+                                            })
+                                            setDispenseDialogOpen(true)
+                                          }}
+                                        >
+                                          <Pill className="mr-2 h-4 w-4" />
+                                          Dispense Medication
+                                        </DropdownMenuItem>
+                                      ) : (
+                                        <DropdownMenuItem disabled title="Invoice must be paid before dispensing">
+                                          <AlertCircle className="mr-2 h-4 w-4" />
+                                          Invoice Not Paid
+                                        </DropdownMenuItem>
+                                      )}
+                                      <DropdownMenuItem
                                         onClick={() => handleUpdatePrescriptionStatus(prescription.prescriptionId, 'cancelled')}
                                         disabled={updatingStatus === prescription.prescriptionId.toString()}
                                       >
@@ -651,9 +669,9 @@ export default function PharmacyPage() {
               <div className="flex items-center justify-between mb-4">
                 <div className="relative w-64">
                   <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input 
-                    type="search" 
-                    placeholder="Search medications..." 
+                  <Input
+                    type="search"
+                    placeholder="Search medications..."
                     className="w-full pl-8"
                     value={medicationSearch}
                     onChange={(e) => setMedicationSearch(e.target.value)}
@@ -702,7 +720,7 @@ export default function PharmacyPage() {
                                     Edit
                                   </DropdownMenuItem>
                                   <DropdownMenuSeparator />
-                                  <DropdownMenuItem 
+                                  <DropdownMenuItem
                                     onClick={() => handleDeleteMedicationClick(medication)}
                                     className="text-destructive focus:text-destructive"
                                   >
@@ -747,9 +765,9 @@ export default function PharmacyPage() {
               <div className="flex items-center justify-between mb-4">
                 <div className="relative w-64">
                   <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input 
-                    type="search" 
-                    placeholder="Search drug inventory..." 
+                  <Input
+                    type="search"
+                    placeholder="Search drug inventory..."
                     className="w-full pl-8"
                     value={drugInventorySearch}
                     onChange={(e) => setDrugInventorySearch(e.target.value)}
@@ -788,7 +806,7 @@ export default function PharmacyPage() {
                             <TableCell>KES {item.sellPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
                             <TableCell>{item.minPrice ? `KES ${item.minPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '-'}</TableCell>
                             <TableCell>
-                              {item.expiryDate 
+                              {item.expiryDate
                                 ? new Date(item.expiryDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
                                 : '-'}
                             </TableCell>
@@ -814,7 +832,7 @@ export default function PharmacyPage() {
                                     Edit
                                   </DropdownMenuItem>
                                   <DropdownMenuSeparator />
-                                  <DropdownMenuItem 
+                                  <DropdownMenuItem
                                     onClick={() => handleDeleteDrugInventoryClick(item)}
                                     className="text-destructive focus:text-destructive"
                                   >
@@ -865,9 +883,9 @@ export default function PharmacyPage() {
               <div className="flex items-center justify-between mb-4">
                 <div className="relative w-64">
                   <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input 
-                    type="search" 
-                    placeholder="Search medications..." 
+                  <Input
+                    type="search"
+                    placeholder="Search medications..."
                     className="w-full pl-8"
                     value={drugInventorySummarySearch}
                     onChange={(e) => setDrugInventorySummarySearch(e.target.value)}
@@ -912,27 +930,27 @@ export default function PharmacyPage() {
                             <TableCell className="text-right font-medium">{item.totalQuantity || 0}</TableCell>
                             <TableCell className="text-right">{item.batchCount || 0}</TableCell>
                             <TableCell>
-                              {item.earliestExpiryDate 
+                              {item.earliestExpiryDate
                                 ? new Date(item.earliestExpiryDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
                                 : '-'}
                             </TableCell>
                             <TableCell>
-                              {item.latestExpiryDate 
+                              {item.latestExpiryDate
                                 ? new Date(item.latestExpiryDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
                                 : '-'}
                             </TableCell>
                             <TableCell className="text-right">
-                              {item.averageUnitPrice 
+                              {item.averageUnitPrice
                                 ? `KES ${parseFloat(item.averageUnitPrice).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                                 : '-'}
                             </TableCell>
                             <TableCell className="text-right">
-                              {item.averageSellPrice 
+                              {item.averageSellPrice
                                 ? `KES ${parseFloat(item.averageSellPrice).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                                 : '-'}
                             </TableCell>
                             <TableCell>
-                              <Badge 
+                              <Badge
                                 variant={
                                   item.status === 'out_of_stock' ? 'destructive' :
                                   item.status === 'low_stock' ? 'secondary' :
@@ -994,12 +1012,12 @@ export default function PharmacyPage() {
         </TabsContent>
       </Tabs>
 
-      <AddPrescriptionForm 
-        open={addPrescriptionOpen} 
+      <AddPrescriptionForm
+        open={addPrescriptionOpen}
         onOpenChange={setAddPrescriptionOpen}
         onSuccess={loadPrescriptions}
       />
-      
+
       {/* Add Medication Dialog */}
       <MedicationForm
         open={isAddMedicationOpen}
@@ -1054,7 +1072,7 @@ export default function PharmacyPage() {
                 <div>
                   <p className="text-sm text-muted-foreground">Date</p>
                   <p className="font-medium">
-                    {selectedPrescription.prescriptionDate 
+                    {selectedPrescription.prescriptionDate
                       ? new Date(selectedPrescription.prescriptionDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
                       : '-'}
                   </p>
@@ -1099,7 +1117,7 @@ export default function PharmacyPage() {
                           const unitPrice = item.sellPrice ? parseFloat(item.sellPrice) : null
                           const totalCost = quantity && unitPrice ? quantity * unitPrice : null
                           const isInInventory = item.inInventory === true
-                          
+
                           return (
                             <TableRow key={item.itemId}>
                               <TableCell className="font-medium">{item.medicationName || 'Unknown'}</TableCell>
@@ -1110,12 +1128,12 @@ export default function PharmacyPage() {
                                 {isInInventory ? (quantity || '-') : '-'}
                               </TableCell>
                               <TableCell>
-                                {isInInventory && unitPrice 
+                                {isInInventory && unitPrice
                                   ? `KES ${unitPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                                   : (isInInventory === false ? 'Not in inventory' : 'N/A')}
                               </TableCell>
                               <TableCell>
-                                {isInInventory && totalCost 
+                                {isInInventory && totalCost
                                   ? `KES ${totalCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                                   : (isInInventory === false ? 'N/A' : 'N/A')}
                               </TableCell>
@@ -1152,17 +1170,35 @@ export default function PharmacyPage() {
 
               {selectedPrescription.status === 'pending' && (
                 <div className="flex gap-2 pt-4">
-                  <Button 
-                    onClick={() => {
-                      handleUpdatePrescriptionStatus(selectedPrescription.prescriptionId, 'dispensed')
-                    }}
-                    disabled={updatingStatus === selectedPrescription.prescriptionId.toString()}
-                    className="flex-1"
-                  >
-                    <CheckCircle className="mr-2 h-4 w-4" />
-                    {updatingStatus === selectedPrescription.prescriptionId.toString() ? 'Dispensing...' : 'Mark as Dispensed'}
-                  </Button>
-                  <Button 
+                  {selectedPrescription.invoiceStatus === 'paid' ? (
+                    <Button
+                      onClick={() => {
+                        const patientName = selectedPrescription.firstName && selectedPrescription.lastName
+                          ? `${selectedPrescription.firstName} ${selectedPrescription.lastName}`
+                          : selectedPrescription.patientNumber || 'Unknown Patient'
+                        setSelectedPatientForDispense({
+                          patientId: selectedPrescription.patientId,
+                          patientName: patientName
+                        })
+                        setDispenseDialogOpen(true)
+                      }}
+                      className="flex-1"
+                    >
+                      <Pill className="mr-2 h-4 w-4" />
+                      Dispense Medication
+                    </Button>
+                  ) : (
+                    <Button
+                      disabled
+                      variant="outline"
+                      className="flex-1"
+                      title="Invoice must be paid before dispensing"
+                    >
+                      <AlertCircle className="mr-2 h-4 w-4" />
+                      Invoice Not Paid
+                    </Button>
+                  )}
+                  <Button
                     variant="outline"
                     onClick={() => {
                       handleUpdatePrescriptionStatus(selectedPrescription.prescriptionId, 'cancelled')
@@ -1192,7 +1228,7 @@ export default function PharmacyPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Are you sure?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will delete {medicationToDelete && getMedicationName(medicationToDelete)}. 
+              This will delete {medicationToDelete && getMedicationName(medicationToDelete)}.
               This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -1255,8 +1291,8 @@ export default function PharmacyPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Are you sure?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will delete the drug inventory item for {drugInventoryToDelete && getDrugInventoryItemName(drugInventoryToDelete)} 
-              (Batch: {drugInventoryToDelete?.batchNumber}). 
+              This will delete the drug inventory item for {drugInventoryToDelete && getDrugInventoryItemName(drugInventoryToDelete)}
+              (Batch: {drugInventoryToDelete?.batchNumber}).
               This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -1313,6 +1349,27 @@ export default function PharmacyPage() {
         initialLocation={selectedDrugInventoryForAdjustment?.location}
         initialMedicationName={selectedDrugInventoryForAdjustment?.medicationName}
       />
+
+      {/* Dispense Medication Dialog */}
+      {selectedPatientForDispense && (
+        <DispenseMedicationDialog
+          open={dispenseDialogOpen}
+          onOpenChange={(open) => {
+            setDispenseDialogOpen(open)
+            if (!open) {
+              setSelectedPatientForDispense(null)
+            }
+          }}
+          patientId={selectedPatientForDispense.patientId}
+          onDispensed={() => {
+            loadPrescriptions()
+            // If viewing this prescription, reload it
+            if (selectedPrescription) {
+              handleViewPrescription(selectedPrescription)
+            }
+          }}
+        />
+      )}
     </div>
   )
 }

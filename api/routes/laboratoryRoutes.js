@@ -46,7 +46,7 @@ router.get('/test-types/:id', async (req, res) => {
             'SELECT * FROM lab_test_types WHERE testTypeId = ?',
             [req.params.id]
         );
-        
+
         if (rows.length > 0) {
             res.status(200).json(rows[0]);
         } else {
@@ -101,7 +101,7 @@ router.put('/test-types/:id', async (req, res) => {
     try {
         const { id } = req.params;
         const testData = req.body;
-        
+
         // Check if test type exists
         const [existing] = await pool.execute(
             'SELECT testTypeId FROM lab_test_types WHERE testTypeId = ?',
@@ -174,7 +174,7 @@ router.delete('/test-types/:id', async (req, res) => {
             [id]
         );
 
-        res.status(200).json({ 
+        res.status(200).json({
             message: 'Lab test type deleted successfully',
             testTypeId: id
         });
@@ -194,7 +194,7 @@ router.get('/orders', async (req, res) => {
         const offset = (page - 1) * limit;
 
         let query = `
-            SELECT lo.*, 
+            SELECT lo.*,
                    pt.firstName, pt.lastName, pt.patientNumber,
                    u.firstName as doctorFirstName, u.lastName as doctorLastName
             FROM lab_test_orders lo
@@ -228,39 +228,139 @@ router.get('/orders', async (req, res) => {
  * @route POST /api/laboratory/orders
  * @description Create a new lab test order
  */
+/**
+ * @route POST /api/laboratory/orders
+ * @description Create a new lab test order with Duplicate Prevention and Billing
+ */
 router.post('/orders', async (req, res) => {
     const connection = await pool.getConnection();
     try {
         await connection.beginTransaction();
 
         const { orderNumber, patientId, orderedBy, orderDate, priority, status, clinicalNotes, clinicalIndication, items } = req.body;
+        const userId = req.user?.id || req.user?.userId || null;
 
-        // Generate order number if not provided
+        if (!items || items.length === 0) {
+            return res.status(400).json({ message: 'No tests provided in the order' });
+        }
+
+        // --- DUPLICATE PREVENTION LOGIC ---
+        // Check if any of the requested testTypes already exist for this patient
+        // in an incomplete state (status is not 'completed' and not 'cancelled')
+        for (const item of items) {
+            const [pendingTests] = await connection.execute(
+                `SELECT ltt.testName, lo.orderNumber
+                 FROM lab_test_order_items loi
+                 JOIN lab_test_orders lo ON loi.orderId = lo.orderId
+                 JOIN lab_test_types ltt ON loi.testTypeId = ltt.testTypeId
+                 WHERE lo.patientId = ?
+                 AND loi.testTypeId = ?
+                 AND loi.status NOT IN ('completed', 'cancelled')
+                 AND lo.status != 'cancelled'`,
+                [patientId, item.testTypeId]
+            );
+
+            if (pendingTests.length > 0) {
+                await connection.rollback();
+                return res.status(400).json({
+                    message: `Duplicate Test: '${pendingTests[0].testName}' is already active for this patient under Order ${pendingTests[0].orderNumber}. Please wait for results or cancel the existing order.`
+                });
+            }
+        }
+        // ----------------------------------
+
+        // 1. Generate order number
         let orderNum = orderNumber;
         if (!orderNum) {
             const [count] = await connection.execute('SELECT COUNT(*) as count FROM lab_test_orders');
             orderNum = `LAB-${String(count[0].count + 1).padStart(6, '0')}`;
         }
 
-        // Use clinicalIndication if provided, otherwise use clinicalNotes (for backwards compatibility)
         const clinicalInfo = clinicalIndication || clinicalNotes || null;
 
-        // Insert order
+        // 2. Insert order
         const [result] = await connection.execute(
             `INSERT INTO lab_test_orders (orderNumber, patientId, orderedBy, orderDate, priority, status, clinicalIndication)
              VALUES (?, ?, ?, ?, ?, ?, ?)`,
             [orderNum, patientId, orderedBy, orderDate || new Date(), priority || 'routine', status || 'pending', clinicalInfo]
         );
-
         const orderId = result.insertId;
 
-        // Insert order items
-        if (items && items.length > 0) {
-            for (const item of items) {
+        // 3. Process Items and Fetch Prices for Billing
+        let totalAmount = 0;
+        const invoiceItems = [];
+
+        for (const item of items) {
+            // Save lab order item
+            await connection.execute(
+                `INSERT INTO lab_test_order_items (orderId, testTypeId, notes, status)
+                 VALUES (?, ?, ?, 'pending')`,
+                [orderId, item.testTypeId, (item.notes || item.instructions || null)]
+            );
+
+            // Fetch price/cost details
+            const [testDetails] = await connection.execute(
+                'SELECT testName, cost, testCode FROM lab_test_types WHERE testTypeId = ?',
+                [item.testTypeId]
+            );
+
+            if (testDetails.length > 0) {
+                const price = parseFloat(testDetails[0].cost || 0);
+                totalAmount += price;
+                invoiceItems.push({
+                    description: `Lab Test: ${testDetails[0].testName} (${testDetails[0].testCode})`,
+                    quantity: 1,
+                    unitPrice: price,
+                    totalPrice: price
+                });
+            }
+        }
+
+        // 4. Create Invoice
+        if (invoiceItems.length > 0 && totalAmount > 0) {
+            const today = new Date().toISOString().split('T')[0].replace(/-/g, '');
+            const datePrefix = `INV-${today}-`;
+
+            const [maxResult] = await connection.execute(
+                `SELECT MAX(CAST(SUBSTRING_INDEX(invoiceNumber, '-', -1) AS UNSIGNED)) as maxNum
+                 FROM invoices WHERE invoiceNumber LIKE CONCAT(?, '%')`, [datePrefix]
+            );
+            let nextNum = (maxResult[0]?.maxNum || 0) + 1;
+            let invoiceNumber = `${datePrefix}${String(nextNum).padStart(4, '0')}`;
+
+            const [invResult] = await connection.execute(
+                `INSERT INTO invoices (invoiceNumber, patientId, invoiceDate, totalAmount, balance, status, notes, createdBy)
+                 VALUES (?, ?, CURDATE(), ?, ?, 'pending', ?, ?)`,
+                [invoiceNumber, patientId, totalAmount, totalAmount, `Lab payment - Order: ${orderNum}`, userId]
+            );
+
+            for (const invItem of invoiceItems) {
                 await connection.execute(
-                    `INSERT INTO lab_test_order_items (orderId, testTypeId, notes)
-                     VALUES (?, ?, ?)`,
-                    [orderId, item.testTypeId, (item.notes || item.instructions || null)]
+                    `INSERT INTO invoice_items (invoiceId, description, quantity, unitPrice, totalPrice)
+                     VALUES (?, ?, ?, ?, ?)`,
+                    [invResult.insertId, invItem.description, invItem.quantity, invItem.unitPrice, invItem.totalPrice]
+                );
+            }
+
+            // 5. Cashier Queue Logic
+            const [existingQueue] = await connection.execute(
+                `SELECT queueId FROM queue_entries
+                 WHERE patientId = ? AND servicePoint = 'cashier'
+                 AND status IN ('waiting', 'called', 'serving')`,
+                [patientId]
+            );
+
+            if (existingQueue.length === 0) {
+                const [cashierCount] = await connection.execute(
+                    'SELECT COUNT(*) as count FROM queue_entries WHERE DATE(arrivalTime) = CURDATE() AND servicePoint = "cashier"'
+                );
+                const ticketNumber = `C-${String(cashierCount[0].count + 1).padStart(3, '0')}`;
+                const queuePriority = (priority === 'stat' || priority === 'urgent') ? 'urgent' : 'normal';
+
+                await connection.execute(
+                    `INSERT INTO queue_entries (patientId, ticketNumber, servicePoint, priority, status, notes, createdBy)
+                     VALUES (?, ?, 'cashier', ?, 'waiting', ?, ?)`,
+                    [patientId, ticketNumber, queuePriority, `Lab payment - Order: ${orderNum}`, userId]
                 );
             }
         }
@@ -268,9 +368,7 @@ router.post('/orders', async (req, res) => {
         await connection.commit();
 
         const [newOrder] = await connection.execute(
-            `SELECT lo.*, 
-                    pt.firstName, pt.lastName, pt.patientNumber,
-                    u.firstName as doctorFirstName, u.lastName as doctorLastName
+            `SELECT lo.*, pt.firstName, pt.lastName, pt.patientNumber, u.firstName as doctorFirstName, u.lastName as doctorLastName
              FROM lab_test_orders lo
              LEFT JOIN patients pt ON lo.patientId = pt.patientId
              LEFT JOIN users u ON lo.orderedBy = u.userId
@@ -298,7 +396,7 @@ router.get('/orders/:id', async (req, res) => {
 
         // Get order with patient and doctor info
         const [orders] = await pool.execute(
-            `SELECT lo.*, 
+            `SELECT lo.*,
                     pt.firstName, pt.lastName, pt.patientNumber,
                     u.firstName as doctorFirstName, u.lastName as doctorLastName
              FROM lab_test_orders lo
@@ -399,7 +497,7 @@ router.put('/orders/:id', async (req, res) => {
 
         // Fetch updated order
         const [updated] = await pool.execute(
-            `SELECT lo.*, 
+            `SELECT lo.*,
                     pt.firstName, pt.lastName, pt.patientNumber,
                     u.firstName as doctorFirstName, u.lastName as doctorLastName
              FROM lab_test_orders lo
@@ -437,7 +535,7 @@ router.get('/orders/:id/results', async (req, res) => {
         // Get results for each item
         for (const item of items) {
             const [results] = await pool.execute(
-                `SELECT ltr.*, 
+                `SELECT ltr.*,
                         u1.firstName as performedByFirstName, u1.lastName as performedByLastName,
                         u2.firstName as verifiedByFirstName, u2.lastName as verifiedByLastName
                  FROM lab_test_results ltr
@@ -529,7 +627,7 @@ router.post('/orders/:id/results', async (req, res) => {
 
         // Fetch created result with values
         const [result] = await connection.execute(
-            `SELECT ltr.*, 
+            `SELECT ltr.*,
                     u1.firstName as performedByFirstName, u1.lastName as performedByLastName
              FROM lab_test_results ltr
              LEFT JOIN users u1 ON ltr.performedBy = u1.userId
@@ -635,7 +733,7 @@ router.put('/results/:resultId', async (req, res) => {
 
         // Fetch updated result
         const [result] = await connection.execute(
-            `SELECT ltr.*, 
+            `SELECT ltr.*,
                     u1.firstName as performedByFirstName, u1.lastName as performedByLastName
              FROM lab_test_results ltr
              LEFT JOIN users u1 ON ltr.performedBy = u1.userId
@@ -692,7 +790,7 @@ router.get('/critical-results', async (req, res) => {
             INNER JOIN lab_test_types ltt ON loi.testTypeId = ltt.testTypeId
             INNER JOIN lab_test_results ltr ON loi.itemId = ltr.orderItemId
             INNER JOIN lab_result_values lrv ON ltr.resultId = lrv.resultId
-            INNER JOIN lab_critical_value_ranges lcvr ON ltt.testTypeId = lcvr.testTypeId 
+            INNER JOIN lab_critical_value_ranges lcvr ON ltt.testTypeId = lcvr.testTypeId
                 AND lrv.parameterName = lcvr.parameterName
             WHERE lcvr.isActive = 1
                 AND ltr.status IN ('verified', 'released')
@@ -740,7 +838,7 @@ router.get('/critical-tests', async (req, res) => {
 router.post('/critical-tests', async (req, res) => {
     try {
         const { testTypeId, description } = req.body;
-        
+
         if (!testTypeId) {
             return res.status(400).json({ message: 'testTypeId is required' });
         }
@@ -846,7 +944,7 @@ router.get('/critical-value-ranges', async (req, res) => {
 router.post('/critical-value-ranges', async (req, res) => {
     try {
         const { testTypeId, parameterName, unit, criticalLowValue, criticalHighValue, description } = req.body;
-        
+
         if (!testTypeId || !parameterName) {
             return res.status(400).json({ message: 'testTypeId and parameterName are required' });
         }
