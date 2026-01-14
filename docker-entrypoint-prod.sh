@@ -29,32 +29,43 @@ else
     ls -F
 fi
 
-# 3. Force a Clean Build
-# We remove any existing .next folder to ensure Webpack doesn't use a stale cache
-echo "🧹 Cleaning old build artifacts..."
-rm -rf .next
+# 3. Build only if .next doesn't exist or is incomplete
+if [ -d ".next" ] && [ -f ".next/BUILD_ID" ] && [ -d ".next/standalone" ]; then
+    echo "✅ Build already exists, skipping rebuild..."
+else
+    echo "🧹 Cleaning old build artifacts..."
+    rm -rf .next
 
-echo "📦 Building Next.js application..."
-export DOCKER_BUILD=true
-[ -n "$NEXT_PUBLIC_API_URL" ] && export NEXT_PUBLIC_API_URL && echo "🔗 API URL: $NEXT_PUBLIC_API_URL"
+    echo "📦 Building Next.js application..."
+    export DOCKER_BUILD=true
+    [ -n "$NEXT_PUBLIC_API_URL" ] && export NEXT_PUBLIC_API_URL && echo "🔗 API URL: $NEXT_PUBLIC_API_URL"
 
-# Execute build
-npm run build || {
-    echo "❌ Build failed! This usually means the paths in tsconfig.json don't match the folder structure."
-    echo "Showing directory structure for debugging:"
-    find . -maxdepth 2 -not -path '*/.*'
-    exit 1
-}
+    # Execute build
+    npm run build || {
+        echo "❌ Build failed! This usually means the paths in tsconfig.json don't match the folder structure."
+        echo "Showing directory structure for debugging:"
+        find . -maxdepth 2 -not -path '*/.*'
+        exit 1
+    }
+fi
 
 echo "✅ Build completed successfully!"
 
 # 4. Standalone Mode Configuration
 if [ -d ".next/standalone" ]; then
     echo "📦 Setting up standalone build..."
-    # Standalone needs public and static folders copied manually
-    cp -r public .next/standalone/ 2>/dev/null || true
-    mkdir -p .next/standalone/.next
-    cp -r .next/static .next/standalone/.next/ 2>/dev/null || true
+    # Copy public folder to standalone
+    if [ ! -d ".next/standalone/public" ]; then
+        cp -r public .next/standalone/ 2>/dev/null || true
+    fi
+    # Copy .next directory to standalone/.next (required for standalone mode)
+    if [ ! -d ".next/standalone/.next" ]; then
+        mkdir -p .next/standalone/.next
+        cp -r .next/static .next/standalone/.next/ 2>/dev/null || true
+        cp -r .next/server .next/standalone/.next/ 2>/dev/null || true
+        cp .next/BUILD_ID .next/standalone/.next/ 2>/dev/null || true
+        cp .next/*.json .next/standalone/.next/ 2>/dev/null || true
+    fi
     echo "✅ Standalone build configured"
 fi
 

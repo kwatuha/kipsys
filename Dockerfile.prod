@@ -1,17 +1,25 @@
 # syntax=docker/dockerfile:1.5
 # Production Dockerfile for Next.js Frontend
-FROM node:18-alpine
+# Using standard Node image instead of Alpine to avoid SWC binary issues
+FROM node:18-slim
 
-# Install bash and build tools
-# We need these because Next.js build sometimes requires sharp or other native modules
-RUN apk add --no-cache bash curl wget python3 make g++
+# Install build tools and glibc compatibility
+RUN apt-get update && apt-get install -y \
+    bash \
+    curl \
+    wget \
+    python3 \
+    make \
+    g++ \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 # 1. Copy package files
 COPY package*.json ./
 
-# 2. Copy the entire project 
+# 2. Copy the entire project
 # (This includes tsconfig.json, components/, and app/ which are vital for aliases)
 COPY . .
 
