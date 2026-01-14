@@ -71,7 +71,6 @@ import {
 } from "@/components/ui/alert-dialog"
 import { patientApi, doctorsApi, pharmacyApi, laboratoryApi, medicalRecordsApi, billingApi, proceduresApi, serviceChargeApi, appointmentsApi, queueApi } from "@/lib/api"
 import { useCriticalNotifications } from "@/lib/critical-notifications-context"
-import { checkAndNotifyCriticalVitals } from "@/lib/critical-vitals-utils"
 import { toast } from "@/components/ui/use-toast"
 import { useAuth } from "@/lib/auth/auth-context"
 
@@ -307,6 +306,8 @@ export function PatientEncounterForm({
   const [patientVitals, setPatientVitals] = useState<any[]>([])
   const [todayVitals, setTodayVitals] = useState<any | null>(null)
   const [loadingPatientData, setLoadingPatientData] = useState(false)
+  const [isLoadingPatientData, setIsLoadingPatientData] = useState(false) // Prevent multiple simultaneous loads
+  const [lastLoadedPatientId, setLastLoadedPatientId] = useState<string | null>(null) // Track last loaded patient
   const [selectedDiagnoses, setSelectedDiagnoses] = useState<any[]>([])
   const { addNotification, notifications } = useCriticalNotifications()
 
@@ -363,124 +364,133 @@ export function PatientEncounterForm({
 
   const patientId = form.watch("patientId")
 
-  // Debug: Log when patientId or notifications change
-  useEffect(() => {
-    if (open && patientId) {
-      console.log('🔍 [ENCOUNTER FORM] Patient ID or notifications changed:', {
-        patientId,
-        patientIdType: typeof patientId,
-        notificationsCount: notifications.length,
-        matchingNotifications: notifications.filter(n =>
-          n.patientId === patientId.toString() || n.patientId === String(patientId)
-        ).length
-      })
-    }
-  }, [open, patientId, notifications])
-
   // Reset loading state when dialog closes
   useEffect(() => {
     if (!open) {
+      console.log('🚪 [ENCOUNTER FORM] Dialog closing - clearing all loading states')
       setLoading(false)
       setIsLoadingData(false)
+      setIsLoadingPatientData(false)
+      setLoadingPatientData(false)
+      setLastLoadedPatientId(null)
       setError(null)
     }
   }, [open])
 
-  // Load saved draft when form opens
+  // Load saved draft when form opens - only run once when form opens
   useEffect(() => {
-    if (open) {
-      loadData()
-      //const savedDraft = loadDraftFromStorage()
+    if (!open) return
+    if (isLoadingData) return // Don't run if already loading
 
-        const patientId = initialPatientId || form.getValues("patientId")
-        const savedDraft = loadDraftFromStorage(patientId)
+    console.log('📂 [ENCOUNTER FORM] Form opened - calling loadData')
+    // Ensure loading state is cleared before starting
+    setLoading(false)
+    setIsLoadingData(false)
 
-      if (savedDraft) {
-        if (savedDraft.encounterDate) {
-          savedDraft.encounterDate = new Date(savedDraft.encounterDate)
-        }
-        // Clean up empty medication entries
-        if (savedDraft.medications) {
-          savedDraft.medications = savedDraft.medications.filter((med: any) =>
-            med?.medicationId && med.medicationId.trim() !== ""
-          )
-        }
-        // Clean up empty procedure entries
-        if (savedDraft.procedures) {
-          savedDraft.procedures = savedDraft.procedures.filter((proc: any) =>
-            proc?.procedureId && proc.procedureId.trim() !== ""
-          )
-        }
-        // Clean up empty order entries
-        if (savedDraft.orders) {
-          savedDraft.orders = savedDraft.orders.filter((order: any) =>
-            order?.chargeId && order.chargeId.trim() !== ""
-          )
-        }
-        form.reset(savedDraft)
-        setHasUnsavedChanges(true)
-      } else {
-        // Auto-fill doctor with logged-in user if not set and user is a doctor
-        let doctorId = initialDoctorId || ""
-        if (!doctorId && user?.id && doctors.length > 0) {
-          const currentUserAsDoctor = doctors.find((doctor: any) =>
-            doctor.userId?.toString() === user.id.toString() ||
-            doctor.id?.toString() === user.id.toString()
-          )
-          if (currentUserAsDoctor) {
-            doctorId = currentUserAsDoctor.userId?.toString() || currentUserAsDoctor.id?.toString() || ""
-          }
-        }
+    // Add a safety timeout to ensure loading state clears even if loadData hangs
+    const safetyTimeout = setTimeout(() => {
+      console.warn('⚠️ [ENCOUNTER FORM] Safety timeout - forcing loading state clear')
+      setLoading(false)
+      setIsLoadingData(false)
+    }, 35000) // 35 seconds - slightly longer than loadData timeout
 
-        form.reset({
-          patientId: initialPatientId || "",
-          doctorId: doctorId,
-          encounterDate: new Date(new Date().setHours(0, 0, 0, 0)), // Today's date at midnight
-          visitType: "Outpatient",
-          department: "",
-          chiefComplaint: "",
-          symptoms: "",
-          historyOfPresentIllness: "",
-          physicalExamination: "",
-          diagnosis: "",
-          treatment: "",
-          outcome: "",
-          notes: "",
-          medications: [],
-          labTests: [],
-          procedures: [],
-          orders: [],
-        })
-        setHasUnsavedChanges(false)
+    loadData().finally(() => {
+      clearTimeout(safetyTimeout)
+    })
+
+    const patientId = initialPatientId || form.getValues("patientId")
+    const savedDraft = loadDraftFromStorage(patientId)
+
+    if (savedDraft) {
+      if (savedDraft.encounterDate) {
+        savedDraft.encounterDate = new Date(savedDraft.encounterDate)
       }
-      setError(null)
-    }
-  }, [open, form, initialPatientId, initialDoctorId, user, doctors])
+      // Clean up empty medication entries
+      if (savedDraft.medications) {
+        savedDraft.medications = savedDraft.medications.filter((med: any) =>
+          med?.medicationId && med.medicationId.trim() !== ""
+        )
+      }
+      // Clean up empty procedure entries
+      if (savedDraft.procedures) {
+        savedDraft.procedures = savedDraft.procedures.filter((proc: any) =>
+          proc?.procedureId && proc.procedureId.trim() !== ""
+        )
+      }
+      // Clean up empty order entries
+      if (savedDraft.orders) {
+        savedDraft.orders = savedDraft.orders.filter((order: any) =>
+          order?.chargeId && order.chargeId.trim() !== ""
+        )
+      }
+      form.reset(savedDraft)
+      setHasUnsavedChanges(true)
+    } else {
+      // Get current doctor ID from form if already set, otherwise use initialDoctorId
+      const currentDoctorId = form.getValues("doctorId") || initialDoctorId || ""
 
-  // Auto-save form data to localStorage
+      form.reset({
+        patientId: initialPatientId || "",
+        doctorId: currentDoctorId, // Preserve existing doctor ID if set
+        encounterDate: new Date(new Date().setHours(0, 0, 0, 0)), // Today's date at midnight
+        visitType: "Outpatient",
+        department: "",
+        chiefComplaint: "",
+        symptoms: "",
+        historyOfPresentIllness: "",
+        physicalExamination: "",
+        diagnosis: "",
+        treatment: "",
+        outcome: "",
+        notes: "",
+        medications: [],
+        labTests: [],
+        procedures: [],
+        orders: [],
+      })
+      setHasUnsavedChanges(false)
+    }
+    setError(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]) // Only depend on 'open' to prevent multiple triggers
+
+  // Auto-save form data to localStorage - debounced to prevent excessive writes
   useEffect(() => {
     if (!open) return
 
-    const subscription = form.watch((value) => {
-      const hasData = value.patientId || value.doctorId || value.chiefComplaint ||
-                      value.symptoms || value.historyOfPresentIllness || value.physicalExamination ||
-                      value.diagnosis || value.treatment || value.notes ||
-                      (value.medications && value.medications.length > 0) ||
-                      (value.labTests && value.labTests.length > 0) ||
-                      (value.procedures && value.procedures.length > 0) ||
-                      (value.orders && value.orders.length > 0)
+    let saveTimeout: NodeJS.Timeout | null = null
 
-      if (hasData) {
-        saveDraftToStorage(value as any)
-        setHasUnsavedChanges(true)
-      } else {
-        // clearDraftFromStorage()
-        clearDraftFromStorage(data.patientId)
-        setHasUnsavedChanges(false)
+    const subscription = form.watch((value) => {
+      // Debounce the save operation to prevent excessive localStorage writes
+      if (saveTimeout) {
+        clearTimeout(saveTimeout)
       }
+
+      saveTimeout = setTimeout(() => {
+        const hasData = value.patientId || value.doctorId || value.chiefComplaint ||
+                        value.symptoms || value.historyOfPresentIllness || value.physicalExamination ||
+                        value.diagnosis || value.treatment || value.notes ||
+                        (value.medications && value.medications.length > 0) ||
+                        (value.labTests && value.labTests.length > 0) ||
+                        (value.procedures && value.procedures.length > 0) ||
+                        (value.orders && value.orders.length > 0)
+
+        if (hasData) {
+          saveDraftToStorage(value as any)
+          setHasUnsavedChanges(true)
+        } else {
+          clearDraftFromStorage(value.patientId)
+          setHasUnsavedChanges(false)
+        }
+      }, 500) // Debounce by 500ms
     })
 
-    return () => subscription.unsubscribe()
+    return () => {
+      if (saveTimeout) {
+        clearTimeout(saveTimeout)
+      }
+      subscription.unsubscribe()
+    }
   }, [form, open])
 
   // Reset selected diagnoses when diagnosis sheet closes
@@ -500,7 +510,11 @@ export function PatientEncounterForm({
   // Load patient data when patient is selected
   useEffect(() => {
     if (patientId && open) {
-      loadPatientData(patientId)
+      // Only load if patientId changed or we haven't loaded this patient yet
+      if (patientId !== lastLoadedPatientId && !isLoadingPatientData) {
+        loadPatientData(patientId)
+        setLastLoadedPatientId(patientId)
+      }
     } else {
       setPatientData(null)
       setPatientAllergies([])
@@ -509,40 +523,65 @@ export function PatientEncounterForm({
       setPatientHistory([])
       setPatientVitals([])
       setTodayVitals(null)
+      setLastLoadedPatientId(null)
     }
-  }, [patientId, open])
+  }, [patientId, open, lastLoadedPatientId, isLoadingPatientData])
 
 
+  // Auto-fill doctor field when doctors are loaded and form is open
+  // Only run once when doctors are first loaded
   useEffect(() => {
-  if (!open) return
-  if (!patientId) return
+    if (!open || !patientId) return
+    if (doctors.length === 0) return // Wait for doctors to load
+    if (initialDoctorId) return // Don't override if initialDoctorId is provided
 
-  // Auto-fill doctor with logged-in user if not provided and user is a doctor
-  let doctorId = initialDoctorId || ""
-  if (!doctorId && user?.id && doctors.length > 0) {
-    const currentUserAsDoctor = doctors.find((doctor: any) =>
-      doctor.userId?.toString() === user.id.toString() ||
-      doctor.id?.toString() === user.id.toString()
-    )
-    if (currentUserAsDoctor) {
-      doctorId = currentUserAsDoctor.userId?.toString() || currentUserAsDoctor.id?.toString() || ""
+    // Check if doctor field is already filled
+    const currentDoctorId = form.getValues("doctorId")
+    if (currentDoctorId) return // Don't override if already set
+
+    // Auto-fill doctor with logged-in user if they are a doctor
+    if (user?.id) {
+      const currentUserAsDoctor = doctors.find((doctor: any) =>
+        doctor.userId?.toString() === user.id.toString() ||
+        doctor.id?.toString() === user.id.toString()
+      )
+      if (currentUserAsDoctor) {
+        const doctorId = currentUserAsDoctor.userId?.toString() || currentUserAsDoctor.id?.toString() || ""
+        if (doctorId) {
+          form.setValue('doctorId', doctorId, { shouldDirty: false })
+          console.log('✅ Auto-filled doctor field with logged-in user:', user.name || user.username)
+        }
+      }
     }
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doctors.length, open, patientId]) // Only depend on doctors.length, not the full array
 
-  // Reset form when switching patients
-  form.reset({
-    patientId,
-    doctorId: doctorId,
-    encounterDate: new Date(new Date().setHours(0, 0, 0, 0)),
-    visitType: "Outpatient",
-    medications: [],
-    labTests: [],
-    procedures: [],
-    orders: [],
-  })
+  // Reset form when switching patients (but don't reset doctor if it was auto-filled)
+  // Only reset if patientId actually changed
+  useEffect(() => {
+    if (!open) return
+    if (!patientId) return
 
-  setHasUnsavedChanges(false)
-}, [patientId, initialDoctorId, user, doctors, form])
+    // Check if this is a new patient (different from last loaded)
+    if (patientId === lastLoadedPatientId) return // Don't reset if same patient
+
+    const currentDoctorId = form.getValues("doctorId") || initialDoctorId || ""
+
+    // Reset form when switching patients
+    form.reset({
+      patientId,
+      doctorId: currentDoctorId, // Preserve existing doctor ID
+      encounterDate: new Date(new Date().setHours(0, 0, 0, 0)),
+      visitType: "Outpatient",
+      medications: [],
+      labTests: [],
+      procedures: [],
+      orders: [],
+    })
+
+    setHasUnsavedChanges(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [patientId, open, lastLoadedPatientId]) // Removed form and initialDoctorId to prevent unnecessary resets
 
 
   // Populate form with today's encounter data when patient data is loaded
@@ -750,13 +789,15 @@ export function PatientEncounterForm({
   const loadData = async () => {
     // Prevent multiple simultaneous calls
     if (isLoadingData) {
-      console.log('loadData already in progress, skipping...')
+      console.log('⏸️ [ENCOUNTER FORM] loadData already in progress, skipping...')
       return
     }
 
+    console.log('📋 [ENCOUNTER FORM] Starting loadData...')
+
     // Add timeout to prevent infinite loading
     const timeoutId = setTimeout(() => {
-      console.warn('loadData is taking too long, clearing loading state')
+      console.warn('⚠️ [ENCOUNTER FORM] loadData timeout after 30s - clearing loading state')
       setLoading(false)
       setIsLoadingData(false)
       setError('Loading is taking longer than expected. Please try again.')
@@ -810,20 +851,35 @@ export function PatientEncounterForm({
         console.error("Error loading inventory data (non-blocking):", error)
         // Don't set error state for inventory loading failures as it's not critical
       })
+
+      console.log('✅ [ENCOUNTER FORM] loadData completed successfully')
     } catch (err: any) {
       clearTimeout(timeoutId)
       setError(err.message || 'Failed to load data')
-      console.error('Error loading form data:', err)
+      console.error('❌ [ENCOUNTER FORM] Error loading form data:', err)
+      // Clear loading states immediately on error
+      setLoading(false)
+      setIsLoadingData(false)
     } finally {
       // Always clear loading state, even if there was an error
       clearTimeout(timeoutId)
+      console.log('🔄 [ENCOUNTER FORM] Clearing loadData loading states')
       setLoading(false)
       setIsLoadingData(false)
     }
   }
 
   const loadPatientData = async (id: string) => {
+    // Prevent multiple simultaneous calls
+    if (isLoadingPatientData) {
+      console.log('⏸️ [ENCOUNTER FORM] loadPatientData already in progress, skipping...')
+      return
+    }
+
+    console.log('📋 [ENCOUNTER FORM] Starting loadPatientData for patient:', id)
+
     try {
+      setIsLoadingPatientData(true)
       setLoadingPatientData(true)
       const [patient, allergies, prescriptions, labOrders, records, vitals, procedures, invoices] = await Promise.all([
         patientApi.getById(id).catch(() => null),
@@ -836,12 +892,17 @@ export function PatientEncounterForm({
         billingApi.getInvoices(id).catch(() => []), // Get all invoices for the patient
       ])
 
-      // Fetch full order details with items for pending/in-progress orders to enable duplicate checking
+      // Only fetch full order details for pending/in-progress orders that don't have items
+      // Limit to first 5 to avoid excessive API calls
+      const pendingLabOrders = (labOrders || []).filter((order: any) =>
+        (order.status === 'pending' || order.status === 'sample_collected' || order.status === 'in_progress') &&
+        (!order.items || order.items.length === 0)
+      ).slice(0, 5) // Limit to 5 to prevent too many API calls
+
       const labOrdersWithItems = await Promise.all(
         (labOrders || []).map(async (order: any) => {
-          // Only fetch details for pending/in-progress orders (where duplicate checking matters)
-          if ((order.status === 'pending' || order.status === 'sample_collected' || order.status === 'in_progress') &&
-              (!order.items || order.items.length === 0)) {
+          // Only fetch details for pending/in-progress orders that need it
+          if (pendingLabOrders.some(po => po.orderId === order.orderId)) {
             try {
               const fullOrder = await laboratoryApi.getOrder(order.orderId.toString())
               return fullOrder || order
@@ -854,13 +915,18 @@ export function PatientEncounterForm({
         })
       )
 
-      // Fetch full prescription details with items (especially for today's prescriptions to populate form)
+      // Only fetch full prescription details for today's prescriptions or pending ones without items
+      // Limit to first 5 to avoid excessive API calls
       const todayStr = format(new Date(), 'yyyy-MM-dd')
+      const prescriptionsNeedingDetails = (prescriptions || []).filter((prescription: any) => {
+        const prescriptionDateStr = format(new Date(prescription.prescriptionDate), 'yyyy-MM-dd')
+        return ((!prescription.items || prescription.items.length === 0) || prescriptionDateStr === todayStr)
+      }).slice(0, 5) // Limit to 5 to prevent too many API calls
+
       const prescriptionsWithItems = await Promise.all(
         (prescriptions || []).map(async (prescription: any) => {
-          const prescriptionDateStr = format(new Date(prescription.prescriptionDate), 'yyyy-MM-dd')
-          // Fetch full prescription details to get items (especially for today's or pending prescriptions)
-          if ((!prescription.items || prescription.items.length === 0) || prescriptionDateStr === todayStr) {
+          // Only fetch details for prescriptions that need it
+          if (prescriptionsNeedingDetails.some(p => p.prescriptionId === prescription.prescriptionId)) {
             try {
               const fullPrescription = await pharmacyApi.getPrescription(prescription.prescriptionId.toString())
               return fullPrescription || prescription
@@ -873,14 +939,16 @@ export function PatientEncounterForm({
         })
       )
 
-      // Fetch invoice details for invoices that might contain consumables/orders
-      // We'll filter by notes containing "Consumables ordered" and fetch their items
+      // Only fetch invoice details for invoices that might contain consumables/orders
+      // Limit to first 3 to avoid excessive API calls
       let consumablesInvoices: any[] = []
       if (invoices && invoices.length > 0) {
         // Filter invoices that have notes containing "Consumables ordered"
-        const potentialConsumableInvoices = invoices.filter((invoice: any) => {
-          return invoice.notes && invoice.notes.toLowerCase().includes('consumables ordered')
-        })
+        const potentialConsumableInvoices = invoices
+          .filter((invoice: any) => {
+            return invoice.notes && invoice.notes.toLowerCase().includes('consumables ordered')
+          })
+          .slice(0, 3) // Limit to 3 to prevent too many API calls
 
         // Fetch full invoice details (including items) for these invoices
         if (potentialConsumableInvoices.length > 0) {
@@ -908,16 +976,25 @@ export function PatientEncounterForm({
       setPatientOrders(consumablesInvoices || [])
       setPatientHistory(records || [])
       setPatientVitals(vitals || [])
-      // Get today's most recent vitals
+      // Get today's most recent vitals (no need to check critical vitals here)
+      // Critical vitals are already checked:
+      // 1. When vitals are entered (triage form)
+      // 2. When lab results are received (lab results processing)
+      // 3. By the global critical alerts scanner
+      // We just display existing notifications in the banner - no API calls needed
       if (vitals && vitals.length > 0) {
         setTodayVitals(vitals[0])
       } else {
         setTodayVitals(null)
       }
+
+      console.log('✅ [ENCOUNTER FORM] loadPatientData completed for patient:', id)
     } catch (err: any) {
-      console.error('Error loading patient data:', err)
+      console.error('❌ [ENCOUNTER FORM] Error loading patient data:', err)
     } finally {
+      console.log('🔄 [ENCOUNTER FORM] Clearing loadPatientData loading states for patient:', id)
       setLoadingPatientData(false)
+      setIsLoadingPatientData(false)
     }
   }
 
@@ -965,6 +1042,18 @@ export function PatientEncounterForm({
   async function onSubmit(data: EncounterFormValues) {
     try {
       setError(null)
+
+      // Debug: Log form data before processing
+      console.log('📋 Form submission data:', {
+        medications: data.medications?.length || 0,
+        labTests: data.labTests?.length || 0,
+        procedures: data.procedures?.length || 0,
+        orders: data.orders?.length || 0,
+        medicationDetails: data.medications?.map((m: any) => ({ medicationId: m.medicationId, alreadySaved: m.alreadySaved })),
+        labTestDetails: data.labTests?.map((t: any) => ({ testTypeId: t.testTypeId, alreadySaved: t.alreadySaved })),
+        procedureDetails: data.procedures?.map((p: any) => ({ procedureId: p.procedureId, alreadySaved: p.alreadySaved })),
+        orderDetails: data.orders?.map((o: any) => ({ chargeId: o.chargeId, alreadySaved: o.alreadySaved })),
+      })
 
       // Validate medications if any
       if (data.medications && data.medications.length > 0) {
@@ -1040,11 +1129,15 @@ export function PatientEncounterForm({
           items,
         }
 
-        await pharmacyApi.createPrescription(prescriptionData)
+        const prescriptionResult = await pharmacyApi.createPrescription(prescriptionData)
+        console.log('✅ Prescription created:', prescriptionResult)
+      } else {
+        console.log('⏭️ Skipping prescription creation - no unsaved medications')
       }
 
       // 3. Create lab test orders if any (only unsaved ones)
       const unsavedLabTests = data.labTests?.filter((test: any) => !test.alreadySaved) || []
+      console.log('🧪 Saving lab tests:', { total: data.labTests?.length || 0, unsaved: unsavedLabTests.length })
       if (unsavedLabTests.length > 0) {
         // Group tests by priority - create one order per priority level
         const testsByPriority = unsavedLabTests.reduce((acc: any, test: any) => {
@@ -1074,14 +1167,18 @@ export function PatientEncounterForm({
           }
 
           const createdOrder = await laboratoryApi.createOrder(labOrderData)
+          console.log('✅ Lab order created:', createdOrder)
           createdOrders.push({ order: createdOrder, tests: testList })
         }
         // Note: Invoice creation and cashier queue addition are handled automatically by the API route
         // No need to create invoice here - it's done in api/routes/laboratoryRoutes.js
+      } else {
+        console.log('⏭️ Skipping lab test creation - no unsaved lab tests')
       }
 
       // 4. Create patient procedures if any (only unsaved ones)
       const unsavedProcedures = data.procedures?.filter((proc: any) => !proc.alreadySaved) || []
+      console.log('🏥 Saving procedures:', { total: data.procedures?.length || 0, unsaved: unsavedProcedures.length })
       if (unsavedProcedures.length > 0) {
         const procedurePromises = unsavedProcedures.map((procedure: any) => {
           const procedureData = {
@@ -1094,13 +1191,17 @@ export function PatientEncounterForm({
           }
            return proceduresApi.createPatientProcedure(procedureData)
         })
-        await Promise.all(procedurePromises)
+        const procedureResults = await Promise.all(procedurePromises)
+        console.log('✅ Procedures created:', procedureResults.length)
         // Note: Invoice creation and cashier queue addition are handled automatically by the API route
         // No need to create invoice here - it's done in api/routes/proceduresRoutes.js
+      } else {
+        console.log('⏭️ Skipping procedure creation - no unsaved procedures')
       }
 
       // 5. Create orders/consumables invoice if any (only unsaved ones)
       const unsavedOrders = data.orders?.filter((order: any) => !order.alreadySaved) || []
+      console.log('📦 Saving orders:', { total: data.orders?.length || 0, unsaved: unsavedOrders.length })
       if (unsavedOrders.length > 0) {
         const orderInvoiceItems = unsavedOrders.map((order: any) => {
           const consumable = consumables.find((c: any) => c.chargeId?.toString() === order.chargeId)
@@ -1130,7 +1231,8 @@ export function PatientEncounterForm({
             notes: `Consumables ordered during encounter on ${format(data.encounterDate, 'PPP')}.`,
           }
 
-          await billingApi.createInvoice(invoiceData)
+          const invoiceResult = await billingApi.createInvoice(invoiceData)
+          console.log('✅ Invoice created for orders:', invoiceResult)
 
           // Add patient to cashier queue for consumables payment (check for duplicates first)
           try {
@@ -1146,6 +1248,8 @@ export function PatientEncounterForm({
             console.log('Queue entry for consumables:', queueError?.response?.isDuplicate ? 'Patient already in queue' : queueError.message)
           }
         }
+      } else {
+        console.log('⏭️ Skipping order creation - no unsaved orders')
       }
 
       // 6. Create next appointment if outcome is "Follow-up Scheduled" and appointment details are provided
@@ -1179,51 +1283,57 @@ export function PatientEncounterForm({
       clearDraftFromStorage(form.getValues('patientId'))
       setHasUnsavedChanges(false)
 
-      // Check for critical values AFTER saving encounter
-      if (data.patientId) {
-        // Reload patient data to get latest vitals
-        await loadPatientData(data.patientId)
+      // Note: Critical vitals are NOT checked in this form
+      // Critical alerts are checked:
+      // 1. When vitals are entered (triage form)
+      // 2. When lab results are received (lab results processing)
+      // 3. By the global critical alerts scanner
+      // We only display existing notifications here - no API calls needed
 
-        // Get the most recent vitals after reload
-        // We need to fetch vitals again to check for critical values
-        try {
-          const vitals = await patientApi.getVitals(data.patientId, true)
-          if (vitals && vitals.length > 0) {
-            const latestVitals = vitals[0]
-            const vitalsForCheck = {
-              systolicBP: latestVitals.systolicBP,
-              diastolicBP: latestVitals.diastolicBP,
-              heartRate: latestVitals.heartRate,
-              respiratoryRate: latestVitals.respiratoryRate,
-              temperature: latestVitals.temperature,
-              oxygenSaturation: latestVitals.oxygenSaturation,
-              glasgowComaScale: latestVitals.glasgowComaScale,
-              bloodGlucose: latestVitals.bloodGlucose,
-            }
-
-            const patientName = patientData ? getPatientName(patientData) : undefined
-            await checkAndNotifyCriticalVitals(
-              vitalsForCheck,
-              data.patientId,
-              patientName,
-              addNotification
-            )
-          }
-        } catch (err) {
-          console.error('Error checking critical vitals after encounter save:', err)
-        }
-      }
+      // Show success message
+      toast({
+        title: "Encounter Saved",
+        description: "Patient encounter has been saved successfully.",
+      })
 
       if (onSuccess) {
         onSuccess()
       }
+
+      // Clear loading states before closing
+      setLoadingPatientData(false)
+      setIsLoadingPatientData(false)
+      setLoading(false)
+      setIsLoadingData(false)
+
       onOpenChange(false)
       form.reset()
     } catch (err: any) {
       setError(err.message || 'Failed to save encounter')
-      console.error('Error saving encounter:', err)
+      console.error('❌ Error saving encounter:', err)
+      console.error('Error details:', {
+        message: err.message,
+        stack: err.stack,
+        response: err.response,
+      })
+
+      // Clear all loading states on error
+      setIsSubmitting(false)
+      setLoadingPatientData(false)
+      setIsLoadingPatientData(false)
+      setLoading(false)
+      setIsLoadingData(false)
+
+      toast({
+        title: "Error Saving Encounter",
+        description: err.message || 'Failed to save encounter. Please try again.',
+        variant: "destructive",
+      })
     } finally {
       setIsSubmitting(false)
+      // Ensure loading states are cleared
+      setLoadingPatientData(false)
+      setIsLoadingPatientData(false)
     }
   }
 
@@ -1431,7 +1541,7 @@ const clearDraftFromStorage = (patientId:any) => {
     return 'Unknown medication'
   }
 
-  // Fetch missing medications when form data changes
+  // Fetch missing medications when form data changes - debounced to prevent excessive calls
   useEffect(() => {
     if (!open || medications.length === 0) return
 
@@ -1448,10 +1558,11 @@ const clearDraftFromStorage = (patientId:any) => {
           return !found
         })
 
-      if (missingIds.length > 0) {
+      // Only fetch if there are missing medications (limit to 10 to prevent excessive calls)
+      if (missingIds.length > 0 && missingIds.length <= 10) {
         try {
           const fetchedMeds = await Promise.all(
-            missingIds.map((id: string) => pharmacyApi.getMedication(id).catch(() => null))
+            missingIds.slice(0, 10).map((id: string) => pharmacyApi.getMedication(id).catch(() => null))
           )
           const validMeds = fetchedMeds.filter(Boolean)
           if (validMeds.length > 0) {
@@ -1473,10 +1584,11 @@ const clearDraftFromStorage = (patientId:any) => {
       }
     }
 
-    // Use a small delay to avoid too many calls
-    const timer = setTimeout(fetchMissingMedications, 500)
+    // Use a longer delay to avoid too many calls (increased from 500ms to 1000ms)
+    const timer = setTimeout(fetchMissingMedications, 1000)
     return () => clearTimeout(timer)
-  }, [medicationFields.length, open, medications.length])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [medicationFields.length, open]) // Removed medications.length to prevent loop
 
   const getMedicationCost = (medicationId: string, quantity: string) => {
     if (!medicationId || !quantity) return 0
@@ -2020,51 +2132,19 @@ const clearDraftFromStorage = (patientId:any) => {
               return null
             }
 
-            // Debug logging
-            console.log('🔍 [ENCOUNTER FORM] Checking for critical alerts:', {
-              patientId: currentPatientId,
-              patientIdType: typeof patientId,
-              notificationsCount: notifications.length,
-              notifications: notifications.map(n => ({
-                patientId: n.patientId,
-                patientIdType: typeof n.patientId,
-                patientName: n.patientName,
-                alertsCount: n.alerts.length
-              }))
-            })
-
-            // Find matching notifications - compare as strings
+            // Find matching notifications - compare as strings (no debug logging to prevent spam)
             const patientNotifications = notifications.filter(n => {
               const notificationPatientId = String(n.patientId).trim()
-              const match = notificationPatientId === currentPatientId
-
-              if (match) {
-                console.log('✅ [ENCOUNTER FORM] Found matching notification:', {
-                  notificationPatientId,
-                  formPatientId: currentPatientId,
-                  alerts: n.alerts.length,
-                  patientName: n.patientName
-                })
-              }
-
-              return match
+              return notificationPatientId === currentPatientId
             })
 
             if (patientNotifications.length === 0) {
-              console.log('⚠️ [ENCOUNTER FORM] No notifications found for patient:', currentPatientId)
               return null
             }
 
             const patientAlert = patientNotifications[0]
             const criticalAlerts = patientAlert.alerts.filter(a => a.severity === 'critical')
             const urgentAlerts = patientAlert.alerts.filter(a => a.severity === 'urgent')
-
-            console.log('✅ [ENCOUNTER FORM] Displaying critical alerts banner:', {
-              criticalCount: criticalAlerts.length,
-              urgentCount: urgentAlerts.length,
-              totalAlerts: patientAlert.alerts.length,
-              patientName: patientAlert.patientName
-            })
 
             return (
               <div className="mx-6 mt-4 mb-0 border-2 border-red-500 bg-red-50 dark:bg-red-950/20 rounded-lg p-4 flex-shrink-0">
@@ -2107,7 +2187,7 @@ const clearDraftFromStorage = (patientId:any) => {
                     {error}
                   </div>
                 )}
-                {loading && (
+                {(loading || isLoadingData) && (
                   <div className="flex items-center justify-center py-4 flex-shrink-0">
                     <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                     <span className="ml-2 text-sm text-muted-foreground">Loading data...</span>
@@ -3853,8 +3933,10 @@ const clearDraftFromStorage = (patientId:any) => {
                   // Update existing medication
                   form.setValue(`medications.${editingMedicationIndex}`, tempMedication)
                 } else {
-                  // Add new medication
-                  appendMedication(tempMedication)
+                  // Add new medication (ensure alreadySaved is not set)
+                  const newMedication = { ...tempMedication, alreadySaved: false }
+                  console.log('➕ Adding medication to form:', newMedication)
+                  appendMedication(newMedication)
                 }
                 setAddMedicationDialogOpen(false)
                 setEditingMedicationIndex(null)
@@ -3984,8 +4066,10 @@ const clearDraftFromStorage = (patientId:any) => {
                       // Update existing test
                       form.setValue(`labTests.${editingLabTestIndex}`, tempLabTest)
                     } else {
-                      // Add new test
-                      appendLabTest(tempLabTest)
+                      // Add new test (ensure alreadySaved is not set)
+                      const newTest = { ...tempLabTest, alreadySaved: false }
+                      console.log('➕ Adding lab test to form:', newTest)
+                      appendLabTest(newTest)
                     }
                     setAddTestDialogOpen(false)
                     setEditingLabTestIndex(null)
@@ -4084,7 +4168,10 @@ const clearDraftFromStorage = (patientId:any) => {
                 if (editingProcedureIndex !== null) {
                   form.setValue(`procedures.${editingProcedureIndex}`, tempProcedure)
                 } else {
-                  appendProcedure(tempProcedure)
+                  // Add new procedure (ensure alreadySaved is not set)
+                  const newProcedure = { ...tempProcedure, alreadySaved: false }
+                  console.log('➕ Adding procedure to form:', newProcedure)
+                  appendProcedure(newProcedure)
                 }
                 setAddProcedureDialogOpen(false)
                 setEditingProcedureIndex(null)
@@ -4183,7 +4270,10 @@ const clearDraftFromStorage = (patientId:any) => {
                 if (editingOrderIndex !== null) {
                   form.setValue(`orders.${editingOrderIndex}`, tempOrder)
                 } else {
-                  appendOrder(tempOrder)
+                  // Add new order (ensure alreadySaved is not set)
+                  const newOrder = { ...tempOrder, alreadySaved: false }
+                  console.log('➕ Adding order to form:', newOrder)
+                  appendOrder(newOrder)
                 }
                 setAddOrderDialogOpen(false)
                 setEditingOrderIndex(null)

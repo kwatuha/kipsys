@@ -59,10 +59,18 @@ eval "$SSH_CMD" << 'REMOTE_EOF'
 
     echo "🧹 Wiping old files to ensure a clean build context..."
     find . -maxdepth 1 ! -name '.env*' ! -name 'backup_*' ! -name '.' -exec rm -rf {} +
-    
+
     echo "📦 Extracting..."
     tar -xzf /tmp/kiplombe-hmis-deploy.tar.gz -C .
     rm /tmp/kiplombe-hmis-deploy.tar.gz
+
+    echo "✅ Verifying API files were extracted..."
+    if [ -d "api" ] && [ -f "api/package.json" ]; then
+        echo "   ✓ API directory found with package.json"
+        echo "   ✓ API routes: $(find api/routes -name '*.js' 2>/dev/null | wc -l) route file(s)"
+    else
+        echo "   ⚠️ WARNING: API directory or package.json not found!"
+    fi
 
     chmod +x *.sh 2>/dev/null || true
 REMOTE_EOF
@@ -72,19 +80,35 @@ print_header "Step 4: Building Frontend (Watching Context)"
 eval "$SSH_CMD" << 'BUILD_EOF'
     set -e
     cd ~/kiplombe-hmis
-    
+
     echo "🛑 Stopping containers..."
     docker compose -f docker-compose.deploy.yml down --remove-orphans || true
-    
+
+    echo "🗑️ Removing old API container to force fresh build..."
+    docker rm -f kiplombe_api 2>/dev/null || true
+    # Remove API image if it exists (docker-compose creates images with project prefix)
+    docker images --format "{{.Repository}}:{{.Tag}}" | grep -i "api" | xargs -r docker rmi -f 2>/dev/null || true
+
+    echo "🏗️ Building API..."
+    # Rebuild API to pick up any changes in the api/ folder
+    # Using --no-cache and --pull to ensure fresh build
+    docker compose -f docker-compose.deploy.yml build --no-cache --pull api
+
     echo "🏗️ Building Frontend..."
     # We use --no-cache to force Docker to re-read the fresh tsconfig.json
     docker compose -f docker-compose.deploy.yml build --no-cache frontend
-    
-    echo "🚀 Starting..."
+
+    echo "🚀 Starting containers..."
     docker compose -f docker-compose.deploy.yml up -d
-    
-    echo -e "\n${YELLOW}ℹ Monitoring logs for 2 minutes...${NC}"
-    (docker logs -f kiplombe_frontend & ) ; sleep 120 ; kill $! 2>/dev/null || true
+
+    echo "⏳ Waiting for containers to be ready..."
+    sleep 5
+
+    echo -e "\n${YELLOW}ℹ Monitoring API and Frontend logs for 2 minutes...${NC}"
+    (docker logs -f kiplombe_api kiplombe_frontend 2>&1 & ) ; sleep 120 ; kill $! 2>/dev/null || true
+
+    echo -e "\n${GREEN}✅ Checking container status...${NC}"
+    docker ps --filter "name=kiplombe" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 BUILD_EOF
 
 print_header "🚀 Deployment Complete!"

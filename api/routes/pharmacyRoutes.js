@@ -1,4 +1,8 @@
-// Pharmacy routes - Full CRUD operations
+// NOTE: Only one request should be sent to check for critical alerts per opened encounter form.
+// The system will check only the last recorded vitals or lab results to flag a patient as critical.
+// If you observe multiple requests or a continuous loading indicator in the critical alerts section, 
+// ensure that only a single check is triggered per new vital/lab entry (or when the form is first opened).
+// You may need to debounce or throttle client requests and verify backend logic to prevent redundant checks.
 const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
