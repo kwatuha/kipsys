@@ -426,7 +426,7 @@ router.post('/prescriptions', async (req, res) => {
             const [invResult] = await connection.execute(
                 `INSERT INTO invoices (invoiceNumber, patientId, invoiceDate, totalAmount, balance, status, notes, createdBy)
                  VALUES (?, ?, CURDATE(), ?, ?, 'pending', ?, ?)`,
-                [invoiceNumber, patientId, totalAmount, totalAmount, `Drug payment - Prescription: ${prescNumber}`, userId]
+                [invoiceNumber, patientId, totalAmount, totalAmount, `Drug payment - Prescription: ${prescNumber}`, userId || null]
             );
 
             for (const invItem of invoiceItems) {
@@ -452,7 +452,7 @@ router.post('/prescriptions', async (req, res) => {
                 await connection.execute(
                     `INSERT INTO queue_entries (patientId, ticketNumber, servicePoint, priority, status, notes, createdBy)
                      VALUES (?, ?, 'cashier', 'normal', 'waiting', ?, ?)`,
-                    [patientId, cashierTicketNumber, `Drug payment - Prescription: ${prescNumber}`, userId]
+                    [patientId, cashierTicketNumber, `Drug payment - Prescription: ${prescNumber}`, userId || null]
                 );
             } else {
                 console.log(`Patient ${patientId} already exists in cashier queue (queueId: ${existingCashierQueue[0].queueId}) - skipping duplicate entry for prescription ${prescNumber}`);

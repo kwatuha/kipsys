@@ -331,7 +331,7 @@ router.post('/orders', async (req, res) => {
             const [invResult] = await connection.execute(
                 `INSERT INTO invoices (invoiceNumber, patientId, invoiceDate, totalAmount, balance, status, notes, createdBy)
                  VALUES (?, ?, CURDATE(), ?, ?, 'pending', ?, ?)`,
-                [invoiceNumber, patientId, totalAmount, totalAmount, `Lab payment - Order: ${orderNum}`, userId]
+                [invoiceNumber, patientId, totalAmount, totalAmount, `Lab payment - Order: ${orderNum}`, userId || null]
             );
 
             for (const invItem of invoiceItems) {
@@ -360,7 +360,7 @@ router.post('/orders', async (req, res) => {
                 await connection.execute(
                     `INSERT INTO queue_entries (patientId, ticketNumber, servicePoint, priority, status, notes, createdBy)
                      VALUES (?, ?, 'cashier', ?, 'waiting', ?, ?)`,
-                    [patientId, ticketNumber, queuePriority, `Lab payment - Order: ${orderNum}`, userId]
+                    [patientId, ticketNumber, queuePriority, `Lab payment - Order: ${orderNum}`, userId || null]
                 );
             }
         }

@@ -1187,7 +1187,6 @@ router.get('/payment-batches/:batchReceiptNumber', async (req, res) => {
                 i.totalAmount,
                 i.paidAmount,
                 i.paymentMethod,
-                i.paymentDate,
                 i.updatedAt,
                 p.patientId,
                 p.firstName as patientFirstName,
@@ -1214,7 +1213,12 @@ router.get('/payment-batches/:batchReceiptNumber', async (req, res) => {
 
         // Get payment details from the first invoice (they should all have the same payment method/date)
         const firstInvoice = invoices[0];
-        const paymentDate = firstInvoice.paymentDate || firstInvoice.updatedAt?.split('T')[0] || new Date().toISOString().split('T')[0];
+        // Extract payment date from updatedAt (when payment was made)
+        const paymentDate = firstInvoice.updatedAt
+            ? (firstInvoice.updatedAt instanceof Date
+                ? firstInvoice.updatedAt.toISOString().split('T')[0]
+                : firstInvoice.updatedAt.toString().split('T')[0])
+            : new Date().toISOString().split('T')[0];
 
         // Extract reference number from notes if available
         // Look for reference number in the notes or use batch receipt number

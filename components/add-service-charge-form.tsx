@@ -29,6 +29,9 @@ const formSchema = z.object({
   department: z.string().optional(),
   cost: z.coerce.number().min(0, { message: "Cost must be a positive number." }),
   description: z.string().optional(),
+  chargeType: z.string().optional(),
+  duration: z.coerce.number().optional(),
+  unit: z.string().optional(),
   status: z.boolean().default(true),
 })
 
@@ -61,6 +64,14 @@ const departments = [
   "Pharmacy",
   "Emergency",
   "ICU",
+  "Other",
+]
+
+const chargeTypes = [
+  "Service",
+  "Procedure",
+  "Consumable",
+  "Medication",
   "Other",
 ]
 
@@ -99,6 +110,9 @@ export function AddServiceChargeForm({ open, onOpenChange, onSuccess, editData }
       department: "",
       cost: 0,
       description: "",
+      chargeType: "Service",
+      duration: undefined,
+      unit: "",
       status: true,
     },
   })
@@ -118,6 +132,9 @@ export function AddServiceChargeForm({ open, onOpenChange, onSuccess, editData }
         form.setValue("department", editData.department || "")
         form.setValue("cost", editData.cost || 0)
         form.setValue("description", editData.description || "")
+        form.setValue("chargeType", (editData as any).chargeType || "Service")
+        form.setValue("duration", (editData as any).duration || undefined)
+        form.setValue("unit", (editData as any).unit || "")
         form.setValue("status", editData.status === "Active" || true)
       } else {
         form.reset({
@@ -127,6 +144,9 @@ export function AddServiceChargeForm({ open, onOpenChange, onSuccess, editData }
           department: "",
           cost: 0,
           description: "",
+          chargeType: "Service",
+          duration: undefined,
+          unit: "",
           status: true,
         })
       }
@@ -151,6 +171,15 @@ export function AddServiceChargeForm({ open, onOpenChange, onSuccess, editData }
       }
       if (data.department) {
         payload.department = data.department
+      }
+      if (data.chargeType) {
+        payload.chargeType = data.chargeType
+      }
+      if (data.duration) {
+        payload.duration = data.duration
+      }
+      if (data.unit) {
+        payload.unit = data.unit
       }
 
       if (isEditing && editData?.chargeId) {
@@ -247,8 +276,8 @@ export function AddServiceChargeForm({ open, onOpenChange, onSuccess, editData }
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Category</FormLabel>
-                    <Select 
-                      onValueChange={(value) => field.onChange(value === "none" ? "" : value)} 
+                    <Select
+                      onValueChange={(value) => field.onChange(value === "none" ? "" : value)}
                       value={field.value || "none"}
                     >
                       <FormControl>
@@ -275,8 +304,8 @@ export function AddServiceChargeForm({ open, onOpenChange, onSuccess, editData }
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Department</FormLabel>
-                    <Select 
-                      onValueChange={(value) => field.onChange(value === "none" ? "" : value)} 
+                    <Select
+                      onValueChange={(value) => field.onChange(value === "none" ? "" : value)}
                       value={field.value || "none"}
                     >
                       <FormControl>
@@ -293,6 +322,69 @@ export function AddServiceChargeForm({ open, onOpenChange, onSuccess, editData }
                         ))}
                       </SelectContent>
                     </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="chargeType"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Charge Type</FormLabel>
+                    <Select
+                      onValueChange={field.onChange}
+                      value={field.value || "Service"}
+                    >
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select charge type" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {chargeTypes.map((type) => (
+                          <SelectItem key={type} value={type}>
+                            {type}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormDescription>Type of charge (Service, Procedure, Consumable, etc.)</FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="duration"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Duration (minutes)</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        min="0"
+                        placeholder="Duration in minutes (for procedures)"
+                        {...field}
+                        value={field.value || ""}
+                        onChange={(e) => field.onChange(e.target.value ? parseInt(e.target.value) : undefined)}
+                      />
+                    </FormControl>
+                    <FormDescription>Duration in minutes (typically for procedures)</FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="unit"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Unit</FormLabel>
+                    <FormControl>
+                      <Input placeholder="e.g., per item, per box (for consumables)" {...field} />
+                    </FormControl>
+                    <FormDescription>Unit of measurement (for consumables)</FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}

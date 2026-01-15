@@ -404,7 +404,7 @@ router.post('/patient', async (req, res) => {
         const [newPatientProcedure] = await connection.execute(
             `SELECT
                 pp.*,
-                p.procedureCode, p.procedureName, p.category, p.description, p.duration, p.cost,
+                p.procedureCode, p.procedureName, p.category, p.description, p.duration, p.cost as procedureCost,
                 p.chargeId,
                 sc.chargeCode as chargeCode, sc.name as chargeName, sc.cost as chargeCost,
                 u.firstName as performedByFirstName, u.lastName as performedByLastName
@@ -417,12 +417,23 @@ router.post('/patient', async (req, res) => {
         );
 
         // Get procedure cost for invoice creation
+        // Priority: 1. chargeCost (from service_charges), 2. procedureCost (from procedures table)
         let procedureCost = 0;
-        if (newPatientProcedure[0].cost) {
-            procedureCost = parseFloat(newPatientProcedure[0].cost);
-        } else if (newPatientProcedure[0].chargeCost) {
-            procedureCost = parseFloat(newPatientProcedure[0].chargeCost);
+        const proc = newPatientProcedure[0];
+        if (proc.chargeCost && parseFloat(proc.chargeCost) > 0) {
+            procedureCost = parseFloat(proc.chargeCost);
+        } else if (proc.procedureCost && parseFloat(proc.procedureCost) > 0) {
+            procedureCost = parseFloat(proc.procedureCost);
         }
+
+        console.log('Procedure cost calculation:', {
+            procedureId: proc.procedureId,
+            procedureName: proc.procedureName || finalProcedureName,
+            chargeId: proc.chargeId,
+            chargeCost: proc.chargeCost,
+            procedureCost: proc.procedureCost,
+            finalCost: procedureCost
+        });
 
         // Create Invoice if procedure has a cost
         if (procedureCost > 0) {
@@ -440,7 +451,7 @@ router.post('/patient', async (req, res) => {
                 const [invResult] = await connection.execute(
                     `INSERT INTO invoices (invoiceNumber, patientId, invoiceDate, totalAmount, balance, status, notes, createdBy)
                      VALUES (?, ?, CURDATE(), ?, ?, 'pending', ?, ?)`,
-                    [invoiceNumber, patientId, procedureCost, procedureCost, `Procedure payment - ${finalProcedureName || 'Procedure'}`, userId]
+                    [invoiceNumber, patientId, procedureCost, procedureCost, `Procedure payment - ${finalProcedureName || 'Procedure'}`, userId || null]
                 );
 
                 // Add invoice item
@@ -474,7 +485,7 @@ router.post('/patient', async (req, res) => {
                             patientId,
                             ticketNumber,
                             `Procedure payment - ${finalProcedureName || 'Procedure'}`,
-                            userId
+                            userId || null
                         ]
                     );
                     console.log(`Added patient ${patientId} to cashier queue for procedure: ${finalProcedureName}`);
