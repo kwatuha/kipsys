@@ -17,11 +17,13 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
 import { billingApi, ledgerApi, queueApi } from "@/lib/api"
-import { Loader2, Receipt, DollarSign, AlertCircle } from "lucide-react"
+import { Loader2, Receipt, DollarSign, AlertCircle, Printer, Download } from "lucide-react"
 import { formatDate } from "@/lib/date-utils"
 import { toast } from "@/components/ui/use-toast"
 import { useAuth } from "@/lib/auth/auth-context"
 import { format } from "date-fns"
+import { PaymentReceiptDialog } from "@/components/payment-receipt-dialog"
+import { GroupedPaymentReceiptDialog } from "@/components/grouped-payment-receipt-dialog"
 
 interface ViewBillDialogProps {
   open: boolean
@@ -42,6 +44,10 @@ export function ViewBillDialog({ open, onOpenChange, patientId, queueId, queueNo
   const [paymentReference, setPaymentReference] = useState("")
   const [processingPayment, setProcessingPayment] = useState(false)
   const [showPaymentSection, setShowPaymentSection] = useState(false)
+  const [receiptDialogOpen, setReceiptDialogOpen] = useState(false)
+  const [groupedReceiptOpen, setGroupedReceiptOpen] = useState(false)
+  const [selectedInvoiceIdForReceipt, setSelectedInvoiceIdForReceipt] = useState<string | null>(null)
+  const [selectedBatchReceiptNumber, setSelectedBatchReceiptNumber] = useState<string | null>(null)
   const { user } = useAuth()
 
   const paymentMethods = [
@@ -324,6 +330,17 @@ export function ViewBillDialog({ open, onOpenChange, patientId, queueId, queueNo
           title: "Payment processed",
           description: `Successfully processed ${successCount} payment(s)${failCount > 0 ? `, ${failCount} failed` : ""}. ${batchReceiptNumber && selected.length > 1 ? `Receipt: ${batchReceiptNumber}` : ''}`,
         })
+
+        // Open receipt dialog after successful payment
+        if (batchReceiptNumber && selected.length > 1) {
+          // Grouped payment - show grouped receipt
+          setSelectedBatchReceiptNumber(batchReceiptNumber)
+          setGroupedReceiptOpen(true)
+        } else if (successfulPayments.length === 1) {
+          // Single payment - show individual receipt
+          setSelectedInvoiceIdForReceipt(successfulPayments[0].invoiceId.toString())
+          setReceiptDialogOpen(true)
+        }
       }
 
       if (failCount > 0) {
@@ -397,6 +414,223 @@ export function ViewBillDialog({ open, onOpenChange, patientId, queueId, queueNo
     if (amount === null || amount === undefined) return "KES 0.00"
     const num = typeof amount === 'string' ? parseFloat(amount) : amount
     return `KES ${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  }
+
+  const handlePrintInvoice = async (invoice: any) => {
+    try {
+      // Fetch full invoice details with items
+      const invoiceDetails = await billingApi.getInvoiceById(invoice.invoiceId.toString())
+      const printWindow = window.open('', '_blank')
+      if (!printWindow) return
+
+      const printContent = `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <title>Invoice ${invoiceDetails.invoiceNumber}</title>
+            <style>
+              @media print {
+                @page { margin: 20mm; }
+                body { margin: 0; }
+              }
+              body {
+                font-family: Arial, sans-serif;
+                max-width: 800px;
+                margin: 0 auto;
+                padding: 20px;
+              }
+              .header {
+                text-align: center;
+                border-bottom: 2px solid #000;
+                padding-bottom: 20px;
+                margin-bottom: 30px;
+              }
+              .header h1 { margin: 0; font-size: 24px; }
+              .header p { margin: 5px 0; color: #666; }
+              .info-grid {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 20px;
+                margin-bottom: 30px;
+              }
+              .info-section h3 {
+                margin-top: 0;
+                border-bottom: 1px solid #ddd;
+                padding-bottom: 5px;
+              }
+              .info-row {
+                display: flex;
+                justify-content: space-between;
+                padding: 5px 0;
+              }
+              .info-label { font-weight: bold; }
+              table {
+                width: 100%;
+                border-collapse: collapse;
+                margin: 20px 0;
+              }
+              th, td {
+                border: 1px solid #ddd;
+                padding: 10px;
+                text-align: left;
+              }
+              th {
+                background-color: #f5f5f5;
+                font-weight: bold;
+              }
+              .text-right { text-align: right; }
+              .total-row {
+                font-weight: bold;
+                background-color: #f9f9f9;
+              }
+              .summary {
+                margin-top: 30px;
+                padding-top: 20px;
+                border-top: 2px solid #000;
+              }
+              .summary-row {
+                display: flex;
+                justify-content: space-between;
+                padding: 8px 0;
+                font-size: 16px;
+              }
+              .summary-total {
+                font-size: 20px;
+                font-weight: bold;
+                margin-top: 10px;
+                padding-top: 10px;
+                border-top: 2px solid #000;
+              }
+              .footer {
+                margin-top: 40px;
+                padding-top: 20px;
+                border-top: 1px solid #ddd;
+                text-align: center;
+                color: #666;
+                font-size: 12px;
+              }
+            </style>
+          </head>
+          <body>
+            <div class="header">
+              <h1>INVOICE</h1>
+              <p>Invoice Number: ${invoiceDetails.invoiceNumber}</p>
+              <p>Date: ${invoiceDetails.invoiceDate ? formatDate(invoiceDetails.invoiceDate) : 'N/A'}</p>
+            </div>
+
+            <div class="info-grid">
+              <div class="info-section">
+                <h3>Bill To:</h3>
+                <div class="info-row">
+                  <span class="info-label">Patient:</span>
+                  <span>${invoiceDetails.patientFirstName || ''} ${invoiceDetails.patientLastName || ''}</span>
+                </div>
+                <div class="info-row">
+                  <span class="info-label">Patient Number:</span>
+                  <span>${invoiceDetails.patientNumber || 'N/A'}</span>
+                </div>
+              </div>
+              <div class="info-section">
+                <h3>Invoice Details:</h3>
+                <div class="info-row">
+                  <span class="info-label">Invoice Date:</span>
+                  <span>${invoiceDetails.invoiceDate ? formatDate(invoiceDetails.invoiceDate) : 'N/A'}</span>
+                </div>
+                <div class="info-row">
+                  <span class="info-label">Due Date:</span>
+                  <span>${invoiceDetails.dueDate ? formatDate(invoiceDetails.dueDate) : 'N/A'}</span>
+                </div>
+                <div class="info-row">
+                  <span class="info-label">Status:</span>
+                  <span>${invoiceDetails.status?.toUpperCase() || 'PENDING'}</span>
+                </div>
+              </div>
+            </div>
+
+            <table>
+              <thead>
+                <tr>
+                  <th>Description</th>
+                  <th class="text-right">Quantity</th>
+                  <th class="text-right">Unit Price</th>
+                  <th class="text-right">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${invoiceDetails.items && invoiceDetails.items.length > 0 ? invoiceDetails.items.map((item: any) => {
+                  let displayName = item.chargeName || item.description || item.itemDescription || 'Service';
+                  if (displayName.includes('Prescription Item:') && item.medicationName) {
+                    if (displayName.includes('Unknown')) {
+                      displayName = 'Prescription Item: ' + item.medicationName;
+                    } else {
+                      displayName = 'Prescription Item: ' + item.medicationName;
+                    }
+                  }
+                  const unitPrice = formatCurrency(parseFloat(item.unitPrice || item.price || 0));
+                  const totalPrice = formatCurrency(parseFloat(item.totalPrice || item.total || 0));
+                  return '<tr>' +
+                    '<td>' + displayName + '</td>' +
+                    '<td class="text-right">' + (item.quantity || 1) + '</td>' +
+                    '<td class="text-right">' + unitPrice + '</td>' +
+                    '<td class="text-right">' + totalPrice + '</td>' +
+                    '</tr>';
+                }).join('') : '<tr><td colspan="4" style="text-align: center;">No items</td></tr>'}
+                <tr class="total-row">
+                  <td colspan="3" class="text-right"><strong>Total</strong></td>
+                  <td class="text-right"><strong>${formatCurrency(parseFloat(invoiceDetails.totalAmount || 0))}</strong></td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="summary">
+              <div class="summary-row">
+                <span>Subtotal:</span>
+                <span>${formatCurrency(parseFloat(invoiceDetails.totalAmount || 0))}</span>
+              </div>
+              ${parseFloat(invoiceDetails.paidAmount || 0) > 0 ? `
+                <div class="summary-row">
+                  <span>Paid Amount:</span>
+                  <span>${formatCurrency(parseFloat(invoiceDetails.paidAmount || 0))}</span>
+                </div>
+              ` : ''}
+              ${parseFloat(invoiceDetails.balance || invoiceDetails.totalAmount || 0) > 0 ? `
+                <div class="summary-row">
+                  <span>Balance:</span>
+                  <span>${formatCurrency(parseFloat(invoiceDetails.balance || invoiceDetails.totalAmount || 0))}</span>
+                </div>
+              ` : ''}
+            </div>
+
+            ${invoiceDetails.notes ? `
+              <div style="margin-top: 30px;">
+                <h3>Notes:</h3>
+                <p>${invoiceDetails.notes}</p>
+              </div>
+            ` : ''}
+
+            <div class="footer">
+              <p>Generated on ${new Date().toLocaleString()}</p>
+              <p>Thank you for your business!</p>
+            </div>
+          </body>
+        </html>
+      `
+
+      printWindow.document.write(printContent)
+      printWindow.document.close()
+      printWindow.onload = () => {
+        setTimeout(() => {
+          printWindow.print()
+        }, 250)
+      }
+    } catch (error: any) {
+      console.error('Error printing invoice:', error)
+      toast({
+        title: "Error",
+        description: "Failed to load invoice for printing",
+        variant: "destructive",
+      })
+    }
   }
 
   const getStatusBadge = (status: string) => {
@@ -647,6 +881,24 @@ export function ViewBillDialog({ open, onOpenChange, patientId, queueId, queueNo
                           </p>
                         </div>
                       </div>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handlePrintInvoice(invoice)}
+                        >
+                          <Printer className="h-4 w-4 mr-1" />
+                          Print
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handlePrintInvoice(invoice)}
+                        >
+                          <Download className="h-4 w-4 mr-1" />
+                          PDF
+                        </Button>
+                      </div>
                       <div className="text-right">
                         {getStatusBadge(invoice.status)}
                         <div className="mt-2">
@@ -759,6 +1011,20 @@ export function ViewBillDialog({ open, onOpenChange, patientId, queueId, queueNo
           </div>
         )}
       </DialogContent>
+
+      {/* Receipt Dialogs */}
+      <PaymentReceiptDialog
+        invoiceId={selectedInvoiceIdForReceipt}
+        open={receiptDialogOpen}
+        onOpenChange={setReceiptDialogOpen}
+      />
+
+      <GroupedPaymentReceiptDialog
+        batchReceiptNumber={selectedBatchReceiptNumber}
+        patientId={patientId.toString()}
+        open={groupedReceiptOpen}
+        onOpenChange={setGroupedReceiptOpen}
+      />
     </Dialog>
   )
 }
