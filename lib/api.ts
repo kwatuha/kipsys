@@ -1160,8 +1160,16 @@ export const billingApi = {
   createClaimFromInvoice: (invoiceId: string, data?: any) =>
     apiRequest<any>(`/api/billing/invoices/${invoiceId}/create-claim`, { method: 'POST', body: data }),
 
-  getMobilePaymentLogById: (id: string) =>
-    apiRequest<any>(`/api/billing/mobile-payment-logs/${id}`),
+  getInvoicePayments: (invoiceId: string) =>
+    apiRequest<any[]>(`/api/billing/invoices/${invoiceId}/payments`),
+
+  getPaymentBatch: (batchReceiptNumber: string, patientId?: string) => {
+    const params = patientId ? `?patientId=${patientId}` : '';
+    return apiRequest<any>(`/api/billing/payment-batches/${batchReceiptNumber}${params}`);
+  },
+
+  getPatientPayments: (patientId: string) =>
+    apiRequest<any[]>(`/api/billing/patients/${patientId}/payments`),
 
   createMobilePaymentLog: (data: any) =>
     apiRequest<any>('/api/billing/mobile-payment-logs', { method: 'POST', body: data }),

@@ -7,8 +7,9 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { billingApi } from "@/lib/api"
-import { Loader2, Download, X } from "lucide-react"
+import { Loader2, Download, Printer, X } from "lucide-react"
 import { InvoiceInsuranceClaim } from "@/components/invoice-insurance-claim"
+import { CreateInsuranceClaimDialog } from "@/components/create-insurance-claim-dialog"
 import { formatDate } from "@/lib/date-utils"
 
 interface InvoiceDetailsDialogProps {
@@ -84,6 +85,232 @@ export function InvoiceDetailsDialog({ invoiceId, open, onOpenChange, onUpdate }
   const totalAmount = parseFloat(invoice.totalAmount || 0)
   const paidAmount = parseFloat(invoice.paidAmount || 0)
   const balance = parseFloat(invoice.balance || totalAmount)
+  const isPaid = invoice.status === 'paid' || balance <= 0
+
+  const handlePrint = () => {
+    const printWindow = window.open('', '_blank')
+    if (!printWindow) return
+
+    const printContent = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Invoice ${invoice.invoiceNumber}</title>
+          <style>
+            @media print {
+              @page { margin: 20mm; }
+              body { margin: 0; }
+            }
+            body {
+              font-family: Arial, sans-serif;
+              max-width: 800px;
+              margin: 0 auto;
+              padding: 20px;
+            }
+            .header {
+              text-align: center;
+              border-bottom: 2px solid #000;
+              padding-bottom: 20px;
+              margin-bottom: 30px;
+            }
+            .header h1 { margin: 0; font-size: 24px; }
+            .header p { margin: 5px 0; color: #666; }
+            .info-grid {
+              display: grid;
+              grid-template-columns: 1fr 1fr;
+              gap: 20px;
+              margin-bottom: 30px;
+            }
+            .info-section h3 {
+              margin-top: 0;
+              border-bottom: 1px solid #ddd;
+              padding-bottom: 5px;
+            }
+            .info-row {
+              display: flex;
+              justify-content: space-between;
+              padding: 5px 0;
+            }
+            .info-label { font-weight: bold; }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              margin: 20px 0;
+            }
+            th, td {
+              border: 1px solid #ddd;
+              padding: 10px;
+              text-align: left;
+            }
+            th {
+              background-color: #f5f5f5;
+              font-weight: bold;
+            }
+            .text-right { text-align: right; }
+            .total-row {
+              font-weight: bold;
+              background-color: #f9f9f9;
+            }
+            .summary {
+              margin-top: 30px;
+              padding-top: 20px;
+              border-top: 2px solid #000;
+            }
+            .summary-row {
+              display: flex;
+              justify-content: space-between;
+              padding: 8px 0;
+              font-size: 16px;
+            }
+            .summary-total {
+              font-size: 20px;
+              font-weight: bold;
+              margin-top: 10px;
+              padding-top: 10px;
+              border-top: 2px solid #000;
+            }
+            .footer {
+              margin-top: 40px;
+              padding-top: 20px;
+              border-top: 1px solid #ddd;
+              text-align: center;
+              color: #666;
+              font-size: 12px;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>INVOICE</h1>
+            <p>Invoice Number: ${invoice.invoiceNumber}</p>
+            <p>Date: ${invoice.invoiceDate ? formatDate(invoice.invoiceDate) : 'N/A'}</p>
+          </div>
+
+          <div class="info-grid">
+            <div class="info-section">
+              <h3>Bill To:</h3>
+              <div class="info-row">
+                <span class="info-label">Patient:</span>
+                <span>${invoice.patientFirstName} ${invoice.patientLastName}</span>
+              </div>
+              <div class="info-row">
+                <span class="info-label">Patient Number:</span>
+                <span>${invoice.patientNumber || 'N/A'}</span>
+              </div>
+            </div>
+            <div class="info-section">
+              <h3>Invoice Details:</h3>
+              <div class="info-row">
+                <span class="info-label">Invoice Date:</span>
+                <span>${invoice.invoiceDate ? formatDate(invoice.invoiceDate) : 'N/A'}</span>
+              </div>
+              <div class="info-row">
+                <span class="info-label">Due Date:</span>
+                <span>${invoice.dueDate ? formatDate(invoice.dueDate) : 'N/A'}</span>
+              </div>
+              <div class="info-row">
+                <span class="info-label">Status:</span>
+                <span>${invoice.status?.toUpperCase() || 'PENDING'}</span>
+              </div>
+            </div>
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>Description</th>
+                <th class="text-right">Quantity</th>
+                <th class="text-right">Unit Price</th>
+                <th class="text-right">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${invoice.items && invoice.items.length > 0 ? invoice.items.map((item: any) => {
+                // For prescription items, use medicationName if available
+                let displayName = item.chargeName || item.description || item.itemDescription || 'Service';
+                if (displayName.includes('Prescription Item:') && item.medicationName) {
+                  if (displayName.includes('Unknown')) {
+                    displayName = `Prescription Item: ${item.medicationName}`;
+                  } else {
+                    displayName = `Prescription Item: ${item.medicationName}`;
+                  }
+                }
+                return `
+                <tr>
+                  <td>${displayName}</td>
+                  <td class="text-right">${item.quantity || 1}</td>
+                  <td class="text-right">${formatCurrency(parseFloat(item.unitPrice || item.price || 0))}</td>
+                  <td class="text-right">${formatCurrency(parseFloat(item.totalPrice || item.total || 0))}</td>
+                </tr>
+              `;
+              }).join('') : '<tr><td colspan="4" style="text-align: center;">No items</td></tr>'}
+              <tr class="total-row">
+                <td colspan="3" class="text-right"><strong>Total</strong></td>
+                <td class="text-right"><strong>${formatCurrency(totalAmount)}</strong></td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="summary">
+            <div class="summary-row">
+              <span>Subtotal:</span>
+              <span>${formatCurrency(totalAmount)}</span>
+            </div>
+            ${paidAmount > 0 ? `
+              <div class="summary-row">
+                <span>Paid Amount:</span>
+                <span>${formatCurrency(paidAmount)}</span>
+              </div>
+            ` : ''}
+            ${balance > 0 ? `
+              <div class="summary-row">
+                <span>Balance:</span>
+                <span>${formatCurrency(balance)}</span>
+              </div>
+            ` : ''}
+            ${isPaid && invoice.paymentMethod ? `
+              <div class="summary-row">
+                <span>Payment Method:</span>
+                <span>${invoice.paymentMethod.toUpperCase()}</span>
+              </div>
+            ` : ''}
+            ${isPaid && invoice.paymentDate ? `
+              <div class="summary-row">
+                <span>Payment Date:</span>
+                <span>${formatDate(invoice.paymentDate)}</span>
+              </div>
+            ` : ''}
+          </div>
+
+          ${invoice.notes ? `
+            <div style="margin-top: 30px;">
+              <h3>Notes:</h3>
+              <p>${invoice.notes}</p>
+            </div>
+          ` : ''}
+
+          <div class="footer">
+            <p>Generated on ${new Date().toLocaleString()}</p>
+            <p>Thank you for your business!</p>
+          </div>
+        </body>
+      </html>
+    `
+
+    printWindow.document.write(printContent)
+    printWindow.document.close()
+    printWindow.onload = () => {
+      setTimeout(() => {
+        printWindow.print()
+      }, 250)
+    }
+  }
+
+  const handleDownloadPDF = () => {
+    // For now, trigger print which allows saving as PDF
+    // In production, you might want to use a PDF library like jsPDF or html2pdf
+    handlePrint()
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -165,16 +392,30 @@ export function InvoiceDetailsDialog({ invoiceId, open, onOpenChange, onUpdate }
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {invoice.items.map((item: any, index: number) => (
-                        <TableRow key={index}>
-                          <TableCell>{item.description || item.itemDescription || 'Service'}</TableCell>
-                          <TableCell className="text-right">{item.quantity || 1}</TableCell>
-                          <TableCell className="text-right">{formatCurrency(parseFloat(item.unitPrice || item.price || 0))}</TableCell>
-                          <TableCell className="text-right font-medium">
-                            {formatCurrency(parseFloat(item.totalPrice || item.total || 0))}
-                          </TableCell>
-                        </TableRow>
-                      ))}
+                      {invoice.items.map((item: any, index: number) => {
+                        // For prescription items, use medicationName if available
+                        let displayName = item.chargeName || item.description || item.itemDescription || 'Service';
+                        if (displayName.includes('Prescription Item:') && item.medicationName) {
+                          // Replace "Unknown" or use medicationName directly
+                          if (displayName.includes('Unknown')) {
+                            displayName = `Prescription Item: ${item.medicationName}`;
+                          } else {
+                            // If description already has a name but we have medicationName, prefer medicationName for accuracy
+                            displayName = `Prescription Item: ${item.medicationName}`;
+                          }
+                        }
+
+                        return (
+                          <TableRow key={index}>
+                            <TableCell>{displayName}</TableCell>
+                            <TableCell className="text-right">{item.quantity || 1}</TableCell>
+                            <TableCell className="text-right">{formatCurrency(parseFloat(item.unitPrice || item.price || 0))}</TableCell>
+                            <TableCell className="text-right font-medium">
+                              {formatCurrency(parseFloat(item.totalPrice || item.total || 0))}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
                       <TableRow className="font-semibold">
                         <TableCell colSpan={3} className="text-right">Total</TableCell>
                         <TableCell className="text-right">{formatCurrency(totalAmount)}</TableCell>
@@ -203,7 +444,11 @@ export function InvoiceDetailsDialog({ invoiceId, open, onOpenChange, onUpdate }
             <Button variant="outline" onClick={() => onOpenChange(false)}>
               Close
             </Button>
-            <Button variant="outline">
+            <Button variant="outline" onClick={handlePrint}>
+              <Printer className="h-4 w-4 mr-2" />
+              Print
+            </Button>
+            <Button variant="outline" onClick={handleDownloadPDF}>
               <Download className="h-4 w-4 mr-2" />
               Download PDF
             </Button>
@@ -213,4 +458,5 @@ export function InvoiceDetailsDialog({ invoiceId, open, onOpenChange, onUpdate }
     </Dialog>
   )
 }
+
 

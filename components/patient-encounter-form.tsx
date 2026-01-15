@@ -21,7 +21,8 @@ import {
   Eye,
   Activity,
   Stethoscope,
-  User
+  User,
+  ChevronDown
 } from "lucide-react"
 import { format } from "date-fns"
 
@@ -47,6 +48,7 @@ import { SymptomsAutocomplete } from "@/components/symptoms-autocomplete"
 import { ChiefComplaintCombobox } from "@/components/chief-complaint-combobox"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Separator } from "@/components/ui/separator"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -309,6 +311,7 @@ export function PatientEncounterForm({
   const [isLoadingPatientData, setIsLoadingPatientData] = useState(false) // Prevent multiple simultaneous loads
   const [lastLoadedPatientId, setLastLoadedPatientId] = useState<string | null>(null) // Track last loaded patient
   const [selectedDiagnoses, setSelectedDiagnoses] = useState<any[]>([])
+  const [criticalAlertsExpanded, setCriticalAlertsExpanded] = useState(false)
   const { addNotification, notifications } = useCriticalNotifications()
 
   const form = useForm<EncounterFormValues>({
@@ -1734,6 +1737,59 @@ const clearDraftFromStorage = (patientId:any) => {
     return false
   }
 
+  // Helper function to check if a vital value is critical
+  const isVitalCritical = (parameter: string, value: number | null | undefined): boolean => {
+    if (!value || value === null || value === undefined) return false
+
+    const currentPatientId = patientId ? String(patientId).trim() : null
+    if (!currentPatientId) return false
+
+    const patientNotifications = notifications.filter(n => {
+      const notificationPatientId = String(n.patientId).trim()
+      return notificationPatientId === currentPatientId
+    })
+
+    if (patientNotifications.length === 0) return false
+
+    const patientAlert = patientNotifications[0]
+
+    // Map vital parameter names to alert parameter names
+    const parameterMap: Record<string, string[]> = {
+      'systolicBP': ['systolicBP', 'Blood Pressure'],
+      'diastolicBP': ['diastolicBP', 'Blood Pressure'],
+      'heartRate': ['heartRate', 'Heart Rate'],
+      'temperature': ['temperature', 'Temperature'],
+      'respiratoryRate': ['respiratoryRate', 'Respiratory Rate'],
+      'oxygenSaturation': ['oxygenSaturation', 'SpO2', 'Oxygen Saturation'],
+      'glasgowComaScale': ['glasgowComaScale', 'GCS'],
+      'bloodGlucose': ['bloodGlucose', 'Blood Glucose']
+    }
+
+    const mappedParams = parameterMap[parameter] || [parameter]
+
+    // Check if any alert matches this parameter and value
+    return patientAlert.alerts.some(alert => {
+      const matchesParameter = mappedParams.some(p =>
+        alert.parameter.toLowerCase().includes(p.toLowerCase()) ||
+        p.toLowerCase().includes(alert.parameter.toLowerCase())
+      )
+
+      if (!matchesParameter) return false
+
+      // Extract numeric value from alert value string
+      const alertValueMatch = alert.value?.toString().match(/(\d+\.?\d*)/)
+      const alertValue = alertValueMatch ? parseFloat(alertValueMatch[1]) : null
+
+      // Check if values are close (within 5% tolerance for floating point comparison)
+      if (alertValue !== null) {
+        const tolerance = Math.max(0.05 * value, 0.1)
+        return Math.abs(alertValue - value) <= tolerance
+      }
+
+      return false
+    })
+  }
+
   // Context Panel Component (shows patient info on right side)
   const PatientContextPanel = () => {
     if (!patientId || !patientData) {
@@ -1756,31 +1812,62 @@ const clearDraftFromStorage = (patientId:any) => {
                     {todayVitals.systolicBP && todayVitals.diastolicBP && (
                       <>
                         <div className="font-medium text-muted-foreground">Blood Pressure:</div>
-                        <div className="font-semibold">{todayVitals.systolicBP}/{todayVitals.diastolicBP} mmHg</div>
+                        <div className={`font-semibold ${
+                          isVitalCritical('systolicBP', todayVitals.systolicBP) ||
+                          isVitalCritical('diastolicBP', todayVitals.diastolicBP)
+                            ? 'text-red-600 dark:text-red-400'
+                            : ''
+                        }`}>
+                          {todayVitals.systolicBP}/{todayVitals.diastolicBP} mmHg
+                        </div>
                       </>
                     )}
                     {todayVitals.heartRate && (
                       <>
                         <div className="font-medium text-muted-foreground">Heart Rate:</div>
-                        <div className="font-semibold">{todayVitals.heartRate} bpm</div>
+                        <div className={`font-semibold ${
+                          isVitalCritical('heartRate', todayVitals.heartRate)
+                            ? 'text-red-600 dark:text-red-400'
+                            : ''
+                        }`}>
+                          {todayVitals.heartRate} bpm
+                        </div>
                       </>
                     )}
                     {todayVitals.temperature && (
                       <>
                         <div className="font-medium text-muted-foreground">Temperature:</div>
-                        <div className="font-semibold">{todayVitals.temperature}°C</div>
+                        <div className={`font-semibold ${
+                          isVitalCritical('temperature', todayVitals.temperature)
+                            ? 'text-red-600 dark:text-red-400'
+                            : ''
+                        }`}>
+                          {todayVitals.temperature}°C
+                        </div>
                       </>
                     )}
                     {todayVitals.respiratoryRate && (
                       <>
                         <div className="font-medium text-muted-foreground">Respiratory Rate:</div>
-                        <div className="font-semibold">{todayVitals.respiratoryRate} bpm</div>
+                        <div className={`font-semibold ${
+                          isVitalCritical('respiratoryRate', todayVitals.respiratoryRate)
+                            ? 'text-red-600 dark:text-red-400'
+                            : ''
+                        }`}>
+                          {todayVitals.respiratoryRate} bpm
+                        </div>
                       </>
                     )}
                     {todayVitals.oxygenSaturation && (
                       <>
                         <div className="font-medium text-muted-foreground">SpO2:</div>
-                        <div className="font-semibold">{todayVitals.oxygenSaturation}%</div>
+                        <div className={`font-semibold ${
+                          isVitalCritical('oxygenSaturation', todayVitals.oxygenSaturation)
+                            ? 'text-red-600 dark:text-red-400'
+                            : ''
+                        }`}>
+                          {todayVitals.oxygenSaturation}%
+                        </div>
                       </>
                     )}
                     {todayVitals.weight && (
@@ -2153,20 +2240,30 @@ const clearDraftFromStorage = (patientId:any) => {
             const urgentAlerts = patientAlert.alerts.filter(a => a.severity === 'urgent')
 
             return (
-              <div className="mx-6 mt-4 mb-0 border-2 border-red-500 bg-red-50 dark:bg-red-950/20 rounded-lg p-4 flex-shrink-0">
-                <div className="flex items-start gap-3">
-                  <div className="rounded-full bg-red-600 dark:bg-red-700 p-2 flex-shrink-0">
-                    <AlertTriangle className="h-5 w-5 text-white" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="font-bold text-red-900 dark:text-red-100 mb-1">
-                      ⚠️ CRITICAL ALERTS DETECTED
+              <Collapsible open={criticalAlertsExpanded} onOpenChange={setCriticalAlertsExpanded}>
+                <div className="mx-6 mt-4 mb-0 border-2 border-red-500 bg-red-50 dark:bg-red-950/20 rounded-lg flex-shrink-0">
+                  <CollapsibleTrigger className="w-full p-4 flex items-center justify-between hover:bg-red-100 dark:hover:bg-red-950/30 transition-colors">
+                    <div className="flex items-center gap-3 flex-1">
+                      <div className="rounded-full bg-red-600 dark:bg-red-700 p-2 flex-shrink-0">
+                        <AlertTriangle className="h-5 w-5 text-white" />
+                      </div>
+                      <div className="flex-1 min-w-0 text-left">
+                        <div className="font-bold text-red-900 dark:text-red-100 mb-1">
+                          ⚠️ CRITICAL ALERTS DETECTED
+                        </div>
+                        <div className="text-sm text-red-800 dark:text-red-200">
+                          {criticalAlerts.length} critical, {urgentAlerts.length} urgent alert{patientAlert.alerts.length > 1 ? 's' : ''}
+                        </div>
+                      </div>
+                      <Badge variant="destructive" className="text-sm px-2 py-1">
+                        {patientAlert.alerts.length}
+                      </Badge>
                     </div>
-                    <div className="text-sm text-red-800 dark:text-red-200 mb-2">
-                      This patient has {criticalAlerts.length} critical and {urgentAlerts.length} urgent alert{patientAlert.alerts.length > 1 ? 's' : ''}
-                    </div>
-                    <div className="space-y-1.5">
-                      {patientAlert.alerts.slice(0, 3).map((alert, idx) => (
+                    <ChevronDown className={`h-4 w-4 text-red-600 dark:text-red-400 transition-transform ${criticalAlertsExpanded ? 'rotate-180' : ''}`} />
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="px-4 pb-4">
+                    <div className="space-y-1.5 pt-2">
+                      {patientAlert.alerts.map((alert, idx) => (
                         <div key={idx} className="text-xs bg-white dark:bg-red-900/30 p-2 rounded border border-red-200 dark:border-red-800">
                           <span className="font-semibold">{alert.parameter}:</span> {alert.value} {alert.unit}
                           {alert.range && <span className="text-red-600 dark:text-red-400"> ({alert.range})</span>}
@@ -2175,15 +2272,10 @@ const clearDraftFromStorage = (patientId:any) => {
                           </Badge>
                         </div>
                       ))}
-                      {patientAlert.alerts.length > 3 && (
-                        <div className="text-xs text-red-700 dark:text-red-300 italic">
-                          +{patientAlert.alerts.length - 3} more alert{patientAlert.alerts.length - 3 > 1 ? 's' : ''}
-                        </div>
-                      )}
                     </div>
-                  </div>
+                  </CollapsibleContent>
                 </div>
-              </div>
+              </Collapsible>
             )
             })()}
 
@@ -2294,31 +2386,62 @@ const clearDraftFromStorage = (patientId:any) => {
                                       {todayVitals.systolicBP && todayVitals.diastolicBP && (
                                         <div className="flex justify-between">
                                           <span className="text-foreground/70">BP:</span>
-                                          <span className="font-semibold text-foreground">{todayVitals.systolicBP}/{todayVitals.diastolicBP} mmHg</span>
+                                          <span className={`font-semibold ${
+                                            isVitalCritical('systolicBP', todayVitals.systolicBP) ||
+                                            isVitalCritical('diastolicBP', todayVitals.diastolicBP)
+                                              ? 'text-red-600 dark:text-red-400'
+                                              : 'text-foreground'
+                                          }`}>
+                                            {todayVitals.systolicBP}/{todayVitals.diastolicBP} mmHg
+                                          </span>
                                         </div>
                                       )}
                                       {todayVitals.heartRate && (
                                         <div className="flex justify-between">
                                           <span className="text-foreground/70">HR:</span>
-                                          <span className="font-semibold text-foreground">{todayVitals.heartRate} bpm</span>
+                                          <span className={`font-semibold ${
+                                            isVitalCritical('heartRate', todayVitals.heartRate)
+                                              ? 'text-red-600 dark:text-red-400'
+                                              : 'text-foreground'
+                                          }`}>
+                                            {todayVitals.heartRate} bpm
+                                          </span>
                                         </div>
                                       )}
                                       {todayVitals.temperature && (
                                         <div className="flex justify-between">
                                           <span className="text-foreground/70">Temp:</span>
-                                          <span className="font-semibold text-foreground">{todayVitals.temperature}°C</span>
+                                          <span className={`font-semibold ${
+                                            isVitalCritical('temperature', todayVitals.temperature)
+                                              ? 'text-red-600 dark:text-red-400'
+                                              : 'text-foreground'
+                                          }`}>
+                                            {todayVitals.temperature}°C
+                                          </span>
                                         </div>
                                       )}
                                       {todayVitals.respiratoryRate && (
                                         <div className="flex justify-between">
                                           <span className="text-foreground/70">RR:</span>
-                                          <span className="font-semibold text-foreground">{todayVitals.respiratoryRate} bpm</span>
+                                          <span className={`font-semibold ${
+                                            isVitalCritical('respiratoryRate', todayVitals.respiratoryRate)
+                                              ? 'text-red-600 dark:text-red-400'
+                                              : 'text-foreground'
+                                          }`}>
+                                            {todayVitals.respiratoryRate} bpm
+                                          </span>
                                         </div>
                                       )}
                                       {todayVitals.oxygenSaturation && (
                                         <div className="flex justify-between">
                                           <span className="text-foreground/70">SpO2:</span>
-                                          <span className="font-semibold text-foreground">{todayVitals.oxygenSaturation}%</span>
+                                          <span className={`font-semibold ${
+                                            isVitalCritical('oxygenSaturation', todayVitals.oxygenSaturation)
+                                              ? 'text-red-600 dark:text-red-400'
+                                              : 'text-foreground'
+                                          }`}>
+                                            {todayVitals.oxygenSaturation}%
+                                          </span>
                                         </div>
                                       )}
                                       {todayVitals.weight && (

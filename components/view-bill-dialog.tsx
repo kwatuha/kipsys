@@ -78,12 +78,12 @@ export function ViewBillDialog({ open, onOpenChange, patientId, queueId, queueNo
       setError(null)
       const data = await billingApi.getPendingInvoicesForPatient(patientId.toString())
       setInvoices(data || [])
-      
+
       // Select all invoices by default and calculate payment amount
       if (data && data.length > 0) {
         const allInvoiceIds = new Set(data.map((inv: any) => inv.invoiceId))
         setSelectedInvoices(allInvoiceIds)
-        
+
         // Calculate and set payment amount immediately
         const total = data.reduce((sum: number, inv: any) => {
           return sum + calculateInvoiceBalance(inv)
@@ -139,20 +139,20 @@ export function ViewBillDialog({ open, onOpenChange, patientId, queueId, queueNo
   // Calculate payment distribution
   const paymentDistribution = useMemo(() => {
     if (!paymentAmount || parseFloat(paymentAmount) <= 0) return {}
-    
+
     const totalPayment = parseFloat(paymentAmount)
     const selected = invoices.filter((inv) => selectedInvoices.has(inv.invoiceId))
-    
+
     if (selected.length === 0) return {}
-    
+
     const distribution: Record<number, number> = {}
     let remainingPayment = totalPayment
-    
+
     // Distribute payment proportionally or fully pay invoices in order
     for (const invoice of selected) {
       const balance = calculateInvoiceBalance(invoice)
       if (remainingPayment <= 0) break
-      
+
       if (remainingPayment >= balance) {
         distribution[invoice.invoiceId] = balance
         remainingPayment -= balance
@@ -161,7 +161,7 @@ export function ViewBillDialog({ open, onOpenChange, patientId, queueId, queueNo
         remainingPayment = 0
       }
     }
-    
+
     return distribution
   }, [paymentAmount, invoices, selectedInvoices])
 
@@ -222,6 +222,11 @@ export function ViewBillDialog({ open, onOpenChange, patientId, queueId, queueNo
     try {
       setProcessingPayment(true)
 
+      // Generate a unique batch receipt number for grouped payments
+      const batchReceiptNumber = selected.length > 1
+        ? `BATCH-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`
+        : null
+
       // Process payment for each selected invoice
       const paymentResults = []
       for (const invoice of selected) {
@@ -231,12 +236,16 @@ export function ViewBillDialog({ open, onOpenChange, patientId, queueId, queueNo
         try {
           // Record payment
           const paymentDate = format(new Date(), "yyyy-MM-dd")
+          const batchNote = batchReceiptNumber
+            ? `Batch Receipt: ${batchReceiptNumber} | Batch Amount: ${amountToPay.toFixed(2)}`
+            : ''
           await billingApi.recordPayment(invoice.invoiceId.toString(), {
             paymentAmount: amountToPay,
             paymentDate,
             paymentMethod,
-            referenceNumber: paymentReference || undefined,
-            notes: `Payment processed from cashier queue. ${selected.length > 1 ? `Part of batch payment.` : ""}`,
+            referenceNumber: batchReceiptNumber || paymentReference || undefined,
+            notes: `Payment processed from cashier queue. ${selected.length > 1 ? `Part of batch payment. ${batchNote}` : ""}`,
+            batchReceiptNumber: batchReceiptNumber || undefined,
           })
 
           paymentResults.push({
@@ -313,7 +322,7 @@ export function ViewBillDialog({ open, onOpenChange, patientId, queueId, queueNo
       if (successCount > 0) {
         toast({
           title: "Payment processed",
-          description: `Successfully processed ${successCount} payment(s)${failCount > 0 ? `, ${failCount} failed` : ""}`,
+          description: `Successfully processed ${successCount} payment(s)${failCount > 0 ? `, ${failCount} failed` : ""}. ${batchReceiptNumber && selected.length > 1 ? `Receipt: ${batchReceiptNumber}` : ''}`,
         })
       }
 
@@ -327,32 +336,32 @@ export function ViewBillDialog({ open, onOpenChange, patientId, queueId, queueNo
 
       // Reload invoices and reset state
       await loadPendingInvoices()
-      
+
       // Check if all invoices are now paid and complete the queue entry if applicable
       if (queueId && successfulPayments.length > 0) {
         try {
           // Check if patient has any remaining pending invoices
           const remainingInvoices = await billingApi.getPendingInvoicesForPatient(patientId.toString())
-          const hasPendingInvoices = remainingInvoices && remainingInvoices.length > 0 && 
+          const hasPendingInvoices = remainingInvoices && remainingInvoices.length > 0 &&
             remainingInvoices.some((inv: any) => {
               const balance = calculateInvoiceBalance(inv)
               return balance > 0
             })
-          
+
           // If no pending invoices, complete and archive the queue entry
           if (!hasPendingInvoices) {
             try {
               // Update queue status to completed
               await queueApi.updateStatus(queueId.toString(), 'completed')
-              
+
               // Archive the queue entry
               await queueApi.archive(queueId.toString())
-              
+
               toast({
                 title: "Queue entry completed",
                 description: "All invoices are paid. Patient has been removed from the cashier queue.",
               })
-              
+
               // Notify parent component to refresh queue
               if (onQueueCompleted) {
                 onQueueCompleted()
@@ -367,7 +376,7 @@ export function ViewBillDialog({ open, onOpenChange, patientId, queueId, queueNo
           // Continue even if check fails
         }
       }
-      
+
       setSelectedInvoices(new Set())
       setPaymentAmount("")
       setPaymentReference("")
@@ -674,20 +683,31 @@ export function ViewBillDialog({ open, onOpenChange, patientId, queueId, queueNo
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {invoice.items.map((item: any) => (
-                          <TableRow key={item.itemId}>
-                            <TableCell>
-                              <div>
-                                <div className="font-medium">
-                                  {item.chargeName || item.description || "Item"}
-                                </div>
-                                {item.chargeCode && (
-                                  <div className="text-xs text-muted-foreground">
-                                    Code: {item.chargeCode}
+                        {invoice.items.map((item: any) => {
+                          // For prescription items, use medicationName if available
+                          let displayName = item.chargeName || item.description || "Item";
+                          if (displayName.includes('Prescription Item:') && item.medicationName) {
+                            if (displayName.includes('Unknown')) {
+                              displayName = `Prescription Item: ${item.medicationName}`;
+                            } else {
+                              displayName = `Prescription Item: ${item.medicationName}`;
+                            }
+                          }
+
+                          return (
+                            <TableRow key={item.itemId}>
+                              <TableCell>
+                                <div>
+                                  <div className="font-medium">
+                                    {displayName}
                                   </div>
-                                )}
-                              </div>
-                            </TableCell>
+                                  {item.chargeCode && (
+                                    <div className="text-xs text-muted-foreground">
+                                      Code: {item.chargeCode}
+                                    </div>
+                                  )}
+                                </div>
+                              </TableCell>
                             <TableCell className="text-right">{item.quantity || 1}</TableCell>
                             <TableCell className="text-right">
                               {formatCurrency(item.unitPrice)}
@@ -696,7 +716,8 @@ export function ViewBillDialog({ open, onOpenChange, patientId, queueId, queueNo
                               {formatCurrency(item.totalPrice)}
                             </TableCell>
                           </TableRow>
-                        ))}
+                          );
+                        })}
                       </TableBody>
                     </Table>
                   </div>

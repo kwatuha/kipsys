@@ -83,3 +83,4 @@ ALTER TABLE insurance_claims
 ADD INDEX idx_requirements_met (requirementsMet);
 
 
+

@@ -8,3 +8,4 @@ ADD COLUMN insuranceNumber VARCHAR(100)
 AFTER insuranceCompanyId;
 
 
+

@@ -11,6 +11,8 @@ import { billingApi } from "@/lib/api"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Skeleton } from "@/components/ui/skeleton"
 import { InvoiceDetailsDialog } from "@/components/invoice-details-dialog"
+import { PaymentReceiptDialog } from "@/components/payment-receipt-dialog"
+import { GroupedPaymentReceiptDialog } from "@/components/grouped-payment-receipt-dialog"
 
 type Invoice = {
   id: string
@@ -41,9 +43,15 @@ export function PatientBilling({ patientId }: { patientId: string }) {
   const [invoicesData, setInvoicesData] = useState<any[]>([]) // Store raw invoice data with IDs
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null)
   const [invoiceDialogOpen, setInvoiceDialogOpen] = useState(false)
+  const [receiptDialogOpen, setReceiptDialogOpen] = useState(false)
+  const [payments, setPayments] = useState<any[]>([])
+  const [loadingPayments, setLoadingPayments] = useState(false)
+  const [selectedBatchReceiptNumber, setSelectedBatchReceiptNumber] = useState<string | null>(null)
+  const [groupedReceiptOpen, setGroupedReceiptOpen] = useState(false)
 
   useEffect(() => {
     loadBilling()
+    loadPayments()
   }, [patientId])
 
   const loadBilling = async () => {
@@ -60,13 +68,22 @@ export function PatientBilling({ patientId }: { patientId: string }) {
         try {
           const invoiceDetails = await billingApi.getInvoiceById(inv.invoiceId.toString())
           if (invoiceDetails.items && invoiceDetails.items.length > 0) {
-            items = invoiceDetails.items.map((item: any) => ({
-              description: item.description || item.itemDescription || item.serviceName || 'Service',
-              quantity: item.quantity || 1,
-              unitPrice: parseFloat(item.unitPrice || item.price || 0),
-              total: parseFloat(item.total || item.totalAmount || 0),
-              category: item.category || item.serviceCategory || 'General'
-            }))
+            items = invoiceDetails.items.map((item: any) => {
+              // For prescription items, use medicationName if available
+              let description = item.chargeName || item.description || item.itemDescription || item.serviceName || 'Service';
+              if (description.includes('Prescription Item:') && item.medicationName) {
+                description = `Prescription Item: ${item.medicationName}`;
+              } else if (description.includes('Prescription Item: Unknown') && item.medicationName) {
+                description = `Prescription Item: ${item.medicationName}`;
+              }
+              return {
+                description: description,
+                quantity: item.quantity || 1,
+                unitPrice: parseFloat(item.unitPrice || item.price || 0),
+                total: parseFloat(item.total || item.totalAmount || 0),
+                category: item.category || item.serviceCategory || 'General'
+              };
+            })
           }
         } catch (err) {
           console.error(`Error loading invoice ${inv.invoiceId} details:`, err)
@@ -101,6 +118,21 @@ export function PatientBilling({ patientId }: { patientId: string }) {
       setError(err.message || "Failed to load billing information")
     } finally {
       setLoading(false)
+    }
+  }
+
+  const loadPayments = async () => {
+    try {
+      setLoadingPayments(true)
+      console.log('Loading payments for patientId:', patientId)
+      const paymentsData = await billingApi.getPatientPayments(patientId)
+      console.log('Payments data received:', paymentsData)
+      setPayments(paymentsData || [])
+    } catch (err: any) {
+      console.error("Error loading payments:", err)
+      setPayments([]) // Set empty array on error
+    } finally {
+      setLoadingPayments(false)
     }
   }
 
@@ -181,6 +213,7 @@ export function PatientBilling({ patientId }: { patientId: string }) {
             <TabsTrigger value="all">All Invoices</TabsTrigger>
             <TabsTrigger value="pending">Pending</TabsTrigger>
             <TabsTrigger value="paid">Paid</TabsTrigger>
+            <TabsTrigger value="payments">Payments</TabsTrigger>
           </TabsList>
 
           <TabsContent value="all" className="space-y-4">
@@ -300,7 +333,16 @@ export function PatientBilling({ patientId }: { patientId: string }) {
                         <TableCell>{bill.paymentMethod}</TableCell>
                         <TableCell>{bill.paymentDate || 'N/A'}</TableCell>
                         <TableCell className="text-right">
-                          <Button variant="outline" size="sm">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              if (bill.invoiceId) {
+                                setSelectedInvoiceId(bill.invoiceId.toString())
+                                setReceiptDialogOpen(true)
+                              }
+                            }}
+                          >
                             <Download className="h-4 w-4 mr-1" />
                             Receipt
                           </Button>
@@ -314,6 +356,84 @@ export function PatientBilling({ patientId }: { patientId: string }) {
               <div className="text-center py-4 text-muted-foreground">No paid invoices found</div>
             )}
           </TabsContent>
+
+          <TabsContent value="payments" className="space-y-4">
+            {loadingPayments ? (
+              <div className="text-center py-4">
+                <Skeleton className="h-[200px] w-full" />
+              </div>
+            ) : payments.length > 0 ? (
+              <div className="rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Receipt #</TableHead>
+                      <TableHead>Payment Date</TableHead>
+                      <TableHead>Payment Method</TableHead>
+                      <TableHead>Invoices</TableHead>
+                      <TableHead className="text-right">Amount Paid</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {payments.map((payment, index) => (
+                      <TableRow
+                        key={payment.batchReceiptNumber || `single-${index}`}
+                        className="cursor-pointer hover:bg-muted/50"
+                        onClick={() => {
+                          if (payment.batchReceiptNumber) {
+                            setSelectedBatchReceiptNumber(payment.batchReceiptNumber)
+                            setGroupedReceiptOpen(true)
+                          } else if (payment.invoices.length === 1) {
+                            // Single invoice payment - show individual receipt
+                            setSelectedInvoiceId(payment.invoices[0].invoiceId.toString())
+                            setReceiptDialogOpen(true)
+                          }
+                        }}
+                      >
+                        <TableCell className="font-medium">
+                          {payment.batchReceiptNumber || payment.invoices[0]?.invoiceNumber || 'N/A'}
+                        </TableCell>
+                        <TableCell>{payment.paymentDate}</TableCell>
+                        <TableCell>{payment.paymentMethod || 'Cash'}</TableCell>
+                        <TableCell>
+                          {payment.invoices.length > 1 ? (
+                            <Badge variant="secondary">{payment.invoices.length} invoices</Badge>
+                          ) : (
+                            <span>{payment.invoices[0]?.invoiceNumber || 'N/A'}</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right font-medium">
+                          KES {payment.totalAmount.toLocaleString()}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              if (payment.batchReceiptNumber) {
+                                setSelectedBatchReceiptNumber(payment.batchReceiptNumber)
+                                setGroupedReceiptOpen(true)
+                              } else if (payment.invoices.length === 1) {
+                                setSelectedInvoiceId(payment.invoices[0].invoiceId.toString())
+                                setReceiptDialogOpen(true)
+                              }
+                            }}
+                          >
+                            <Download className="h-4 w-4 mr-1" />
+                            Receipt
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            ) : (
+              <div className="text-center py-4 text-muted-foreground">No payments found</div>
+            )}
+          </TabsContent>
         </Tabs>
 
         <InvoiceDetailsDialog
@@ -321,6 +441,19 @@ export function PatientBilling({ patientId }: { patientId: string }) {
           open={invoiceDialogOpen}
           onOpenChange={setInvoiceDialogOpen}
           onUpdate={loadBilling}
+        />
+
+        <PaymentReceiptDialog
+          invoiceId={selectedInvoiceId}
+          open={receiptDialogOpen}
+          onOpenChange={setReceiptDialogOpen}
+        />
+
+        <GroupedPaymentReceiptDialog
+          batchReceiptNumber={selectedBatchReceiptNumber}
+          patientId={patientId}
+          open={groupedReceiptOpen}
+          onOpenChange={setGroupedReceiptOpen}
         />
       </CardContent>
     </Card>

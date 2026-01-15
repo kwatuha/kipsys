@@ -1,6 +1,6 @@
 // NOTE: Only one request should be sent to check for critical alerts per opened encounter form.
 // The system will check only the last recorded vitals or lab results to flag a patient as critical.
-// If you observe multiple requests or a continuous loading indicator in the critical alerts section, 
+// If you observe multiple requests or a continuous loading indicator in the critical alerts section,
 // ensure that only a single check is triggered per new vital/lab entry (or when the form is first opened).
 // You may need to debounce or throttle client requests and verify backend logic to prevent redundant checks.
 const express = require('express');
@@ -362,6 +362,22 @@ router.post('/prescriptions', async (req, res) => {
                 let medicationName = item.medicationName || 'Unknown';
                 const medicationIdNum = item.medicationId ? parseInt(item.medicationId) : null;
                 const quantityNum = item.quantity ? parseInt(item.quantity) : 0;
+
+                // If medication name is 'Unknown' but we have medicationId, fetch the actual name
+                if (medicationName === 'Unknown' && medicationIdNum) {
+                    try {
+                        const [medications] = await connection.execute(
+                            'SELECT name FROM medications WHERE medicationId = ?',
+                            [medicationIdNum]
+                        );
+                        if (medications.length > 0 && medications[0].name) {
+                            medicationName = medications[0].name;
+                        }
+                    } catch (err) {
+                        console.error('Error fetching medication name:', err);
+                        // Keep 'Unknown' if fetch fails
+                    }
+                }
 
                 // Save prescription item
                 await connection.execute(

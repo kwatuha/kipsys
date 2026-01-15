@@ -9,6 +9,7 @@ import { billingApi, insuranceApi } from "@/lib/api"
 import { FileText, CheckCircle2, AlertCircle, Loader2, ExternalLink } from "lucide-react"
 import { toast } from "sonner"
 import { ClaimDetailsDialog } from "@/components/claim-details-dialog"
+import { CreateInsuranceClaimDialog } from "@/components/create-insurance-claim-dialog"
 
 interface InvoiceInsuranceClaimProps {
   invoiceId: string
@@ -22,6 +23,7 @@ export function InvoiceInsuranceClaim({ invoiceId, invoiceNumber, patientId, onU
   const [loading, setLoading] = useState(true)
   const [creatingClaim, setCreatingClaim] = useState(false)
   const [claimDetailsOpen, setClaimDetailsOpen] = useState(false)
+  const [createClaimDialogOpen, setCreateClaimDialogOpen] = useState(false)
   const [claimId, setClaimId] = useState<string | null>(null)
 
   useEffect(() => {
@@ -46,33 +48,12 @@ export function InvoiceInsuranceClaim({ invoiceId, invoiceNumber, patientId, onU
     }
   }
 
-  const handleCreateClaim = async () => {
+  const handleCreateClaim = () => {
     if (!insuranceInfo?.canCreateClaim) {
       toast.error('Cannot create claim: ' + (insuranceInfo?.reason || 'Unknown error'))
       return
     }
-
-    if (!confirm(`Create insurance claim for invoice ${invoiceNumber}?`)) {
-      return
-    }
-
-    try {
-      setCreatingClaim(true)
-      const claim = await billingApi.createClaimFromInvoice(invoiceId)
-
-      toast.success('Insurance claim created successfully')
-      setClaimId(claim.claimId.toString())
-      await loadInsuranceInfo()
-      onUpdate?.()
-
-      // Open claim details dialog
-      setClaimDetailsOpen(true)
-    } catch (error: any) {
-      console.error('Error creating claim:', error)
-      toast.error(error.message || 'Failed to create claim')
-    } finally {
-      setCreatingClaim(false)
-    }
+    setCreateClaimDialogOpen(true)
   }
 
   const handleViewClaim = () => {
@@ -214,24 +195,26 @@ export function InvoiceInsuranceClaim({ invoiceId, invoiceNumber, patientId, onU
               <Button
                 className="w-full mt-3"
                 onClick={handleCreateClaim}
-                disabled={creatingClaim || !insuranceInfo.canCreateClaim}
+                disabled={!insuranceInfo.canCreateClaim}
               >
-                {creatingClaim ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Creating Claim...
-                  </>
-                ) : (
-                  <>
-                    <FileText className="h-4 w-4 mr-2" />
-                    Create Insurance Claim
-                  </>
-                )}
+                <FileText className="h-4 w-4 mr-2" />
+                Create Insurance Claim
               </Button>
             </div>
           )}
         </CardContent>
       </Card>
+
+      <CreateInsuranceClaimDialog
+        invoiceId={invoiceId}
+        invoiceNumber={invoiceNumber}
+        open={createClaimDialogOpen}
+        onOpenChange={setCreateClaimDialogOpen}
+        onSuccess={() => {
+          loadInsuranceInfo()
+          onUpdate?.()
+        }}
+      />
 
       <ClaimDetailsDialog
         claimId={claimId}
@@ -245,4 +228,5 @@ export function InvoiceInsuranceClaim({ invoiceId, invoiceNumber, patientId, onU
     </>
   )
 }
+
 

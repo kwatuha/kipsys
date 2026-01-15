@@ -269,19 +269,42 @@ router.get('/invoices/:id', async (req, res) => {
             return res.status(404).json({ message: 'Invoice not found' });
         }
 
-        // Get invoice items
+        // Get invoice items with medication names for prescription items
         const [items] = await pool.execute(
-            `SELECT ii.*, sc.name as chargeName, sc.chargeCode
+            `SELECT
+                ii.*,
+                sc.name as chargeName,
+                sc.chargeCode,
+                m.name as medicationName
              FROM invoice_items ii
              LEFT JOIN service_charges sc ON ii.chargeId = sc.chargeId
+             LEFT JOIN drug_inventory di ON ii.drugInventoryId = di.drugInventoryId
+             LEFT JOIN medications m ON di.medicationId = m.medicationId
              WHERE ii.invoiceId = ?
              ORDER BY ii.itemId`,
             [id]
         );
 
+        // Update description for prescription items to use actual medication name
+        const updatedItems = items.map((item) => {
+            // If description contains "Prescription Item:" and we have medicationName, update it
+            if (item.description && item.description.includes('Prescription Item:') && item.medicationName) {
+                // Extract the medication name from description or use the joined medicationName
+                const currentName = item.description.replace('Prescription Item: ', '').trim();
+                // If current name is 'Unknown' or empty, use the medicationName from join
+                if (currentName === 'Unknown' || !currentName || currentName === '') {
+                    return {
+                        ...item,
+                        description: `Prescription Item: ${item.medicationName}`
+                    };
+                }
+            }
+            return item;
+        });
+
         res.status(200).json({
             ...invoices[0],
-            items: items
+            items: updatedItems
         });
     } catch (error) {
         console.error('Error fetching invoice:', error);
@@ -308,19 +331,39 @@ router.get('/invoices/patient/:patientId/pending', async (req, res) => {
             [patientId]
         );
 
-        // Get items for each invoice
+        // Get items for each invoice with medication names
         const invoicesWithItems = await Promise.all(invoices.map(async (invoice) => {
             const [items] = await pool.execute(
-                `SELECT ii.*, sc.name as chargeName, sc.chargeCode
+                `SELECT
+                    ii.*,
+                    sc.name as chargeName,
+                    sc.chargeCode,
+                    m.name as medicationName
                  FROM invoice_items ii
                  LEFT JOIN service_charges sc ON ii.chargeId = sc.chargeId
+                 LEFT JOIN drug_inventory di ON ii.drugInventoryId = di.drugInventoryId
+                 LEFT JOIN medications m ON di.medicationId = m.medicationId
                  WHERE ii.invoiceId = ?
                  ORDER BY ii.itemId`,
                 [invoice.invoiceId]
             );
+
+            // Update description for prescription items to use actual medication name
+            const updatedItems = items.map((item) => {
+                if (item.description && item.description.includes('Prescription Item:') && item.medicationName) {
+                    const currentName = item.description.replace('Prescription Item: ', '').trim();
+                    if (currentName === 'Unknown' || !currentName || currentName === '') {
+                        return {
+                            ...item,
+                            description: `Prescription Item: ${item.medicationName}`
+                        };
+                    }
+                }
+                return item;
+            });
             return {
                 ...invoice,
-                items: items
+                items: updatedItems
             };
         }));
 
@@ -712,7 +755,7 @@ router.post('/invoices/:id/payment', async (req, res) => {
         await connection.beginTransaction();
 
         const { id } = req.params;
-        const { paymentAmount, paymentDate, paymentMethod, referenceNumber, notes } = req.body;
+        const { paymentAmount, paymentDate, paymentMethod, referenceNumber, notes, batchReceiptNumber } = req.body;
         const userId = req.user?.id;
 
         if (!paymentAmount || paymentAmount <= 0) {
@@ -739,12 +782,49 @@ router.post('/invoices/:id/payment', async (req, res) => {
         }
 
         // Update invoice
-        await connection.execute(
-            `UPDATE invoices
-            SET paidAmount = ?, balance = ?, status = ?, paymentMethod = ?, updatedAt = NOW()
-            WHERE invoiceId = ?`,
-            [newPaid, outstanding, newStatus, paymentMethod || invoice.paymentMethod, id]
-        );
+        // If batchReceiptNumber is provided, store it in notes or reference
+        let updatedNotes = notes || '';
+        let updatedReference = referenceNumber || '';
+        if (batchReceiptNumber) {
+            updatedNotes = updatedNotes ? `${updatedNotes} | Batch Receipt: ${batchReceiptNumber}` : `Batch Receipt: ${batchReceiptNumber}`;
+            if (!updatedReference) {
+                updatedReference = batchReceiptNumber;
+            }
+        }
+
+        // Update invoice with payment details
+        // Store batch receipt number in notes if provided
+        let updateQuery = `UPDATE invoices
+            SET paidAmount = ?, balance = ?, status = ?, paymentMethod = ?, updatedAt = NOW()`;
+        const updateParams = [newPaid, outstanding, newStatus, paymentMethod || invoice.paymentMethod];
+
+        if (batchReceiptNumber) {
+            // Append batch receipt to notes
+            const currentNotes = invoice.notes || '';
+            const batchNote = `Batch Receipt: ${batchReceiptNumber}`;
+            const updatedNotes = currentNotes ? `${currentNotes} | ${batchNote}` : batchNote;
+            updateQuery += `, notes = ?`;
+            updateParams.push(updatedNotes);
+
+            // Also set paymentReference if it's empty
+            if (!referenceNumber) {
+                updateQuery += `, paymentReference = ?`;
+                updateParams.push(batchReceiptNumber);
+            }
+        } else if (referenceNumber) {
+            updateQuery += `, paymentReference = ?`;
+            updateParams.push(referenceNumber);
+        }
+
+        if (notes && !batchReceiptNumber) {
+            updateQuery += `, notes = ?`;
+            updateParams.push(notes);
+        }
+
+        updateQuery += ` WHERE invoiceId = ?`;
+        updateParams.push(id);
+
+        await connection.execute(updateQuery, updateParams);
 
         // If invoice is fully paid, check if we need to create queue entries
         if (newStatus === 'paid') {
@@ -973,6 +1053,296 @@ router.post('/invoices/:id/payment', async (req, res) => {
         res.status(500).json({ message: 'Error recording payment', error: error.message });
     } finally {
         connection.release();
+    }
+});
+
+/**
+ * @route GET /api/billing/patients/:patientId/payments
+ * @description Get all payments for a patient, grouped by batch receipt number
+ */
+router.get('/patients/:patientId/payments', async (req, res) => {
+    try {
+        const { patientId } = req.params;
+
+        // Get all paid invoices for this patient
+        const [invoices] = await pool.execute(`
+            SELECT
+                i.invoiceId,
+                i.invoiceNumber,
+                i.invoiceDate,
+                i.totalAmount,
+                i.paidAmount,
+                i.paymentMethod,
+                i.updatedAt,
+                i.notes
+            FROM invoices i
+            WHERE i.patientId = ?
+              AND i.status IN ('paid', 'partial')
+              AND i.paidAmount > 0
+            ORDER BY i.updatedAt DESC
+        `, [patientId]);
+
+        // Group invoices by batch receipt number
+        const paymentBatches = new Map();
+        const singlePayments = [];
+
+        for (const invoice of invoices) {
+            // Extract batch receipt number from notes
+            const batchMatch = invoice.notes?.match(/Batch Receipt:\s*([A-Z0-9-]+)/);
+            const batchReceiptNumber = batchMatch ? batchMatch[1] : null;
+
+            if (batchReceiptNumber) {
+                // Group by batch receipt number
+                if (!paymentBatches.has(batchReceiptNumber)) {
+                    // Extract payment date from updatedAt (when payment was made)
+                    const paymentDate = invoice.updatedAt
+                        ? (invoice.updatedAt instanceof Date
+                            ? invoice.updatedAt.toISOString().split('T')[0]
+                            : invoice.updatedAt.toString().split('T')[0])
+                        : new Date().toISOString().split('T')[0];
+
+                    paymentBatches.set(batchReceiptNumber, {
+                        batchReceiptNumber,
+                        paymentDate: paymentDate,
+                        paymentMethod: invoice.paymentMethod || 'Cash',
+                        invoices: [],
+                        totalAmount: 0
+                    });
+                }
+                const batch = paymentBatches.get(batchReceiptNumber);
+
+                // Extract batch amount from notes
+                let batchAmount = parseFloat(invoice.paidAmount || 0);
+                const amountMatch = invoice.notes?.match(/Batch Amount:\s*([\d.]+)/);
+                if (amountMatch) {
+                    batchAmount = parseFloat(amountMatch[1]);
+                }
+
+                batch.invoices.push({
+                    invoiceId: invoice.invoiceId,
+                    invoiceNumber: invoice.invoiceNumber,
+                    invoiceDate: invoice.invoiceDate,
+                    totalAmount: invoice.totalAmount,
+                    amountPaid: batchAmount
+                });
+                batch.totalAmount += batchAmount;
+            } else {
+                // Single invoice payment (not part of a batch)
+                // Extract payment date from updatedAt (when payment was made)
+                const paymentDate = invoice.updatedAt
+                    ? (invoice.updatedAt instanceof Date
+                        ? invoice.updatedAt.toISOString().split('T')[0]
+                        : invoice.updatedAt.toString().split('T')[0])
+                    : new Date().toISOString().split('T')[0];
+
+                singlePayments.push({
+                    batchReceiptNumber: null,
+                    paymentDate: paymentDate,
+                    paymentMethod: invoice.paymentMethod || 'Cash',
+                    invoices: [{
+                        invoiceId: invoice.invoiceId,
+                        invoiceNumber: invoice.invoiceNumber,
+                        invoiceDate: invoice.invoiceDate,
+                        totalAmount: invoice.totalAmount,
+                        amountPaid: parseFloat(invoice.paidAmount || 0)
+                    }],
+                    totalAmount: parseFloat(invoice.paidAmount || 0)
+                });
+            }
+        }
+
+        // Combine batches and single payments, sort by date
+        const allPayments = [
+            ...Array.from(paymentBatches.values()),
+            ...singlePayments
+        ].sort((a, b) => {
+            const dateA = new Date(a.paymentDate).getTime();
+            const dateB = new Date(b.paymentDate).getTime();
+            return dateB - dateA; // Most recent first
+        });
+
+        res.status(200).json(allPayments);
+    } catch (error) {
+        console.error('Error fetching patient payments:', error);
+        res.status(500).json({ message: 'Error fetching patient payments', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/billing/payment-batches/:batchReceiptNumber
+ * @description Get payment batch receipt by batch receipt number
+ */
+router.get('/payment-batches/:batchReceiptNumber', async (req, res) => {
+    try {
+        const { batchReceiptNumber } = req.params;
+        const { patientId } = req.query;
+
+        // Find all invoices that were paid with this batch receipt number
+        // The batch receipt number is stored in the invoice notes
+        let query = `
+            SELECT DISTINCT
+                i.invoiceId,
+                i.invoiceNumber,
+                i.invoiceDate,
+                i.totalAmount,
+                i.paidAmount,
+                i.paymentMethod,
+                i.paymentDate,
+                i.updatedAt,
+                p.patientId,
+                p.firstName as patientFirstName,
+                p.lastName as patientLastName,
+                p.patientNumber
+            FROM invoices i
+            INNER JOIN patients p ON i.patientId = p.patientId
+            WHERE i.notes LIKE ?
+        `;
+        const params = [`%Batch Receipt: ${batchReceiptNumber}%`];
+
+        if (patientId) {
+            query += ' AND i.patientId = ?';
+            params.push(patientId);
+        }
+
+        query += ' ORDER BY i.invoiceDate DESC, i.invoiceNumber';
+
+        const [invoices] = await pool.execute(query, params);
+
+        if (invoices.length === 0) {
+            return res.status(404).json({ message: 'Payment batch not found' });
+        }
+
+        // Get payment details from the first invoice (they should all have the same payment method/date)
+        const firstInvoice = invoices[0];
+        const paymentDate = firstInvoice.paymentDate || firstInvoice.updatedAt?.split('T')[0] || new Date().toISOString().split('T')[0];
+
+        // Extract reference number from notes if available
+        // Look for reference number in the notes or use batch receipt number
+        const referenceNumber = batchReceiptNumber;
+
+        // Get invoice items for each invoice
+        const invoicesWithItems = await Promise.all(invoices.map(async (inv) => {
+            const [items] = await pool.execute(
+                `SELECT
+                    ii.*,
+                    sc.name as chargeName,
+                    sc.chargeCode,
+                    m.name as medicationName
+                 FROM invoice_items ii
+                 LEFT JOIN service_charges sc ON ii.chargeId = sc.chargeId
+                 LEFT JOIN drug_inventory di ON ii.drugInventoryId = di.drugInventoryId
+                 LEFT JOIN medications m ON di.medicationId = m.medicationId
+                 WHERE ii.invoiceId = ?
+                 ORDER BY ii.itemId`,
+                [inv.invoiceId]
+            );
+
+            // Update description for prescription items to use actual medication name
+            const updatedItems = items.map((item) => {
+                if (item.description && item.description.includes('Prescription Item:') && item.medicationName) {
+                    const currentName = item.description.replace('Prescription Item: ', '').trim();
+                    if (currentName === 'Unknown' || !currentName || currentName === '') {
+                        return {
+                            ...item,
+                            description: `Prescription Item: ${item.medicationName}`
+                        };
+                    }
+                }
+                return item;
+            });
+
+            // Extract batch amount from notes if available
+            let batchAmount = parseFloat(inv.paidAmount || 0);
+            if (inv.notes) {
+                const batchAmountMatch = inv.notes.match(/Batch Amount:\s*([\d.]+)/);
+                if (batchAmountMatch) {
+                    batchAmount = parseFloat(batchAmountMatch[1]);
+                }
+            }
+
+            return {
+                invoiceId: inv.invoiceId,
+                invoiceNumber: inv.invoiceNumber,
+                invoiceDate: inv.invoiceDate,
+                totalAmount: inv.totalAmount,
+                amountPaid: batchAmount,
+                items: updatedItems
+            };
+        }));
+
+        res.status(200).json({
+            batchReceiptNumber,
+            paymentDate,
+            paymentMethod: firstInvoice.paymentMethod || 'Cash',
+            referenceNumber,
+            patientId: firstInvoice.patientId,
+            patientName: `${firstInvoice.patientFirstName} ${firstInvoice.patientLastName}`,
+            patientNumber: firstInvoice.patientNumber,
+            invoices: invoicesWithItems,
+            totalAmount: invoices.reduce((sum, inv) => sum + parseFloat(inv.paidAmount || 0), 0)
+        });
+    } catch (error) {
+        console.error('Error fetching payment batch:', error);
+        res.status(500).json({ message: 'Error fetching payment batch', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/billing/invoices/:id/payments
+ * @description Get payment history for an invoice
+ */
+router.get('/invoices/:id/payments', async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // Get payments from payments table if it exists
+        const [payments] = await pool.execute(`
+            SELECT
+                p.paymentId,
+                p.paymentNumber,
+                p.paymentDate,
+                p.amount,
+                p.referenceNumber,
+                p.notes,
+                pm.methodName as paymentMethod,
+                CONCAT(u.firstName, ' ', u.lastName) as receivedBy
+            FROM payments p
+            LEFT JOIN payment_methods pm ON p.paymentMethodId = pm.methodId
+            LEFT JOIN users u ON p.receivedBy = u.userId
+            WHERE p.invoiceId = ?
+            ORDER BY p.paymentDate DESC, p.createdAt DESC
+        `, [id]).catch(async () => {
+            // If payments table doesn't exist or query fails, return empty array
+            // In this case, payment info is stored in the invoice itself
+            return [[], []];
+        });
+
+        // If no payments found in payments table, check if invoice has payment info
+        if (payments.length === 0) {
+            const [invoice] = await pool.execute(
+                'SELECT paidAmount, paymentMethod, paymentDate, updatedAt FROM invoices WHERE invoiceId = ?',
+                [id]
+            );
+
+            if (invoice.length > 0 && parseFloat(invoice[0].paidAmount || 0) > 0) {
+                // Return a single payment record based on invoice data
+                return res.status(200).json([{
+                    paymentId: null,
+                    paymentNumber: invoice[0].invoiceNumber || `PAY-${id}`,
+                    paymentDate: invoice[0].paymentDate || invoice[0].updatedAt,
+                    amount: invoice[0].paidAmount,
+                    referenceNumber: null,
+                    notes: null,
+                    paymentMethod: invoice[0].paymentMethod || 'Cash',
+                    receivedBy: null
+                }]);
+            }
+        }
+
+        res.status(200).json(payments);
+    } catch (error) {
+        console.error('Error fetching invoice payments:', error);
+        res.status(500).json({ message: 'Error fetching invoice payments', error: error.message });
     }
 });
 

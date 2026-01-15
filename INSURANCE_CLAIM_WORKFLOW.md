@@ -307,3 +307,4 @@ if (patientData.patientType === 'insurance' && patientData.insuranceCompanyId) {
 6. ✅ Add bulk claim operations
 7. ✅ Add claim analytics and reporting
 
+
