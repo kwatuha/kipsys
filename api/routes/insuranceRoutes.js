@@ -1069,5 +1069,203 @@ router.get('/providers/:id/requirements', async (req, res) => {
     }
 });
 
+/**
+ * @route POST /api/insurance/providers/:id/requirements/template
+ * @description Create a requirement template for a provider
+ */
+router.post('/providers/:id/requirements/template', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { templateName, description, isRequired = true } = req.body;
+        const userId = req.user?.id;
+
+        if (!templateName) {
+            return res.status(400).json({ error: 'Template name is required' });
+        }
+
+        // Check if provider exists
+        const [provider] = await pool.execute(
+            'SELECT providerId FROM insurance_providers WHERE providerId = ?',
+            [id]
+        );
+
+        if (provider.length === 0) {
+            return res.status(404).json({ error: 'Insurance provider not found' });
+        }
+
+        // Check if template already exists
+        const [existing] = await pool.execute(
+            'SELECT templateId FROM claim_requirement_templates WHERE providerId = ? AND isActive = 1',
+            [id]
+        );
+
+        if (existing.length > 0) {
+            return res.status(400).json({ error: 'A requirement template already exists for this provider. Update the existing template instead.' });
+        }
+
+        // Create template
+        const [result] = await pool.execute(
+            `INSERT INTO claim_requirement_templates (providerId, templateName, description, isActive, isRequired, createdBy)
+             VALUES (?, ?, ?, TRUE, ?, ?)`,
+            [id, templateName, description || null, isRequired, userId || null]
+        );
+
+        const [newTemplate] = await pool.execute(
+            'SELECT * FROM claim_requirement_templates WHERE templateId = ?',
+            [result.insertId]
+        );
+
+        res.status(201).json(newTemplate[0]);
+    } catch (error) {
+        console.error('Error creating requirement template:', error);
+        res.status(500).json({ message: 'Error creating requirement template', error: error.message });
+    }
+});
+
+/**
+ * @route POST /api/insurance/providers/:id/requirements
+ * @description Add a requirement to a provider's template
+ */
+router.post('/providers/:id/requirements', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const {
+            requirementCode,
+            requirementName,
+            description,
+            requirementType = 'document',
+            isRequired = true,
+            displayOrder = 0
+        } = req.body;
+
+        if (!requirementName) {
+            return res.status(400).json({ error: 'Requirement name is required' });
+        }
+
+        // Get template for this provider
+        const [templates] = await pool.execute(
+            'SELECT templateId FROM claim_requirement_templates WHERE providerId = ? AND isActive = 1',
+            [id]
+        );
+
+        if (templates.length === 0) {
+            return res.status(404).json({ error: 'No requirement template found for this provider. Create a template first.' });
+        }
+
+        const templateId = templates[0].templateId;
+
+        // Insert requirement
+        const [result] = await pool.execute(
+            `INSERT INTO claim_requirements (templateId, requirementCode, requirementName, description, requirementType, isRequired, displayOrder, isActive)
+             VALUES (?, ?, ?, ?, ?, ?, ?, TRUE)`,
+            [templateId, requirementCode || null, requirementName, description || null, requirementType, isRequired, displayOrder]
+        );
+
+        const [newRequirement] = await pool.execute(
+            'SELECT * FROM claim_requirements WHERE requirementId = ?',
+            [result.insertId]
+        );
+
+        res.status(201).json(newRequirement[0]);
+    } catch (error) {
+        console.error('Error creating requirement:', error);
+        res.status(500).json({ message: 'Error creating requirement', error: error.message });
+    }
+});
+
+/**
+ * @route PUT /api/insurance/providers/:id/requirements/:requirementId
+ * @description Update a requirement
+ */
+router.put('/providers/:id/requirements/:requirementId', async (req, res) => {
+    try {
+        const { requirementId } = req.params;
+        const {
+            requirementCode,
+            requirementName,
+            description,
+            requirementType,
+            isRequired,
+            displayOrder,
+            isActive
+        } = req.body;
+
+        // Update requirement
+        const updateFields = [];
+        const updateValues = [];
+
+        if (requirementCode !== undefined) {
+            updateFields.push('requirementCode = ?');
+            updateValues.push(requirementCode);
+        }
+        if (requirementName !== undefined) {
+            updateFields.push('requirementName = ?');
+            updateValues.push(requirementName);
+        }
+        if (description !== undefined) {
+            updateFields.push('description = ?');
+            updateValues.push(description);
+        }
+        if (requirementType !== undefined) {
+            updateFields.push('requirementType = ?');
+            updateValues.push(requirementType);
+        }
+        if (isRequired !== undefined) {
+            updateFields.push('isRequired = ?');
+            updateValues.push(isRequired);
+        }
+        if (displayOrder !== undefined) {
+            updateFields.push('displayOrder = ?');
+            updateValues.push(displayOrder);
+        }
+        if (isActive !== undefined) {
+            updateFields.push('isActive = ?');
+            updateValues.push(isActive);
+        }
+
+        if (updateFields.length === 0) {
+            return res.status(400).json({ error: 'No fields to update' });
+        }
+
+        updateValues.push(requirementId);
+
+        await pool.execute(
+            `UPDATE claim_requirements SET ${updateFields.join(', ')} WHERE requirementId = ?`,
+            updateValues
+        );
+
+        const [updated] = await pool.execute(
+            'SELECT * FROM claim_requirements WHERE requirementId = ?',
+            [requirementId]
+        );
+
+        res.status(200).json(updated[0]);
+    } catch (error) {
+        console.error('Error updating requirement:', error);
+        res.status(500).json({ message: 'Error updating requirement', error: error.message });
+    }
+});
+
+/**
+ * @route DELETE /api/insurance/providers/:id/requirements/:requirementId
+ * @description Delete (deactivate) a requirement
+ */
+router.delete('/providers/:id/requirements/:requirementId', async (req, res) => {
+    try {
+        const { requirementId } = req.params;
+
+        // Soft delete by setting isActive = FALSE
+        await pool.execute(
+            'UPDATE claim_requirements SET isActive = FALSE WHERE requirementId = ?',
+            [requirementId]
+        );
+
+        res.status(200).json({ message: 'Requirement deactivated successfully' });
+    } catch (error) {
+        console.error('Error deleting requirement:', error);
+        res.status(500).json({ message: 'Error deleting requirement', error: error.message });
+    }
+});
+
 module.exports = router;
 

@@ -1436,6 +1436,18 @@ export const insuranceApi = {
   // Provider Requirements
   getProviderRequirements: (providerId: string) =>
     apiRequest<any>(`/api/insurance/providers/${providerId}/requirements`),
+
+  createRequirementTemplate: (providerId: string, data: any) =>
+    apiRequest<any>(`/api/insurance/providers/${providerId}/requirements/template`, { method: 'POST', body: data }),
+
+  addRequirement: (providerId: string, data: any) =>
+    apiRequest<any>(`/api/insurance/providers/${providerId}/requirements`, { method: 'POST', body: data }),
+
+  updateRequirement: (providerId: string, requirementId: string, data: any) =>
+    apiRequest<any>(`/api/insurance/providers/${providerId}/requirements/${requirementId}`, { method: 'PUT', body: data }),
+
+  deleteRequirement: (providerId: string, requirementId: string) =>
+    apiRequest<any>(`/api/insurance/providers/${providerId}/requirements/${requirementId}`, { method: 'DELETE' }),
 };
 
 // Revenue Share Management API

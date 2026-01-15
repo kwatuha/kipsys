@@ -40,8 +40,9 @@ import {
 } from "@/components/ui/alert-dialog"
 import { insuranceApi } from "@/lib/api"
 import { toast } from "@/components/ui/use-toast"
-import { Loader2 } from "lucide-react"
+import { Loader2, Checklist } from "lucide-react"
 import { AddInsuranceProviderForm } from "@/components/add-insurance-provider-form"
+import { ManageClaimRequirementsDialog } from "@/components/manage-claim-requirements-dialog"
 
 export function InsuranceProvidersTable() {
   const [providers, setProviders] = useState<any[]>([])
@@ -54,6 +55,8 @@ export function InsuranceProvidersTable() {
   const [deleteLoading, setDeleteLoading] = useState(false)
   const [openAddForm, setOpenAddForm] = useState(false)
   const [editingProvider, setEditingProvider] = useState<any>(null)
+  const [requirementsDialogOpen, setRequirementsDialogOpen] = useState(false)
+  const [selectedProviderForRequirements, setSelectedProviderForRequirements] = useState<any>(null)
 
   useEffect(() => {
     loadProviders()
@@ -218,6 +221,15 @@ export function InsuranceProvidersTable() {
                           <Edit className="mr-2 h-4 w-4" />
                           Edit
                         </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => {
+                            setSelectedProviderForRequirements(provider)
+                            setRequirementsDialogOpen(true)
+                          }}
+                        >
+                          <Checklist className="mr-2 h-4 w-4" />
+                          Manage Requirements
+                        </DropdownMenuItem>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem
                           onClick={() => handleDeleteClick(provider)}
@@ -339,6 +351,15 @@ export function InsuranceProvidersTable() {
         onSuccess={handleProviderSaved}
         editData={editingProvider}
       />
+
+      {selectedProviderForRequirements && (
+        <ManageClaimRequirementsDialog
+          open={requirementsDialogOpen}
+          onOpenChange={setRequirementsDialogOpen}
+          providerId={selectedProviderForRequirements.providerId.toString()}
+          providerName={selectedProviderForRequirements.providerName}
+        />
+      )}
     </div>
   )
 }
