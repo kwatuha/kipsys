@@ -20,6 +20,7 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { BirthDatePicker } from "@/components/birth-date-picker"
+import { insuranceApi } from "@/lib/api"
 
 const patientFormSchema = z.object({
   firstName: z.string().min(2, {
@@ -34,6 +35,9 @@ const patientFormSchema = z.object({
   gender: z.string({
     required_error: "Please select a gender.",
   }),
+  patientType: z.enum(['paying', 'insurance'], {
+    required_error: "Please select patient type.",
+  }),
   idNumber: z.string().optional(),
   phone: z.string().min(10, {
     message: "Phone number must be at least 10 characters.",
@@ -45,7 +49,7 @@ const patientFormSchema = z.object({
   bloodGroup: z.string().optional(),
   allergies: z.string().optional(),
   medicalHistory: z.string().optional(),
-  insuranceProvider: z.string().optional(),
+  insuranceCompanyId: z.string().optional(),
   insuranceNumber: z.string().optional(),
 })
 
@@ -57,6 +61,7 @@ const defaultValues: Partial<PatientFormValues> = {
   firstName: "",
   lastName: "",
   gender: "",
+  patientType: "paying",
   idNumber: "",
   phone: "",
   email: "",
@@ -66,17 +71,38 @@ const defaultValues: Partial<PatientFormValues> = {
   bloodGroup: "",
   allergies: "",
   medicalHistory: "",
-  insuranceProvider: "",
+  insuranceCompanyId: "",
   insuranceNumber: "",
 }
 
 export function AddPatientForm({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [insuranceCompanies, setInsuranceCompanies] = useState<any[]>([])
+  const [loadingCompanies, setLoadingCompanies] = useState(false)
 
   const form = useForm<PatientFormValues>({
     resolver: zodResolver(patientFormSchema),
     defaultValues,
   })
+
+  // Load insurance companies when form opens
+  useEffect(() => {
+    if (open) {
+      loadInsuranceCompanies()
+    }
+  }, [open])
+
+  const loadInsuranceCompanies = async () => {
+    try {
+      setLoadingCompanies(true)
+      const companies = await insuranceApi.getProviders('active')
+      setInsuranceCompanies(companies || [])
+    } catch (error) {
+      console.error('Error loading insurance companies:', error)
+    } finally {
+      setLoadingCompanies(false)
+    }
+  }
 
   // Load saved draft when form opens
   useEffect(() => {
@@ -88,12 +114,13 @@ export function AddPatientForm({ open, onOpenChange }: { open: boolean; onOpenCh
         const normalizedDraft = {
           firstName: savedDraft.firstName ?? "",
           lastName: savedDraft.lastName ?? "",
-          dateOfBirth: savedDraft.dateOfBirth 
-            ? (typeof savedDraft.dateOfBirth === 'string' 
-                ? new Date(savedDraft.dateOfBirth) 
+          dateOfBirth: savedDraft.dateOfBirth
+            ? (typeof savedDraft.dateOfBirth === 'string'
+                ? new Date(savedDraft.dateOfBirth)
                 : savedDraft.dateOfBirth)
             : undefined,
           gender: savedDraft.gender ?? "",
+          patientType: savedDraft.patientType ?? "paying",
           idNumber: savedDraft.idNumber ?? "",
           phone: savedDraft.phone ?? "",
           email: savedDraft.email ?? "",
@@ -103,7 +130,7 @@ export function AddPatientForm({ open, onOpenChange }: { open: boolean; onOpenCh
           bloodGroup: savedDraft.bloodGroup ?? "",
           allergies: savedDraft.allergies ?? "",
           medicalHistory: savedDraft.medicalHistory ?? "",
-          insuranceProvider: savedDraft.insuranceProvider ?? "",
+          insuranceCompanyId: savedDraft.insuranceCompanyId ?? "",
           insuranceNumber: savedDraft.insuranceNumber ?? "",
         }
         form.reset(normalizedDraft)
@@ -112,6 +139,17 @@ export function AddPatientForm({ open, onOpenChange }: { open: boolean; onOpenCh
       }
     }
   }, [open, form])
+
+  // Clear insurance fields when patient type changes to "paying"
+  useEffect(() => {
+    const subscription = form.watch((value, { name }) => {
+      if (name === 'patientType' && value.patientType === 'paying') {
+        form.setValue('insuranceCompanyId', '')
+        form.setValue('insuranceNumber', '')
+      }
+    })
+    return () => subscription.unsubscribe()
+  }, [form])
 
   // Auto-save form data to localStorage
   useEffect(() => {
@@ -122,8 +160,8 @@ export function AddPatientForm({ open, onOpenChange }: { open: boolean; onOpenCh
                       value.email || value.address || value.idNumber ||
                       value.emergencyContact || value.emergencyPhone ||
                       value.bloodGroup || value.allergies || value.medicalHistory ||
-                      value.insuranceProvider || value.insuranceNumber
-      
+                      value.insuranceCompanyId || value.insuranceNumber || value.patientType
+
       if (hasData) {
         saveDraftToStorage(value as any)
       } else {
@@ -134,17 +172,43 @@ export function AddPatientForm({ open, onOpenChange }: { open: boolean; onOpenCh
     return () => subscription.unsubscribe()
   }, [form, open])
 
-  function onSubmit(data: PatientFormValues) {
+  async function onSubmit(data: PatientFormValues) {
     setIsSubmitting(true)
-    // Simulate API call
-    setTimeout(() => {
-      console.log(data)
+    try {
+      const { patientApi } = await import('@/lib/api')
+
+      // Format data for API
+      const patientData = {
+        firstName: data.firstName,
+        lastName: data.lastName,
+        dateOfBirth: data.dateOfBirth.toISOString().split('T')[0],
+        gender: data.gender,
+        patientType: data.patientType,
+        phone: data.phone,
+        email: data.email || null,
+        address: data.address || null,
+        idNumber: data.idNumber || null,
+        bloodGroup: data.bloodGroup || null,
+        allergies: data.allergies || null,
+        medicalHistory: data.medicalHistory || null,
+        nextOfKinName: data.emergencyContact || null,
+        nextOfKinPhone: data.emergencyPhone || null,
+        insuranceCompanyId: data.insuranceCompanyId ? parseInt(data.insuranceCompanyId) : null,
+        insuranceNumber: data.insuranceNumber || null,
+      }
+
+      await patientApi.create(patientData)
+
       // Clear draft after successful submission
       clearDraftFromStorage()
-      setIsSubmitting(false)
       onOpenChange(false)
       form.reset()
-    }, 1000)
+    } catch (error: any) {
+      console.error('Error creating patient:', error)
+      alert(error.message || 'Failed to register patient. Please try again.')
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   // Draft management functions
@@ -153,8 +217,8 @@ export function AddPatientForm({ open, onOpenChange }: { open: boolean; onOpenCh
     try {
       const dataToSave = {
         ...data,
-        dateOfBirth: data.dateOfBirth instanceof Date 
-          ? data.dateOfBirth.toISOString() 
+        dateOfBirth: data.dateOfBirth instanceof Date
+          ? data.dateOfBirth.toISOString()
           : data.dateOfBirth,
       }
       localStorage.setItem(PATIENT_STORAGE_KEY, JSON.stringify(dataToSave))
@@ -253,6 +317,30 @@ export function AddPatientForm({ open, onOpenChange }: { open: boolean; onOpenCh
                         <SelectItem value="male">Male</SelectItem>
                         <SelectItem value="female">Female</SelectItem>
                         <SelectItem value="other">Other</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <FormField
+                control={form.control}
+                name="patientType"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Patient Type</FormLabel>
+                    <Select onValueChange={field.onChange} value={field.value || "paying"}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select patient type" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="paying">Paying</SelectItem>
+                        <SelectItem value="insurance">Insurance</SelectItem>
                       </SelectContent>
                     </Select>
                     <FormMessage />
@@ -412,36 +500,52 @@ export function AddPatientForm({ open, onOpenChange }: { open: boolean; onOpenCh
               )}
             />
 
-            <div className="grid grid-cols-2 gap-4">
-              <FormField
-                control={form.control}
-                name="insuranceProvider"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Insurance Provider</FormLabel>
-                    <FormControl>
-                      <Input placeholder="SHA" {...field} />
-                    </FormControl>
-                    <FormDescription>Optional</FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="insuranceNumber"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Insurance Number</FormLabel>
-                    <FormControl>
-                      <Input placeholder="INS-12345678" {...field} />
-                    </FormControl>
-                    <FormDescription>Optional</FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </div>
+            {form.watch('patientType') === 'insurance' && (
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="insuranceCompanyId"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Insurance Company</FormLabel>
+                      <Select
+                        onValueChange={field.onChange}
+                        value={field.value || ""}
+                        disabled={loadingCompanies}
+                      >
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder={loadingCompanies ? "Loading..." : "Select insurance company"} />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {insuranceCompanies.map((company) => (
+                            <SelectItem key={company.providerId} value={company.providerId.toString()}>
+                              {company.providerName}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="insuranceNumber"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Insurance Number</FormLabel>
+                      <FormControl>
+                        <Input placeholder="INS-12345678" {...field} />
+                      </FormControl>
+                      <FormDescription>Optional</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+            )}
 
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>

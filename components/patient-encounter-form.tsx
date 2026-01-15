@@ -899,21 +899,24 @@ export function PatientEncounterForm({
         (!order.items || order.items.length === 0)
       ).slice(0, 5) // Limit to 5 to prevent too many API calls
 
-      const labOrdersWithItems = await Promise.all(
-        (labOrders || []).map(async (order: any) => {
-          // Only fetch details for pending/in-progress orders that need it
-          if (pendingLabOrders.some(po => po.orderId === order.orderId)) {
-            try {
-              const fullOrder = await laboratoryApi.getOrder(order.orderId.toString())
-              return fullOrder || order
-            } catch (err) {
-              console.error(`Error fetching order ${order.orderId} details:`, err)
-              return order
-            }
-          }
-          return order
-        })
-      )
+      // Only fetch details for orders that need it (more efficient - only map over what needs fetching)
+      const labOrdersWithItems = pendingLabOrders.length > 0
+        ? await Promise.all(
+            pendingLabOrders.map(async (order: any) => {
+              try {
+                const fullOrder = await laboratoryApi.getOrder(order.orderId.toString())
+                return fullOrder || order
+              } catch (err) {
+                console.error(`Error fetching order ${order.orderId} details:`, err)
+                return order
+              }
+            })
+          ).then(fetchedOrders => {
+            // Merge fetched orders back into the original array
+            const orderMap = new Map(fetchedOrders.map(o => [o.orderId, o]))
+            return (labOrders || []).map((order: any) => orderMap.get(order.orderId) || order)
+          })
+        : (labOrders || [])
 
       // Only fetch full prescription details for today's prescriptions or pending ones without items
       // Limit to first 5 to avoid excessive API calls
@@ -923,21 +926,24 @@ export function PatientEncounterForm({
         return ((!prescription.items || prescription.items.length === 0) || prescriptionDateStr === todayStr)
       }).slice(0, 5) // Limit to 5 to prevent too many API calls
 
-      const prescriptionsWithItems = await Promise.all(
-        (prescriptions || []).map(async (prescription: any) => {
-          // Only fetch details for prescriptions that need it
-          if (prescriptionsNeedingDetails.some(p => p.prescriptionId === prescription.prescriptionId)) {
-            try {
-              const fullPrescription = await pharmacyApi.getPrescription(prescription.prescriptionId.toString())
-              return fullPrescription || prescription
-            } catch (err) {
-              console.error(`Error fetching prescription ${prescription.prescriptionId} details:`, err)
-              return prescription
-            }
-          }
-          return prescription
-        })
-      )
+      // Only fetch details for prescriptions that need it (more efficient - only map over what needs fetching)
+      const prescriptionsWithItems = prescriptionsNeedingDetails.length > 0
+        ? await Promise.all(
+            prescriptionsNeedingDetails.map(async (prescription: any) => {
+              try {
+                const fullPrescription = await pharmacyApi.getPrescription(prescription.prescriptionId.toString())
+                return fullPrescription || prescription
+              } catch (err) {
+                console.error(`Error fetching prescription ${prescription.prescriptionId} details:`, err)
+                return prescription
+              }
+            })
+          ).then(fetchedPrescriptions => {
+            // Merge fetched prescriptions back into the original array
+            const prescriptionMap = new Map(fetchedPrescriptions.map(p => [p.prescriptionId, p]))
+            return (prescriptions || []).map((prescription: any) => prescriptionMap.get(prescription.prescriptionId) || prescription)
+          })
+        : (prescriptions || [])
 
       // Only fetch invoice details for invoices that might contain consumables/orders
       // Limit to first 3 to avoid excessive API calls

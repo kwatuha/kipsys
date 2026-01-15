@@ -19,6 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { insuranceApi } from "@/lib/api"
 
 interface Patient {
   patientId?: number
@@ -28,6 +29,9 @@ interface Patient {
   middleName?: string
   dateOfBirth?: string
   gender?: string
+  patientType?: string
+  insuranceCompanyId?: number | string
+  insuranceNumber?: string
   phone?: string
   email?: string
   address?: string
@@ -52,6 +56,9 @@ export function PatientForm({ patient, open, onOpenChange, onSuccess }: PatientF
     lastName: '',
     middleName: '',
     gender: '',
+    patientType: 'paying',
+    insuranceCompanyId: '',
+    insuranceNumber: '',
     phone: '',
     email: '',
     address: '',
@@ -64,6 +71,27 @@ export function PatientForm({ patient, open, onOpenChange, onSuccess }: PatientF
   })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [insuranceCompanies, setInsuranceCompanies] = useState<any[]>([])
+  const [loadingCompanies, setLoadingCompanies] = useState(false)
+
+  // Load insurance companies when form opens
+  useEffect(() => {
+    if (open) {
+      loadInsuranceCompanies()
+    }
+  }, [open])
+
+  const loadInsuranceCompanies = async () => {
+    try {
+      setLoadingCompanies(true)
+      const companies = await insuranceApi.getProviders('active')
+      setInsuranceCompanies(companies || [])
+    } catch (error) {
+      console.error('Error loading insurance companies:', error)
+    } finally {
+      setLoadingCompanies(false)
+    }
+  }
 
   useEffect(() => {
     if (patient) {
@@ -73,6 +101,9 @@ export function PatientForm({ patient, open, onOpenChange, onSuccess }: PatientF
         middleName: patient.middleName || '',
         dateOfBirth: patient.dateOfBirth ? patient.dateOfBirth.split('T')[0] : '',
         gender: patient.gender || '',
+        patientType: patient.patientType || 'paying',
+        insuranceCompanyId: patient.insuranceCompanyId || '',
+        insuranceNumber: patient.insuranceNumber || '',
         phone: patient.phone || '',
         email: patient.email || '',
         address: patient.address || '',
@@ -89,6 +120,9 @@ export function PatientForm({ patient, open, onOpenChange, onSuccess }: PatientF
         lastName: '',
         middleName: '',
         gender: '',
+        patientType: 'paying',
+        insuranceCompanyId: '',
+        insuranceNumber: '',
         phone: '',
         email: '',
         address: '',
@@ -103,6 +137,17 @@ export function PatientForm({ patient, open, onOpenChange, onSuccess }: PatientF
     setError(null)
   }, [patient, open])
 
+  // Clear insurance fields when patient type changes to "paying"
+  useEffect(() => {
+    if (formData.patientType === 'paying') {
+      setFormData(prev => ({
+        ...prev,
+        insuranceCompanyId: '',
+        insuranceNumber: '',
+      }))
+    }
+  }, [formData.patientType])
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
@@ -110,15 +155,21 @@ export function PatientForm({ patient, open, onOpenChange, onSuccess }: PatientF
 
     try {
       const { patientApi } = await import('@/lib/api')
-      
+
+      // Format data for API
+      const patientData = {
+        ...formData,
+        insuranceCompanyId: formData.insuranceCompanyId ? parseInt(formData.insuranceCompanyId.toString()) : null,
+      }
+
       if (patient?.patientId) {
         // Update existing patient
-        await patientApi.update(patient.patientId.toString(), formData)
+        await patientApi.update(patient.patientId.toString(), patientData)
       } else {
         // Create new patient
-        await patientApi.create(formData)
+        await patientApi.create(patientData)
       }
-      
+
       onSuccess()
       onOpenChange(false)
     } catch (err: any) {
@@ -137,7 +188,7 @@ export function PatientForm({ patient, open, onOpenChange, onSuccess }: PatientF
             {patient ? 'Update patient information' : 'Enter patient details to create a new record'}
           </DialogDescription>
         </DialogHeader>
-        
+
         <form onSubmit={handleSubmit} className="space-y-4">
           {error && (
             <div className="p-3 text-sm text-red-500 bg-red-50 rounded-md">
@@ -203,6 +254,57 @@ export function PatientForm({ patient, open, onOpenChange, onSuccess }: PatientF
                 </SelectContent>
               </Select>
             </div>
+            <div>
+              <Label htmlFor="patientType">Patient Type</Label>
+              <Select
+                value={formData.patientType}
+                onValueChange={(value) => setFormData({ ...formData, patientType: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select patient type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="paying">Paying</SelectItem>
+                  <SelectItem value="insurance">Insurance</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {formData.patientType === 'insurance' && (
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="insuranceCompanyId">Insurance Company</Label>
+                <Select
+                  value={formData.insuranceCompanyId?.toString() || ''}
+                  onValueChange={(value) => setFormData({ ...formData, insuranceCompanyId: value })}
+                  disabled={loadingCompanies}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={loadingCompanies ? "Loading..." : "Select insurance company"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {insuranceCompanies.map((company) => (
+                      <SelectItem key={company.providerId} value={company.providerId.toString()}>
+                        {company.providerName}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label htmlFor="insuranceNumber">Insurance Number</Label>
+                <Input
+                  id="insuranceNumber"
+                  value={formData.insuranceNumber}
+                  onChange={(e) => setFormData({ ...formData, insuranceNumber: e.target.value })}
+                  placeholder="INS-12345678"
+                />
+              </div>
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-4">
             <div>
               <Label htmlFor="bloodGroup">Blood Group</Label>
               <Select

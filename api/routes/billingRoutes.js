@@ -501,7 +501,7 @@ router.post('/invoices', async (req, res) => {
         const [invoices] = await connection.execute(
             `SELECT i.*,
                     p.firstName as patientFirstName, p.lastName as patientLastName,
-                    p.patientNumber, p.phone as patientPhone
+                    p.patientNumber, p.phone as patientPhone, p.patientType, p.insuranceCompanyId, p.insuranceNumber
              FROM invoices i
              LEFT JOIN patients p ON i.patientId = p.patientId
              WHERE i.invoiceId = ?`,
@@ -517,9 +517,43 @@ router.post('/invoices', async (req, res) => {
             [invoiceId]
         );
 
+        // Check if patient has active insurance and can create claim
+        let insuranceInfo = null;
+        if (invoices[0].patientType === 'insurance') {
+            const [activeInsurance] = await connection.execute(
+                `SELECT pi.*, ip.providerName, ip.providerCode
+                 FROM patient_insurance pi
+                 LEFT JOIN insurance_providers ip ON pi.providerId = ip.providerId
+                 WHERE pi.patientId = ?
+                   AND pi.isActive = 1
+                   AND (pi.coverageEndDate IS NULL OR pi.coverageEndDate >= CURDATE())
+                 ORDER BY pi.coverageStartDate DESC
+                 LIMIT 1`,
+                [patientId]
+            );
+
+            if (activeInsurance.length > 0) {
+                insuranceInfo = {
+                    patientInsuranceId: activeInsurance[0].patientInsuranceId,
+                    providerName: activeInsurance[0].providerName,
+                    providerCode: activeInsurance[0].providerCode,
+                    policyNumber: activeInsurance[0].policyNumber,
+                    memberId: activeInsurance[0].memberId,
+                    canCreateClaim: true
+                };
+            } else {
+                // Patient marked as insurance but no active policy found
+                insuranceInfo = {
+                    canCreateClaim: false,
+                    reason: 'No active insurance policy found. Please create an insurance policy for this patient.'
+                };
+            }
+        }
+
         res.status(201).json({
             ...invoices[0],
-            items: itemsData
+            items: itemsData,
+            insuranceInfo: insuranceInfo
         });
     } catch (error) {
         await connection.rollback();
@@ -1645,6 +1679,262 @@ router.delete('/consumables-charges/:id', async (req, res) => {
     } catch (error) {
         console.error('Error deleting consumables charge:', error);
         res.status(500).json({ message: 'Error deleting consumables charge', error: error.message });
+    }
+});
+
+// ============================================
+// INSURANCE CLAIM INTEGRATION
+// ============================================
+
+/**
+ * @route GET /api/billing/invoices/:id/insurance-info
+ * @description Get insurance information for an invoice's patient
+ */
+router.get('/invoices/:id/insurance-info', async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // Get invoice and patient info
+        const [invoices] = await pool.execute(
+            `SELECT i.*, p.patientId, p.patientType, p.insuranceCompanyId, p.insuranceNumber
+             FROM invoices i
+             LEFT JOIN patients p ON i.patientId = p.patientId
+             WHERE i.invoiceId = ?`,
+            [id]
+        );
+
+        if (invoices.length === 0) {
+            return res.status(404).json({ message: 'Invoice not found' });
+        }
+
+        const invoice = invoices[0];
+
+        // Check if patient has active insurance
+        if (invoice.patientType !== 'insurance') {
+            return res.status(200).json({
+                hasInsurance: false,
+                reason: 'Patient is not registered as insurance patient'
+            });
+        }
+
+        // Get active insurance policy
+        const [activeInsurance] = await pool.execute(
+            `SELECT pi.*, ip.providerName, ip.providerCode, ip.providerId
+             FROM patient_insurance pi
+             LEFT JOIN insurance_providers ip ON pi.providerId = ip.providerId
+             WHERE pi.patientId = ?
+               AND pi.isActive = 1
+               AND (pi.coverageEndDate IS NULL OR pi.coverageEndDate >= CURDATE())
+             ORDER BY pi.coverageStartDate DESC
+             LIMIT 1`,
+            [invoice.patientId]
+        );
+
+        // Check if claim already exists for this invoice
+        const [existingClaim] = await pool.execute(
+            'SELECT claimId, claimNumber, status FROM insurance_claims WHERE invoiceId = ?',
+            [id]
+        );
+
+        if (activeInsurance.length > 0) {
+            res.status(200).json({
+                hasInsurance: true,
+                canCreateClaim: existingClaim.length === 0,
+                patientInsurance: {
+                    patientInsuranceId: activeInsurance[0].patientInsuranceId,
+                    providerName: activeInsurance[0].providerName,
+                    providerCode: activeInsurance[0].providerCode,
+                    providerId: activeInsurance[0].providerId,
+                    policyNumber: activeInsurance[0].policyNumber,
+                    memberId: activeInsurance[0].memberId,
+                    memberName: activeInsurance[0].memberName,
+                    relationship: activeInsurance[0].relationship,
+                    coverageStartDate: activeInsurance[0].coverageStartDate,
+                    coverageEndDate: activeInsurance[0].coverageEndDate
+                },
+                existingClaim: existingClaim.length > 0 ? existingClaim[0] : null
+            });
+        } else {
+            res.status(200).json({
+                hasInsurance: false,
+                canCreateClaim: false,
+                reason: 'Patient is marked as insurance but no active insurance policy found. Please create an insurance policy for this patient.',
+                patientInsuranceId: invoice.insuranceCompanyId ? {
+                    providerId: invoice.insuranceCompanyId,
+                    insuranceNumber: invoice.insuranceNumber
+                } : null
+            });
+        }
+    } catch (error) {
+        console.error('Error fetching insurance info:', error);
+        res.status(500).json({ message: 'Error fetching insurance info', error: error.message });
+    }
+});
+
+/**
+ * @route POST /api/billing/invoices/:id/create-claim
+ * @description Create an insurance claim from an invoice
+ */
+router.post('/invoices/:id/create-claim', async (req, res) => {
+    const connection = await pool.getConnection();
+    const userId = req.user?.id;
+
+    try {
+        await connection.beginTransaction();
+
+        const { id } = req.params;
+        const { authorizationId, notes } = req.body;
+
+        // Get invoice details
+        const [invoices] = await connection.execute(
+            `SELECT i.*, p.patientId, p.patientType
+             FROM invoices i
+             LEFT JOIN patients p ON i.patientId = p.patientId
+             WHERE i.invoiceId = ?`,
+            [id]
+        );
+
+        if (invoices.length === 0) {
+            await connection.rollback();
+            return res.status(404).json({ message: 'Invoice not found' });
+        }
+
+        const invoice = invoices[0];
+
+        if (invoice.patientType !== 'insurance') {
+            await connection.rollback();
+            return res.status(400).json({ error: 'Patient is not registered as insurance patient' });
+        }
+
+        // Check if claim already exists
+        const [existingClaim] = await connection.execute(
+            'SELECT claimId FROM insurance_claims WHERE invoiceId = ?',
+            [id]
+        );
+
+        if (existingClaim.length > 0) {
+            await connection.rollback();
+            return res.status(400).json({ error: 'Claim already exists for this invoice' });
+        }
+
+        // Get active insurance policy
+        const [activeInsurance] = await connection.execute(
+            `SELECT pi.*, ip.providerId
+             FROM patient_insurance pi
+             LEFT JOIN insurance_providers ip ON pi.providerId = ip.providerId
+             WHERE pi.patientId = ?
+               AND pi.isActive = 1
+               AND (pi.coverageEndDate IS NULL OR pi.coverageEndDate >= CURDATE())
+             ORDER BY pi.coverageStartDate DESC
+             LIMIT 1`,
+            [invoice.patientId]
+        );
+
+        if (activeInsurance.length === 0) {
+            await connection.rollback();
+            return res.status(400).json({
+                error: 'No active insurance policy found for this patient',
+                suggestion: 'Please create an insurance policy for this patient first'
+            });
+        }
+
+        const patientInsurance = activeInsurance[0];
+
+        // Generate claim number
+        const datePrefix = new Date().toISOString().slice(0, 7).replace('-', '');
+        let claimNumber = '';
+        let attempts = 0;
+        let foundAvailable = false;
+
+        while (!foundAvailable && attempts < 100) {
+            const num = String(Math.floor(Math.random() * 10000)).padStart(4, '0');
+            claimNumber = `CLM-${datePrefix}-${num}`;
+
+            const [existing] = await connection.execute(
+                'SELECT claimId FROM insurance_claims WHERE claimNumber = ?',
+                [claimNumber]
+            );
+
+            if (existing.length === 0) {
+                foundAvailable = true;
+            } else {
+                attempts++;
+            }
+        }
+
+        if (!foundAvailable) {
+            await connection.rollback();
+            return res.status(500).json({ error: 'Failed to generate unique claim number' });
+        }
+
+        // Create claim
+        const [claimResult] = await connection.execute(
+            `INSERT INTO insurance_claims (
+                claimNumber, invoiceId, patientInsuranceId, authorizationId, claimDate, claimAmount, status, notes, createdBy
+            )
+            VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?)`,
+            [
+                claimNumber,
+                id,
+                patientInsurance.patientInsuranceId,
+                authorizationId || null,
+                invoice.invoiceDate || new Date().toISOString().split('T')[0],
+                invoice.totalAmount,
+                notes || null,
+                userId || null
+            ]
+        );
+
+        const claimId = claimResult.insertId;
+
+        // Initialize requirements for this claim
+        const providerId = patientInsurance.providerId;
+        const [templates] = await connection.execute(
+            'SELECT templateId FROM claim_requirement_templates WHERE providerId = ? AND isActive = 1',
+            [providerId]
+        );
+
+        if (templates.length > 0) {
+            const templateId = templates[0].templateId;
+            const [requirements] = await connection.execute(
+                'SELECT requirementId FROM claim_requirements WHERE templateId = ? AND isActive = 1',
+                [templateId]
+            );
+
+            // Initialize requirement completions (all false)
+            for (const req of requirements) {
+                await connection.execute(
+                    `INSERT INTO claim_requirement_completions (claimId, requirementId, isCompleted)
+                     VALUES (?, ?, 0)`,
+                    [claimId, req.requirementId]
+                );
+            }
+        }
+
+        await connection.commit();
+
+        // Fetch the created claim with all details
+        const [newClaim] = await pool.execute(`
+            SELECT ic.*,
+                   i.invoiceNumber, i.totalAmount as invoiceAmount,
+                   pi.policyNumber, pi.memberId,
+                   p.patientNumber, p.firstName, p.lastName,
+                   ip.providerName, ip.providerCode
+            FROM insurance_claims ic
+            LEFT JOIN invoices i ON ic.invoiceId = i.invoiceId
+            LEFT JOIN patient_insurance pi ON ic.patientInsuranceId = pi.patientInsuranceId
+            LEFT JOIN patients p ON pi.patientId = p.patientId
+            LEFT JOIN insurance_providers ip ON pi.providerId = ip.providerId
+            WHERE ic.claimId = ?
+        `, [claimId]);
+
+        res.status(201).json(newClaim[0]);
+    } catch (error) {
+        await connection.rollback();
+        console.error('Error creating claim from invoice:', error);
+        res.status(500).json({ message: 'Error creating claim from invoice', error: error.message });
+    } finally {
+        connection.release();
     }
 });
 

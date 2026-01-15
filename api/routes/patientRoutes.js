@@ -107,11 +107,11 @@ router.post('/', async (req, res) => {
 
         const [result] = await connection.execute(
             `INSERT INTO patients (
-                patientNumber, firstName, lastName, middleName, dateOfBirth, gender,
+                patientNumber, firstName, lastName, middleName, dateOfBirth, gender, patientType, insuranceCompanyId, insuranceNumber,
                 phone, email, address, county, subcounty, ward, idNumber, idType,
                 nextOfKinName, nextOfKinPhone, nextOfKinRelationship,
                 bloodGroup, allergies, medicalHistory, createdBy, voided
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
             [
                 patientData.patientNumber || null,
                 patientData.firstName,
@@ -119,6 +119,9 @@ router.post('/', async (req, res) => {
                 patientData.middleName || null,
                 patientData.dateOfBirth || null,
                 patientData.gender || null,
+                patientData.patientType || 'paying',
+                patientData.insuranceCompanyId || null,
+                patientData.insuranceNumber || null,
                 patientData.phone || null,
                 patientData.email || null,
                 patientData.address || null,
@@ -331,6 +334,42 @@ router.post('/', async (req, res) => {
             console.error('Error creating invoice and cashier queue after patient registration:', queueError);
             // Rollback only the invoice/queue creation, but keep patient registration
             // We'll let the transaction continue since patient registration is the main operation
+        }
+
+        // If patient is registered as insurance, create insurance policy automatically
+        if (patientData.patientType === 'insurance' && patientData.insuranceCompanyId) {
+            try {
+                // Check if policy already exists for this patient and provider
+                const [existingPolicy] = await connection.execute(
+                    'SELECT patientInsuranceId FROM patient_insurance WHERE patientId = ? AND providerId = ?',
+                    [patientId, patientData.insuranceCompanyId]
+                );
+
+                if (existingPolicy.length === 0) {
+                    // Create insurance policy automatically
+                    const policyNumber = patientData.insuranceNumber || `POL-${patientId}`;
+                    const memberId = patientData.insuranceNumber || null;
+
+                    await connection.execute(
+                        `INSERT INTO patient_insurance (
+                            patientId, providerId, policyNumber, memberId,
+                            coverageStartDate, isActive, notes
+                        ) VALUES (?, ?, ?, ?, CURDATE(), 1, ?)`,
+                        [
+                            patientId,
+                            patientData.insuranceCompanyId,
+                            policyNumber,
+                            memberId,
+                            `Auto-created policy from patient registration. Insurance Number: ${patientData.insuranceNumber || 'N/A'}`
+                        ]
+                    );
+                    console.log(`Auto-created insurance policy for patient ${patientId}`);
+                }
+            } catch (insuranceError) {
+                // Log error but don't fail patient registration
+                console.error('Error auto-creating insurance policy:', insuranceError);
+                // Continue with patient registration even if policy creation fails
+            }
         }
 
         await connection.commit();

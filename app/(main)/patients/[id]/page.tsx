@@ -36,13 +36,14 @@ import { PatientAllergies } from "@/components/patient-allergies"
 import { PatientInsurance } from "@/components/patient-insurance"
 import { PatientFamilyHistory } from "@/components/patient-family-history"
 import { PatientQueueStatus } from "@/components/patient-queue-status"
-import { patientApi } from "@/lib/api"
+import { patientApi, insuranceApi } from "@/lib/api"
 import Link from "next/link"
 
 export default function PatientProfilePage() {
   const params = useParams()
   const patientId = params.id as string
   const [patient, setPatient] = useState<any>(null)
+  const [insuranceCompanyName, setInsuranceCompanyName] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -56,6 +57,19 @@ export default function PatientProfilePage() {
       setError(null)
       const data = await patientApi.getById(patientId)
       setPatient(data)
+
+      // Fetch insurance company name if insuranceCompanyId exists
+      if (data.insuranceCompanyId) {
+        try {
+          const provider = await insuranceApi.getProviderById(data.insuranceCompanyId.toString())
+          setInsuranceCompanyName(provider.providerName || null)
+        } catch (err) {
+          console.error('Error loading insurance provider:', err)
+          setInsuranceCompanyName(null)
+        }
+      } else {
+        setInsuranceCompanyName(null)
+      }
     } catch (err: any) {
       setError(err.message || 'Failed to load patient')
       console.error('Error loading patient:', err)
@@ -102,6 +116,15 @@ export default function PatientProfilePage() {
   }
 
   // Transform API data to match component expectations
+  const getInsuranceDisplay = () => {
+    if (patient.patientType === 'insurance') {
+      const providerName = insuranceCompanyName || 'Unknown Provider'
+      const insuranceNum = patient.insuranceNumber || 'N/A'
+      return `${providerName}${insuranceNum !== 'N/A' ? ` - ${insuranceNum}` : ''}`
+    }
+    return 'Paying Patient'
+  }
+
   const patientDisplay = {
     id: patient.patientNumber,
     name: `${patient.firstName} ${patient.lastName}`,
@@ -112,14 +135,16 @@ export default function PatientProfilePage() {
     contact: patient.phone || 'N/A',
     email: patient.email || 'N/A',
     address: patient.address || 'N/A',
-    emergencyContact: patient.nextOfKinName 
+    emergencyContact: patient.nextOfKinName
       ? `${patient.nextOfKinName} (${patient.nextOfKinRelationship || 'N/A'}) - ${patient.nextOfKinPhone || 'N/A'}`
       : 'N/A',
     occupation: 'N/A', // Not in current schema
     maritalStatus: 'N/A', // Not in current schema
     nationalId: patient.idNumber || 'N/A',
-    insuranceProvider: 'N/A', // Will be fetched from insurance table
-    insuranceNumber: 'N/A', // Will be fetched from insurance table
+    patientType: patient.patientType || 'paying',
+    insuranceProvider: insuranceCompanyName || 'N/A',
+    insuranceNumber: patient.insuranceNumber || 'N/A',
+    insuranceDisplay: getInsuranceDisplay(),
     registrationDate: patient.createdAt ? new Date(patient.createdAt).toLocaleDateString() : 'N/A',
     status: patient.voided === 0 ? "Active" : "Inactive",
     avatar: "/thoughtful-portrait.png",
@@ -225,11 +250,21 @@ export default function PatientProfilePage() {
               </div>
 
               <div className="space-y-1">
-                <p className="text-xs text-muted-foreground">Insurance</p>
-                <p className="text-sm font-medium">
-                  {patientDisplay.insuranceProvider} - {patientDisplay.insuranceNumber}
-                </p>
+                <p className="text-xs text-muted-foreground">Patient Type</p>
+                <p className="text-sm font-medium capitalize">{patientDisplay.patientType}</p>
               </div>
+              {patientDisplay.patientType === 'insurance' && (
+                <>
+                  <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground">Insurance Company</p>
+                    <p className="text-sm font-medium">{patientDisplay.insuranceProvider}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground">Insurance Number</p>
+                    <p className="text-sm font-medium">{patientDisplay.insuranceNumber}</p>
+                  </div>
+                </>
+              )}
 
               <div className="space-y-1">
                 <p className="text-xs text-muted-foreground">Primary Doctor</p>

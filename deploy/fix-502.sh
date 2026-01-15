@@ -80,3 +80,8 @@ eval "$SSH_CMD" << 'FIX_EOF'
     echo "   docker logs kiplombe_frontend"
     echo "   docker logs kiplombe_nginx"
 FIX_EOF
+
+
+
+
+

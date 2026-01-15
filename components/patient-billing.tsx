@@ -10,9 +10,11 @@ import { Download, Eye, AlertCircle } from "lucide-react"
 import { billingApi } from "@/lib/api"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Skeleton } from "@/components/ui/skeleton"
+import { InvoiceDetailsDialog } from "@/components/invoice-details-dialog"
 
 type Invoice = {
   id: string
+  invoiceId?: number // Store invoiceId for lookup
   date: string
   amount: number
   status: string
@@ -36,6 +38,9 @@ export function PatientBilling({ patientId }: { patientId: string }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [invoices, setInvoices] = useState<Invoice[]>([])
+  const [invoicesData, setInvoicesData] = useState<any[]>([]) // Store raw invoice data with IDs
+  const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null)
+  const [invoiceDialogOpen, setInvoiceDialogOpen] = useState(false)
 
   useEffect(() => {
     loadBilling()
@@ -47,6 +52,7 @@ export function PatientBilling({ patientId }: { patientId: string }) {
       setError(null)
 
       const invoicesData = await billingApi.getInvoices(patientId)
+      setInvoicesData(invoicesData) // Store for invoice ID lookup
 
       const bills: Invoice[] = await Promise.all(invoicesData.map(async (inv: any) => {
         // Get invoice details including items
@@ -73,6 +79,7 @@ export function PatientBilling({ patientId }: { patientId: string }) {
 
         return {
           id: inv.invoiceNumber || `INV-${inv.invoiceId}`,
+          invoiceId: inv.invoiceId, // Store invoiceId for dialog
           date: invoiceDate.toISOString().split('T')[0],
           amount: totalAmount,
           status: paidAmount >= totalAmount ? 'Paid' : 'Pending',
@@ -204,7 +211,16 @@ export function PatientBilling({ patientId }: { patientId: string }) {
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-2">
-                            <Button variant="outline" size="sm">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                if (bill.invoiceId) {
+                                  setSelectedInvoiceId(bill.invoiceId.toString())
+                                  setInvoiceDialogOpen(true)
+                                }
+                              }}
+                            >
                               <Eye className="h-4 w-4 mr-1" />
                               View
                             </Button>
@@ -299,6 +315,13 @@ export function PatientBilling({ patientId }: { patientId: string }) {
             )}
           </TabsContent>
         </Tabs>
+
+        <InvoiceDetailsDialog
+          invoiceId={selectedInvoiceId}
+          open={invoiceDialogOpen}
+          onOpenChange={setInvoiceDialogOpen}
+          onUpdate={loadBilling}
+        />
       </CardContent>
     </Card>
   )

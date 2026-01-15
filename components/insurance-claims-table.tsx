@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import {
   DropdownMenu,
@@ -12,119 +12,66 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { MoreHorizontal, FileText, CheckCircle, XCircle, AlertCircle } from "lucide-react"
+import { Progress } from "@/components/ui/progress"
+import { MoreHorizontal, FileText, CheckCircle, XCircle, AlertCircle, Loader2 } from "lucide-react"
 import { Input } from "@/components/ui/input"
-
-type ClaimStatus = "Pending" | "Approved" | "Rejected" | "In Review"
-
-interface Claim {
-  id: string
-  patientName: string
-  patientId: string
-  provider: string
-  amount: number
-  submissionDate: string
-  status: ClaimStatus
-}
-
-const claims: Claim[] = [
-  {
-    id: "CLM-001",
-    patientName: "John Kamau",
-    patientId: "P-1001",
-    provider: "SHA",
-    amount: 15000,
-    submissionDate: "2023-04-15",
-    status: "Approved",
-  },
-  {
-    id: "CLM-002",
-    patientName: "Mary Wanjiku",
-    patientId: "P-1002",
-    provider: "AAR Insurance",
-    amount: 8500,
-    submissionDate: "2023-04-18",
-    status: "Pending",
-  },
-  {
-    id: "CLM-003",
-    patientName: "James Omondi",
-    patientId: "P-1003",
-    provider: "Jubilee Insurance",
-    amount: 22000,
-    submissionDate: "2023-04-10",
-    status: "Rejected",
-  },
-  {
-    id: "CLM-004",
-    patientName: "Sarah Achieng",
-    patientId: "P-1004",
-    provider: "SHA",
-    amount: 12500,
-    submissionDate: "2023-04-20",
-    status: "In Review",
-  },
-  {
-    id: "CLM-005",
-    patientName: "David Mwangi",
-    patientId: "P-1005",
-    provider: "Britam Insurance",
-    amount: 18000,
-    submissionDate: "2023-04-12",
-    status: "Approved",
-  },
-  {
-    id: "CLM-006",
-    patientName: "Elizabeth Njeri",
-    patientId: "P-1006",
-    provider: "CIC Insurance",
-    amount: 9500,
-    submissionDate: "2023-04-22",
-    status: "Pending",
-  },
-  {
-    id: "CLM-007",
-    patientName: "Michael Kipchoge",
-    patientId: "P-1007",
-    provider: "Madison Insurance",
-    amount: 14000,
-    submissionDate: "2023-04-08",
-    status: "Approved",
-  },
-  {
-    id: "CLM-008",
-    patientName: "Grace Wambui",
-    patientId: "P-1008",
-    provider: "SHA",
-    amount: 7500,
-    submissionDate: "2023-04-25",
-    status: "In Review",
-  },
-]
+import { insuranceApi } from "@/lib/api"
+import { ClaimDetailsDialog } from "@/components/claim-details-dialog"
+import { toast } from "sonner"
 
 export function InsuranceClaimsTable() {
+  const [claims, setClaims] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState("")
+  const [selectedClaimId, setSelectedClaimId] = useState<string | null>(null)
+  const [detailsOpen, setDetailsOpen] = useState(false)
+
+  useEffect(() => {
+    loadClaims()
+  }, [])
+
+  const loadClaims = async () => {
+    try {
+      setLoading(true)
+      const data = await insuranceApi.getClaims()
+      setClaims(data)
+    } catch (error: any) {
+      console.error('Error loading claims:', error)
+      toast.error('Failed to load claims')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleViewDetails = (claimId: string) => {
+    setSelectedClaimId(claimId)
+    setDetailsOpen(true)
+  }
 
   const filteredClaims = claims.filter(
     (claim) =>
-      claim.patientName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      claim.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      claim.provider.toLowerCase().includes(searchTerm.toLowerCase()),
+      `${claim.firstName} ${claim.lastName}`.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      claim.claimNumber?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      claim.providerName?.toLowerCase().includes(searchTerm.toLowerCase()),
   )
 
-  const getStatusBadge = (status: ClaimStatus) => {
-    switch (status) {
-      case "Approved":
-        return <Badge className="bg-green-500">Approved</Badge>
-      case "Pending":
-        return <Badge variant="outline">Pending</Badge>
-      case "Rejected":
-        return <Badge variant="destructive">Rejected</Badge>
-      case "In Review":
-        return <Badge className="bg-yellow-500">In Review</Badge>
-      default:
-        return <Badge variant="outline">{status}</Badge>
+  const getStatusBadge = (status: string) => {
+    const variants: Record<string, any> = {
+      draft: { variant: 'outline' as const, label: 'Draft' },
+      submitted: { variant: 'default' as const, label: 'Submitted' },
+      under_review: { variant: 'default' as const, label: 'Under Review' },
+      approved: { variant: 'default' as const, label: 'Approved', className: 'bg-green-500' },
+      partially_approved: { variant: 'default' as const, label: 'Partially Approved' },
+      rejected: { variant: 'destructive' as const, label: 'Rejected' },
+      paid: { variant: 'default' as const, label: 'Paid', className: 'bg-blue-500' },
     }
+
+    const config = variants[status] || { variant: 'outline' as const, label: status }
+    return (
+      <Badge variant={config.variant} className={config.className}>
+        {config.label}
+      </Badge>
+    )
   }
 
   return (
@@ -136,67 +83,100 @@ export function InsuranceClaimsTable() {
           onChange={(e) => setSearchTerm(e.target.value)}
           className="max-w-sm"
         />
+        <Button variant="outline" size="sm" onClick={loadClaims} disabled={loading}>
+          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Refresh'}
+        </Button>
       </div>
       <div className="rounded-md border">
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Claim ID</TableHead>
+              <TableHead>Claim Number</TableHead>
               <TableHead>Patient</TableHead>
               <TableHead>Provider</TableHead>
               <TableHead>Amount (KES)</TableHead>
-              <TableHead>Submission Date</TableHead>
+              <TableHead>Claim Date</TableHead>
+              <TableHead>Requirements</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="w-[80px]"></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filteredClaims.map((claim) => (
-              <TableRow key={claim.id}>
-                <TableCell className="font-medium">{claim.id}</TableCell>
-                <TableCell>
-                  {claim.patientName}
-                  <div className="text-xs text-muted-foreground">{claim.patientId}</div>
-                </TableCell>
-                <TableCell>{claim.provider}</TableCell>
-                <TableCell>KES {claim.amount.toLocaleString()}</TableCell>
-                <TableCell>{new Date(claim.submissionDate).toLocaleDateString()}</TableCell>
-                <TableCell>{getStatusBadge(claim.status)}</TableCell>
-                <TableCell>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" className="h-8 w-8 p-0">
-                        <span className="sr-only">Open menu</span>
-                        <MoreHorizontal className="h-4 w-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                      <DropdownMenuItem>
-                        <FileText className="mr-2 h-4 w-4" />
-                        <span>View Details</span>
-                      </DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem>
-                        <CheckCircle className="mr-2 h-4 w-4" />
-                        <span>Approve</span>
-                      </DropdownMenuItem>
-                      <DropdownMenuItem>
-                        <XCircle className="mr-2 h-4 w-4" />
-                        <span>Reject</span>
-                      </DropdownMenuItem>
-                      <DropdownMenuItem>
-                        <AlertCircle className="mr-2 h-4 w-4" />
-                        <span>Flag for Review</span>
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+            {loading ? (
+              <TableRow>
+                <TableCell colSpan={8} className="text-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin mx-auto" />
                 </TableCell>
               </TableRow>
-            ))}
+            ) : filteredClaims.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                  No claims found
+                </TableCell>
+              </TableRow>
+            ) : (
+              filteredClaims.map((claim) => (
+                <TableRow key={claim.claimId}>
+                  <TableCell className="font-medium">{claim.claimNumber}</TableCell>
+                  <TableCell>
+                    {claim.firstName} {claim.lastName}
+                    <div className="text-xs text-muted-foreground">{claim.patientNumber}</div>
+                  </TableCell>
+                  <TableCell>{claim.providerName}</TableCell>
+                  <TableCell>KES {parseFloat(claim.claimAmount || 0).toLocaleString()}</TableCell>
+                  <TableCell>
+                    {claim.claimDate ? new Date(claim.claimDate).toLocaleDateString() : 'N/A'}
+                  </TableCell>
+                  <TableCell>
+                    {claim.requirementsMet !== undefined ? (
+                      <div className="flex items-center gap-2">
+                        {claim.requirementsMet ? (
+                          <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
+                            <CheckCircle className="h-3 w-3 mr-1" />
+                            Complete
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200">
+                            <AlertCircle className="h-3 w-3 mr-1" />
+                            Incomplete
+                          </Badge>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">N/A</span>
+                    )}
+                  </TableCell>
+                  <TableCell>{getStatusBadge(claim.status)}</TableCell>
+                  <TableCell>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" className="h-8 w-8 p-0">
+                          <span className="sr-only">Open menu</span>
+                          <MoreHorizontal className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                        <DropdownMenuItem onClick={() => handleViewDetails(claim.claimId.toString())}>
+                          <FileText className="mr-2 h-4 w-4" />
+                          <span>View Details & Requirements</span>
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </TableCell>
+                </TableRow>
+              ))
+            )}
           </TableBody>
         </Table>
       </div>
+
+      <ClaimDetailsDialog
+        claimId={selectedClaimId}
+        open={detailsOpen}
+        onOpenChange={setDetailsOpen}
+        onUpdate={loadClaims}
+      />
     </div>
   )
 }

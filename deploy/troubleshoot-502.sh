@@ -86,3 +86,8 @@ eval "$SSH_CMD" << 'DIAG_EOF'
     echo -e "${GREEN}Diagnostics Complete${NC}"
     echo -e "${GREEN}============================================${NC}\n"
 DIAG_EOF
+
+
+
+
+

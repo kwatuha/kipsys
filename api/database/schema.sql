@@ -77,6 +77,9 @@ CREATE TABLE IF NOT EXISTS patients (
     middleName VARCHAR(100),
     dateOfBirth DATE,
     gender ENUM('Male', 'Female', 'Other') NOT NULL,
+    patientType ENUM('paying', 'insurance') DEFAULT 'paying',
+    insuranceCompanyId INT,
+    insuranceNumber VARCHAR(100),
     phone VARCHAR(20),
     email VARCHAR(100),
     address TEXT,
@@ -97,6 +100,7 @@ CREATE TABLE IF NOT EXISTS patients (
     voided BOOLEAN DEFAULT FALSE,
     PRIMARY KEY (patientId),
     FOREIGN KEY (createdBy) REFERENCES users(userId) ON DELETE SET NULL,
+    FOREIGN KEY (insuranceCompanyId) REFERENCES insurance_providers(providerId) ON DELETE SET NULL,
     INDEX idx_patient_number (patientNumber),
     INDEX idx_name (firstName, lastName),
     INDEX idx_phone (phone)
@@ -328,7 +332,7 @@ ON DUPLICATE KEY UPDATE roleName=roleName;
 -- To generate: bcrypt.hash('admin123', 10)
 -- This hash is for 'admin123': $2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy
 INSERT INTO users (username, email, passwordHash, firstName, lastName, roleId, department, isActive) VALUES
-('admin', 'admin@kiplombe.com', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', 'System', 'Administrator', 
+('admin', 'admin@kiplombe.com', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', 'System', 'Administrator',
  (SELECT roleId FROM roles WHERE roleName = 'admin'), 'IT', TRUE)
 ON DUPLICATE KEY UPDATE username=username;
 

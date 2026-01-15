@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
@@ -9,6 +9,7 @@ import { Card } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { hasPermission } from "@/lib/auth/permissions"
 import { AlertTriangle, FileText, User } from "lucide-react"
+import { patientApi, insuranceApi } from "@/lib/api"
 
 interface PatientProfileDialogProps {
   patientId: string
@@ -18,28 +19,58 @@ interface PatientProfileDialogProps {
 
 export function PatientProfileDialog({ patientId, open, onOpenChange }: PatientProfileDialogProps) {
   const [loading, setLoading] = useState(false)
+  const [patient, setPatient] = useState<any>(null)
+  const [insuranceCompanyName, setInsuranceCompanyName] = useState<string | null>(null)
+  const [loadingPatient, setLoadingPatient] = useState(false)
 
-  // In a real app, you would fetch this data based on the patientId
-  const patient = {
-    id: patientId,
-    name: "John Imbayi",
-    age: 45,
-    gender: "Male",
-    dob: "1978-05-15",
-    bloodType: "O+",
-    contact: "+254 712 345 678",
-    email: "john.imbayi@example.com",
-    address: "123 Moi Avenue, Nairobi",
-    emergencyContact: "Sarah Imbayi (Wife) - +254 723 456 789",
-    occupation: "Teacher",
-    maritalStatus: "Married",
-    nationalId: "12345678",
-    insuranceProvider: "SHA",
-    insuranceNumber: "SHA-123456789",
-    registrationDate: "2020-03-10",
-    status: "Active",
-    avatar: "/thoughtful-portrait.png",
-    initials: "JI",
+  useEffect(() => {
+    if (open && patientId) {
+      loadPatient()
+    }
+  }, [open, patientId])
+
+  const loadPatient = async () => {
+    try {
+      setLoadingPatient(true)
+      const data = await patientApi.getById(patientId)
+      setPatient(data)
+
+      // Fetch insurance company name if insuranceCompanyId exists
+      if (data.insuranceCompanyId) {
+        try {
+          const provider = await insuranceApi.getProviderById(data.insuranceCompanyId.toString())
+          setInsuranceCompanyName(provider.providerName || null)
+        } catch (err) {
+          console.error('Error loading insurance provider:', err)
+          setInsuranceCompanyName(null)
+        }
+      } else {
+        setInsuranceCompanyName(null)
+      }
+    } catch (err: any) {
+      console.error('Error loading patient:', err)
+      setPatient(null)
+    } finally {
+      setLoadingPatient(false)
+    }
+  }
+
+  const calculateAge = (dateOfBirth?: string): number | null => {
+    if (!dateOfBirth) return null
+    const today = new Date()
+    const birthDate = new Date(dateOfBirth)
+    let age = today.getFullYear() - birthDate.getFullYear()
+    const monthDiff = today.getMonth() - birthDate.getMonth()
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+      age--
+    }
+    return age
+  }
+
+  const getInitials = (firstName?: string, lastName?: string): string => {
+    const first = firstName?.charAt(0) || ''
+    const last = lastName?.charAt(0) || ''
+    return (first + last).toUpperCase()
   }
 
   const handleFullProfileRequest = () => {
@@ -49,6 +80,59 @@ export function PatientProfileDialog({ patientId, open, onOpenChange }: PatientP
       setLoading(false)
       alert("Your request to view the full patient profile has been sent to the supervisor.")
     }, 1000)
+  }
+
+  if (loadingPatient) {
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Patient Information</DialogTitle>
+            <DialogDescription>Loading patient data...</DialogDescription>
+          </DialogHeader>
+          <div className="text-center py-8">Loading...</div>
+        </DialogContent>
+      </Dialog>
+    )
+  }
+
+  if (!patient) {
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Patient Information</DialogTitle>
+            <DialogDescription>Patient not found</DialogDescription>
+          </DialogHeader>
+          <div className="text-center py-8 text-red-500">Failed to load patient data</div>
+        </DialogContent>
+      </Dialog>
+    )
+  }
+
+  const patientDisplay = {
+    id: patient.patientNumber,
+    name: `${patient.firstName} ${patient.lastName}`,
+    age: calculateAge(patient.dateOfBirth),
+    gender: patient.gender,
+    dob: patient.dateOfBirth ? new Date(patient.dateOfBirth).toLocaleDateString() : 'N/A',
+    bloodType: patient.bloodGroup || 'N/A',
+    contact: patient.phone || 'N/A',
+    email: patient.email || 'N/A',
+    address: patient.address || 'N/A',
+    emergencyContact: patient.nextOfKinName
+      ? `${patient.nextOfKinName} (${patient.nextOfKinRelationship || 'N/A'}) - ${patient.nextOfKinPhone || 'N/A'}`
+      : 'N/A',
+    occupation: 'N/A',
+    maritalStatus: 'N/A',
+    nationalId: patient.idNumber || 'N/A',
+    patientType: patient.patientType || 'paying',
+    insuranceProvider: insuranceCompanyName || 'N/A',
+    insuranceNumber: patient.insuranceNumber || 'N/A',
+    registrationDate: patient.createdAt ? new Date(patient.createdAt).toLocaleDateString() : 'N/A',
+    status: patient.voided === 0 ? "Active" : "Inactive",
+    avatar: "/thoughtful-portrait.png",
+    initials: getInitials(patient.firstName, patient.lastName),
   }
 
   return (
@@ -67,15 +151,15 @@ export function PatientProfileDialog({ patientId, open, onOpenChange }: PatientP
           {/* Patient Basic Info Card */}
           <div className="flex flex-col items-center space-y-3 pb-4">
             <Avatar className="h-20 w-20">
-              <AvatarImage src={patient.avatar || "/placeholder.svg"} alt={patient.name} />
-              <AvatarFallback>{patient.initials}</AvatarFallback>
+              <AvatarImage src={patientDisplay.avatar || "/placeholder.svg"} alt={patientDisplay.name} />
+              <AvatarFallback>{patientDisplay.initials}</AvatarFallback>
             </Avatar>
             <div className="space-y-1 text-center">
-              <h3 className="text-xl font-semibold">{patient.name}</h3>
+              <h3 className="text-xl font-semibold">{patientDisplay.name}</h3>
               <p className="text-sm text-muted-foreground">
-                #{patient.id} • {patient.age} years • {patient.gender}
+                #{patientDisplay.id} • {patientDisplay.age !== null ? `${patientDisplay.age} years` : 'Age N/A'} • {patientDisplay.gender}
               </p>
-              <Badge variant={patient.status === "Active" ? "default" : "outline"}>{patient.status}</Badge>
+              <Badge variant={patientDisplay.status === "Active" ? "default" : "outline"}>{patientDisplay.status}</Badge>
             </div>
           </div>
 
@@ -110,35 +194,46 @@ export function PatientProfileDialog({ patientId, open, onOpenChange }: PatientP
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <p className="text-xs text-muted-foreground">Date of Birth</p>
-                  <p className="text-sm font-medium">{patient.dob}</p>
+                  <p className="text-sm font-medium">{patientDisplay.dob}</p>
                 </div>
                 <div className="space-y-1">
                   <p className="text-xs text-muted-foreground">National ID</p>
-                  <p className="text-sm font-medium">{patient.nationalId}</p>
+                  <p className="text-sm font-medium">{patientDisplay.nationalId}</p>
                 </div>
               </div>
 
               <div className="space-y-1">
                 <p className="text-xs text-muted-foreground">Contact</p>
-                <p className="text-sm font-medium">{patient.contact}</p>
+                <p className="text-sm font-medium">{patientDisplay.contact}</p>
               </div>
 
               <div className="space-y-1">
                 <p className="text-xs text-muted-foreground">Email</p>
-                <p className="text-sm font-medium">{patient.email}</p>
+                <p className="text-sm font-medium">{patientDisplay.email}</p>
               </div>
 
               <div className="space-y-1">
                 <p className="text-xs text-muted-foreground">Address</p>
-                <p className="text-sm font-medium">{patient.address}</p>
+                <p className="text-sm font-medium">{patientDisplay.address}</p>
               </div>
 
               <div className="space-y-1">
-                <p className="text-xs text-muted-foreground">Insurance</p>
-                <p className="text-sm font-medium">
-                  {patient.insuranceProvider} - {patient.insuranceNumber}
-                </p>
+                <p className="text-xs text-muted-foreground">Patient Type</p>
+                <p className="text-sm font-medium capitalize">{patientDisplay.patientType}</p>
               </div>
+
+              {patientDisplay.patientType === 'insurance' && (
+                <>
+                  <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground">Insurance Company</p>
+                    <p className="text-sm font-medium">{patientDisplay.insuranceProvider}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground">Insurance Number</p>
+                    <p className="text-sm font-medium">{patientDisplay.insuranceNumber}</p>
+                  </div>
+                </>
+              )}
             </TabsContent>
 
             <TabsContent value="medical" className="space-y-4 mt-4">
@@ -147,11 +242,11 @@ export function PatientProfileDialog({ patientId, open, onOpenChange }: PatientP
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1">
                       <p className="text-xs text-muted-foreground">Blood Type</p>
-                      <p className="text-sm font-medium">{patient.bloodType}</p>
+                      <p className="text-sm font-medium">{patientDisplay.bloodType}</p>
                     </div>
                     <div className="space-y-1">
                       <p className="text-xs text-muted-foreground">Last Visit</p>
-                      <p className="text-sm font-medium">2023-04-15</p>
+                      <p className="text-sm font-medium">N/A</p>
                     </div>
                   </div>
                   <Card className="p-4">
@@ -219,3 +314,4 @@ export function PatientProfileDialog({ patientId, open, onOpenChange }: PatientP
     </Dialog>
   )
 }
+
