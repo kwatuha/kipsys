@@ -58,10 +58,25 @@ const port = process.env.PORT || 3001;
 const app = express();
 
 // CORS configuration
+// In production, allow requests from the server IP on common ports
+const getAllowedOrigins = () => {
+  if (process.env.NODE_ENV === 'production') {
+    const origins = []
+    const serverIP = process.env.FRONTEND_URL?.replace(/^https?:\/\//, '').split(':')[0] || '41.89.173.8'
+    // Allow requests from the server IP on ports 80, 8081, and any port specified in FRONTEND_URL
+    origins.push(`http://${serverIP}`)
+    origins.push(`http://${serverIP}:80`)
+    origins.push(`http://${serverIP}:8081`)
+    if (process.env.FRONTEND_URL) {
+      origins.push(process.env.FRONTEND_URL)
+    }
+    return origins
+  }
+  return '*' // Allow all origins in development
+}
+
 const corsOptions = {
-  origin: process.env.NODE_ENV === 'production' 
-    ? process.env.FRONTEND_URL || 'http://localhost:3000'
-    : '*',
+  origin: getAllowedOrigins(),
   methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
   credentials: true,
@@ -80,7 +95,7 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Health check endpoint
 app.get('/', (req, res) => {
-    res.json({ 
+    res.json({
         message: 'Welcome to Kiplombe Medical Centre HMIS API',
         version: '1.0.0',
         status: 'running'

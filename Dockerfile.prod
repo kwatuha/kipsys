@@ -16,12 +16,21 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# 1. Copy package files
+# 1. Copy package files first (for better layer caching)
 COPY package*.json ./
 
-# 2. Copy the entire project
-# (This includes tsconfig.json, components/, and app/ which are vital for aliases)
-COPY . .
+# 2. Copy only necessary files/directories (faster than COPY . .)
+# This reduces the build context size and speeds up "exporting layers" step
+COPY tsconfig.json next.config.mjs tailwind.config.ts postcss.config.mjs components.json ./
+COPY app/ ./app/
+COPY components/ ./components/
+COPY lib/ ./lib/
+COPY public/ ./public/
+COPY styles/ ./styles/
+COPY hooks/ ./hooks/
+COPY scripts/ ./scripts/
+COPY nginx/ ./nginx/
+COPY deploy/ ./deploy/
 
 # 3. Explicitly set permissions for the entrypoint
 # Using the specific script you have in your ls: docker-entrypoint-prod.sh

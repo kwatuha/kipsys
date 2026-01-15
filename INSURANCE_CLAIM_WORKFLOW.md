@@ -308,3 +308,4 @@ if (patientData.patientType === 'insurance' && patientData.insuranceCompanyId) {
 7. ✅ Add claim analytics and reporting
 
 
+
