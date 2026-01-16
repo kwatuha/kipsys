@@ -273,6 +273,11 @@ export const navigationCategories: NavigationCategory[] = [
         href: "/administration",
       },
       {
+        title: "Bill Waivers",
+        icon: Receipt,
+        href: "/administration/waivers",
+      },
+      {
         title: "Hospital Charges",
         icon: DollarSign,
         href: "/finance/charges",

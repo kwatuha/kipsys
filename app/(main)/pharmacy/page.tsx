@@ -256,6 +256,8 @@ export default function PharmacyPage() {
           <title>Drug Inventory Summary</title>
           <style>
             body { font-family: Arial, sans-serif; margin: 20px; }
+            .header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #000; padding-bottom: 15px; }
+            .header img { max-width: 150px; height: auto; margin-bottom: 10px; }
             h1 { text-align: center; margin-bottom: 30px; }
             table { width: 100%; border-collapse: collapse; margin-top: 20px; }
             th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
@@ -265,6 +267,13 @@ export default function PharmacyPage() {
           </style>
         </head>
         <body>
+          <div class="header">
+            <img src="${window.location.origin}/logo.png" alt="Kiplombe Medical Centre" style="max-width: 150px; height: auto; margin-bottom: 10px;" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';" />
+            <div style="display: none;">
+              <h1 style="margin: 0; font-size: 28px; font-weight: bold; letter-spacing: 2px;">KIPLOMBE</h1>
+              <h2 style="margin: 5px 0; font-size: 18px; color: #333;">Medical Centre</h2>
+            </div>
+          </div>
           <h1>Drug Inventory Summary</h1>
           <div class="date">Generated: ${new Date().toLocaleString()}</div>
           <table>

@@ -1,0 +1,100 @@
+"use client"
+
+import Image from "next/image"
+import { useState } from "react"
+
+interface HospitalLogoImageProps {
+  className?: string
+  width?: number
+  height?: number
+  variant?: "default" | "print" | "compact"
+}
+
+export function HospitalLogoImage({
+  className = "",
+  width,
+  height,
+  variant = "default"
+}: HospitalLogoImageProps) {
+  const [imageError, setImageError] = useState(false)
+  const [triedSvg, setTriedSvg] = useState(false)
+
+  // Default dimensions based on variant
+  const defaultWidth = width || (variant === "compact" ? 120 : variant === "print" ? 150 : 180)
+  const defaultHeight = height || (variant === "compact" ? 40 : variant === "print" ? 50 : 60)
+
+  // If image failed to load, show text fallback
+  if (imageError && triedSvg) {
+    return (
+      <div className={`flex flex-col items-center justify-center ${className}`}>
+        <div className="text-xl font-bold tracking-tight text-[#0f4c75]">
+          KIPLOMBE
+        </div>
+        <div className="text-xs text-gray-600 font-medium">Medical Centre</div>
+        <div className="text-xs text-blue-500 italic font-normal">For Quality Healthcare Service Delivery</div>
+      </div>
+    )
+  }
+
+  // For regular display, use Next.js Image component
+  return (
+    <div className={`flex items-center justify-center ${className}`}>
+      <Image
+        src={triedSvg ? "/logo.svg" : "/logo.png"}
+        alt="Kiplombe Medical Centre"
+        width={defaultWidth}
+        height={defaultHeight}
+        className="object-contain"
+        priority
+        onError={() => {
+          if (!triedSvg) {
+            setTriedSvg(true)
+          } else {
+            setImageError(true)
+          }
+        }}
+      />
+    </div>
+  )
+}
+
+// Print-friendly logo component (for use in print templates)
+export function HospitalLogoPrint() {
+  return (
+    <div style={{ textAlign: "center", marginBottom: "20px" }}>
+      <img
+        src="/logo.png"
+        alt="Kiplombe Medical Centre"
+        style={{ maxWidth: "150px", height: "auto", marginBottom: "10px" }}
+        onError={(e) => {
+          const target = e.target as HTMLImageElement
+          if (target.src.endsWith('.png')) {
+            target.src = '/logo.svg'
+          } else {
+            // Fallback to text
+            target.style.display = 'none'
+            const parent = target.parentElement
+            if (parent) {
+              parent.innerHTML = `
+                <div style="text-align: center; margin-bottom: 20px;">
+                  <h1 style="margin: 0; font-size: 28px; font-weight: bold; color: #0f4c75; letter-spacing: 2px;">KIPLOMBE</h1>
+                  <h2 style="margin: 5px 0; font-size: 18px; color: #333;">Medical Centre</h2>
+                  <p style="margin: 5px 0; font-size: 12px; color: #666; font-style: italic;">For Quality Healthcare Service Delivery</p>
+                </div>
+              `
+            }
+          }
+        }}
+      />
+      <div style={{ marginTop: "10px" }}>
+        <h2 style={{ margin: "5px 0", fontSize: "18px", color: "#333" }}>
+          Kiplombe Medical Centre
+        </h2>
+        <p style={{ margin: "5px 0", fontSize: "12px", color: "#666", fontStyle: "italic" }}>
+          For Quality Healthcare Service Delivery
+        </p>
+      </div>
+    </div>
+  )
+}
+

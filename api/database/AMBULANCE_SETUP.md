@@ -107,3 +107,4 @@ SELECT tripId, logType, logDateTime, location FROM ambulance_trip_logs;
 - All timestamps are set to recent dates for testing
 - Foreign keys reference existing tables (users, patients) where applicable
 
+

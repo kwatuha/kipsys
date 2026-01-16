@@ -113,6 +113,11 @@ export function InvoiceDetailsDialog({ invoiceId, open, onOpenChange, onUpdate }
               padding-bottom: 20px;
               margin-bottom: 30px;
             }
+            .header img {
+              max-width: 150px;
+              height: auto;
+              margin-bottom: 10px;
+            }
             .header h1 { margin: 0; font-size: 24px; }
             .header p { margin: 5px 0; color: #666; }
             .info-grid {
@@ -181,7 +186,12 @@ export function InvoiceDetailsDialog({ invoiceId, open, onOpenChange, onUpdate }
         </head>
         <body>
           <div class="header">
-            <h1>INVOICE</h1>
+            <img src="${window.location.origin}/logo.png" alt="Kiplombe Medical Centre" style="max-width: 150px; height: auto; margin-bottom: 10px;" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';" />
+            <div style="display: none;">
+              <h1 style="margin: 0; font-size: 28px; font-weight: bold; letter-spacing: 2px;">KIPLOMBE</h1>
+              <h2 style="margin: 5px 0; font-size: 18px; color: #333;">Medical Centre</h2>
+            </div>
+            <h1 style="margin-top: 15px;">INVOICE</h1>
             <p>Invoice Number: ${invoice.invoiceNumber}</p>
             <p>Date: ${invoice.invoiceDate ? formatDate(invoice.invoiceDate) : 'N/A'}</p>
           </div>

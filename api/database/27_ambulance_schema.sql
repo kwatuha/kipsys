@@ -84,3 +84,4 @@ CREATE TABLE IF NOT EXISTS ambulance_trip_logs (
     INDEX idx_log_date (logDateTime)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+

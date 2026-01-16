@@ -151,7 +151,7 @@ export default function AccountsPayablePage() {
         notes: `Duplicated from ${payable.invoiceNumber}. ${payable.notes || ''}`,
         purchaseOrderId: payable.purchaseOrderId || null,
       }
-      
+
       await payableApi.create(payload)
       toast({
         title: "Success",
@@ -203,7 +203,8 @@ export default function AccountsPayablePage() {
             <title>Invoice ${payable.invoiceNumber}</title>
             <style>
               body { font-family: Arial, sans-serif; padding: 20px; }
-              .header { border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 20px; }
+              .header { text-align: center; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 20px; }
+              .header img { max-width: 150px; height: auto; margin-bottom: 10px; }
               .invoice-details { margin: 20px 0; }
               .invoice-details table { width: 100%; border-collapse: collapse; }
               .invoice-details td { padding: 8px; border-bottom: 1px solid #ddd; }
@@ -213,7 +214,12 @@ export default function AccountsPayablePage() {
           </head>
           <body>
             <div class="header">
-              <h1>Vendor Invoice</h1>
+              <img src="${window.location.origin}/logo.png" alt="Kiplombe Medical Centre" style="max-width: 150px; height: auto; margin-bottom: 10px;" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';" />
+              <div style="display: none;">
+                <h1 style="margin: 0; font-size: 28px; font-weight: bold; letter-spacing: 2px;">KIPLOMBE</h1>
+                <h2 style="margin: 5px 0; font-size: 18px; color: #333;">Medical Centre</h2>
+              </div>
+              <h1 style="margin-top: 15px;">Vendor Invoice</h1>
               <p>Invoice Number: ${payable.invoiceNumber}</p>
             </div>
             <div class="invoice-details">
@@ -284,8 +290,8 @@ export default function AccountsPayablePage() {
   }
 
   const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat("en-KE", { 
-      style: "currency", 
+    return new Intl.NumberFormat("en-KE", {
+      style: "currency",
       currency: "KES",
       minimumFractionDigits: 0,
       maximumFractionDigits: 0,
@@ -527,7 +533,7 @@ export default function AccountsPayablePage() {
                                   {payable.status !== "paid" && (
                                     <>
                                       <DropdownMenuSeparator />
-                                      <DropdownMenuItem 
+                                      <DropdownMenuItem
                                         onClick={() => handleMarkAsPaid(payable)}
                                         className="text-green-600"
                                       >
@@ -543,7 +549,7 @@ export default function AccountsPayablePage() {
                                     </>
                                   )}
                                   <DropdownMenuSeparator />
-                                  <DropdownMenuItem 
+                                  <DropdownMenuItem
                                     onClick={() => handleDelete(payable)}
                                     className="text-destructive"
                                   >
@@ -704,8 +710,8 @@ function PayablePaymentDialog({ open, onOpenChange, payable, onSuccess }: {
   const [notes, setNotes] = useState("")
 
   const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat("en-KE", { 
-      style: "currency", 
+    return new Intl.NumberFormat("en-KE", {
+      style: "currency",
       currency: "KES",
       minimumFractionDigits: 0,
       maximumFractionDigits: 0,
@@ -729,7 +735,7 @@ function PayablePaymentDialog({ open, onOpenChange, payable, onSuccess }: {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    
+
     if (!paymentAmount || parseFloat(paymentAmount) <= 0) {
       toast({
         title: "Error",

@@ -159,3 +159,4 @@ If auto-healing doesn't work, try these steps:
 3. Restart MySQL: `docker restart kiplombe_mysql`
 
 
+

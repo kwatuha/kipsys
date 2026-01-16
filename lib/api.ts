@@ -1667,10 +1667,79 @@ export const ambulanceApi = {
     apiRequest<any>(`/api/ambulance/trips/${id}`, { method: 'DELETE' }),
 };
 
+// Bill Waiver API
+export const waiverApi = {
+  // Waiver Types
+  getWaiverTypes: (isActive?: boolean, responsibility?: string) => {
+    const params = new URLSearchParams();
+    if (isActive !== undefined) params.append('isActive', isActive.toString());
+    if (responsibility) params.append('responsibility', responsibility);
+    return apiRequest<any[]>(`/api/waivers/types?${params.toString()}`);
+  },
+
+  getWaiverType: (id: string) =>
+    apiRequest<any>(`/api/waivers/types/${id}`),
+
+  createWaiverType: (data: any) =>
+    apiRequest<any>('/api/waivers/types', { method: 'POST', body: data }),
+
+  updateWaiverType: (id: string, data: any) =>
+    apiRequest<any>(`/api/waivers/types/${id}`, { method: 'PUT', body: data }),
+
+  // Waivers
+  getAll: (status?: string, responsibility?: string, waiverTypeId?: string, patientId?: string, invoiceId?: string, search?: string, page = 1, limit = 50) => {
+    const params = new URLSearchParams({
+      page: page.toString(),
+      limit: limit.toString(),
+    });
+    if (status) params.append('status', status);
+    if (responsibility) params.append('responsibility', responsibility);
+    if (waiverTypeId) params.append('waiverTypeId', waiverTypeId);
+    if (patientId) params.append('patientId', patientId);
+    if (invoiceId) params.append('invoiceId', invoiceId);
+    if (search) params.append('search', search);
+    return apiRequest<any[]>(`/api/waivers?${params.toString()}`);
+  },
+
+  getById: (id: string) =>
+    apiRequest<any>(`/api/waivers/${id}`),
+
+  create: (data: any) =>
+    apiRequest<any>('/api/waivers', { method: 'POST', body: data }),
+
+  approve: (id: string, data: { approvedBy: string; notes?: string }) =>
+    apiRequest<any>(`/api/waivers/${id}/approve`, { method: 'PUT', body: data }),
+
+  reject: (id: string, data: { rejectedBy: string; rejectionReason: string }) =>
+    apiRequest<any>(`/api/waivers/${id}/reject`, { method: 'PUT', body: data }),
+
+  recordStaffPayment: (id: string, data: any) =>
+    apiRequest<any>(`/api/waivers/${id}/staff-payment`, { method: 'POST', body: data }),
+
+  getStats: (startDate?: string, endDate?: string) => {
+    const params = new URLSearchParams();
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    return apiRequest<any>(`/api/waivers/stats/summary?${params.toString()}`);
+  },
+
+  getPatientsWithOutstandingBills: (search?: string) => {
+    const params = new URLSearchParams();
+    if (search) params.append('search', search);
+    return apiRequest<any[]>(`/api/waivers/patients/outstanding?${params.toString()}`);
+  },
+};
+
 // User API
 export const userApi = {
-  getAll: () =>
-    apiRequest<any[]>('/api/users'),
+  getAll: (search?: string, page = 1, limit = 100) => {
+    const params = new URLSearchParams({
+      page: page.toString(),
+      limit: limit.toString(),
+    });
+    if (search) params.append('search', search);
+    return apiRequest<any[]>(`/api/users?${params.toString()}`);
+  },
   getById: (id: string) =>
     apiRequest<any>(`/api/users/${id}`),
   create: (data: any) =>

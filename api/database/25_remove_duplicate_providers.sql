@@ -141,3 +141,4 @@ SET ip.isActive = 0;
 -- ALTER TABLE insurance_providers ADD UNIQUE INDEX idx_unique_provider_name (providerName);
 
 
+

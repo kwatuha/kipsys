@@ -82,6 +82,11 @@ export function PaymentReceiptDialog({ invoiceId, open, onOpenChange }: PaymentR
               padding-bottom: 15px;
               margin-bottom: 25px;
             }
+            .header img {
+              max-width: 150px;
+              height: auto;
+              margin-bottom: 10px;
+            }
             .header h1 {
               margin: 0;
               font-size: 28px;
@@ -167,7 +172,12 @@ export function PaymentReceiptDialog({ invoiceId, open, onOpenChange }: PaymentR
         </head>
         <body>
           <div class="header">
-            <h1>PAYMENT RECEIPT</h1>
+            <img src="${window.location.origin}/logo.png" alt="Kiplombe Medical Centre" style="max-width: 150px; height: auto; margin-bottom: 10px;" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';" />
+            <div style="display: none;">
+              <h1>KIPLOMBE</h1>
+              <h2>Medical Centre</h2>
+            </div>
+            <h1 style="margin-top: 15px;">PAYMENT RECEIPT</h1>
             <h2>Official Receipt</h2>
           </div>
 

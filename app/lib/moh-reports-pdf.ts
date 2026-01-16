@@ -133,6 +133,11 @@ function generateMOH717HTML(data: MOH717Data): string {
             border-bottom: 2px solid #000;
             padding-bottom: 10px;
           }
+          .header img {
+            max-width: 150px;
+            height: auto;
+            margin-bottom: 10px;
+          }
           .header h1 {
             margin: 0;
             font-size: 18px;
@@ -172,11 +177,16 @@ function generateMOH717HTML(data: MOH717Data): string {
       </head>
       <body>
         <div class="header">
-          <h1>REPUBLIC OF KENYA</h1>
+          <img src="/logo.png" alt="Kiplombe Medical Centre" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';" />
+          <div style="display: none;">
+            <h1 style="margin: 0; font-size: 24px; font-weight: bold; letter-spacing: 2px;">KIPLOMBE</h1>
+            <h2 style="margin: 5px 0; font-size: 18px; color: #333;">Medical Centre</h2>
+          </div>
+          <h1 style="margin-top: 15px;">REPUBLIC OF KENYA</h1>
           <h2>MINISTRY OF HEALTH</h2>
           <h2>MOH 717 - MONTHLY WORKLOAD REPORT</h2>
         </div>
-        
+
         <div>
           <p><strong>Facility Name:</strong> ${data.facilityName}</p>
           <p><strong>Facility Code:</strong> ${data.facilityCode}</p>
@@ -238,7 +248,7 @@ function downloadPDF(html: string, filename: string) {
   const blob = new Blob([html], { type: "text/html" })
   const url = URL.createObjectURL(blob)
   const printWindow = window.open(url, "_blank")
-  
+
   if (printWindow) {
     printWindow.onload = () => {
       setTimeout(() => {
@@ -284,6 +294,7 @@ export async function generateMOH731PlusPDF(data: MOH731PlusData) {
         <style>
           body { font-family: Arial, sans-serif; margin: 20px; color: #333; }
           .header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #000; padding-bottom: 10px; }
+          .header img { max-width: 150px; height: auto; margin-bottom: 10px; }
           .header h1 { margin: 0; font-size: 18px; }
           .header h2 { margin: 5px 0; font-size: 16px; font-weight: normal; }
           table { width: 100%; border-collapse: collapse; margin: 20px 0; }
@@ -295,7 +306,12 @@ export async function generateMOH731PlusPDF(data: MOH731PlusData) {
       </head>
       <body>
         <div class="header">
-          <h1>REPUBLIC OF KENYA</h1>
+          <img src="/logo.png" alt="Kiplombe Medical Centre" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';" />
+          <div style="display: none;">
+            <h1 style="margin: 0; font-size: 24px; font-weight: bold; letter-spacing: 2px;">KIPLOMBE</h1>
+            <h2 style="margin: 5px 0; font-size: 18px; color: #333;">Medical Centre</h2>
+          </div>
+          <h1 style="margin-top: 15px;">REPUBLIC OF KENYA</h1>
           <h2>MINISTRY OF HEALTH</h2>
           <h2>MOH 731 Plus - KEY POPULATIONS REPORT</h2>
         </div>
@@ -341,6 +357,7 @@ export async function generateMOH705PDF(data: MOH705Data) {
         <style>
           body { font-family: Arial, sans-serif; margin: 20px; color: #333; }
           .header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #000; padding-bottom: 10px; }
+          .header img { max-width: 150px; height: auto; margin-bottom: 10px; }
           .header h1 { margin: 0; font-size: 18px; }
           .header h2 { margin: 5px 0; font-size: 16px; font-weight: normal; }
           table { width: 100%; border-collapse: collapse; margin: 20px 0; }
@@ -352,7 +369,12 @@ export async function generateMOH705PDF(data: MOH705Data) {
       </head>
       <body>
         <div class="header">
-          <h1>REPUBLIC OF KENYA</h1>
+          <img src="/logo.png" alt="Kiplombe Medical Centre" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';" />
+          <div style="display: none;">
+            <h1 style="margin: 0; font-size: 24px; font-weight: bold; letter-spacing: 2px;">KIPLOMBE</h1>
+            <h2 style="margin: 5px 0; font-size: 18px; color: #333;">Medical Centre</h2>
+          </div>
+          <h1 style="margin-top: 15px;">REPUBLIC OF KENYA</h1>
           <h2>MINISTRY OF HEALTH</h2>
           <h2>MOH 705 - MORBIDITY REPORT</h2>
         </div>
@@ -399,6 +421,7 @@ export async function generateMOH711PDF(data: MOH711Data) {
         <style>
           body { font-family: Arial, sans-serif; margin: 20px; color: #333; }
           .header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #000; padding-bottom: 10px; }
+          .header img { max-width: 150px; height: auto; margin-bottom: 10px; }
           .header h1 { margin: 0; font-size: 18px; }
           .header h2 { margin: 5px 0; font-size: 16px; font-weight: normal; }
           table { width: 100%; border-collapse: collapse; margin: 20px 0; }
@@ -410,7 +433,12 @@ export async function generateMOH711PDF(data: MOH711Data) {
       </head>
       <body>
         <div class="header">
-          <h1>REPUBLIC OF KENYA</h1>
+          <img src="/logo.png" alt="Kiplombe Medical Centre" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';" />
+          <div style="display: none;">
+            <h1 style="margin: 0; font-size: 24px; font-weight: bold; letter-spacing: 2px;">KIPLOMBE</h1>
+            <h2 style="margin: 5px 0; font-size: 18px; color: #333;">Medical Centre</h2>
+          </div>
+          <h1 style="margin-top: 15px;">REPUBLIC OF KENYA</h1>
           <h2>MINISTRY OF HEALTH</h2>
           <h2>MOH 711 - IMMUNIZATION REPORT</h2>
         </div>
@@ -457,6 +485,7 @@ export async function generateMOH708PDF(data: MOH708Data) {
         <style>
           body { font-family: Arial, sans-serif; margin: 20px; color: #333; }
           .header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #000; padding-bottom: 10px; }
+          .header img { max-width: 150px; height: auto; margin-bottom: 10px; }
           .header h1 { margin: 0; font-size: 18px; }
           .header h2 { margin: 5px 0; font-size: 16px; font-weight: normal; }
           table { width: 100%; border-collapse: collapse; margin: 20px 0; }
@@ -468,7 +497,12 @@ export async function generateMOH708PDF(data: MOH708Data) {
       </head>
       <body>
         <div class="header">
-          <h1>REPUBLIC OF KENYA</h1>
+          <img src="/logo.png" alt="Kiplombe Medical Centre" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';" />
+          <div style="display: none;">
+            <h1 style="margin: 0; font-size: 24px; font-weight: bold; letter-spacing: 2px;">KIPLOMBE</h1>
+            <h2 style="margin: 5px 0; font-size: 18px; color: #333;">Medical Centre</h2>
+          </div>
+          <h1 style="margin-top: 15px;">REPUBLIC OF KENYA</h1>
           <h2>MINISTRY OF HEALTH</h2>
           <h2>MOH 708 - MATERNAL & CHILD HEALTH REPORT</h2>
         </div>
@@ -514,6 +548,7 @@ export async function generateMOH730PDF(data: MOH730Data) {
         <style>
           body { font-family: Arial, sans-serif; margin: 20px; color: #333; }
           .header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #000; padding-bottom: 10px; }
+          .header img { max-width: 150px; height: auto; margin-bottom: 10px; }
           .header h1 { margin: 0; font-size: 18px; }
           .header h2 { margin: 5px 0; font-size: 16px; font-weight: normal; }
           table { width: 100%; border-collapse: collapse; margin: 20px 0; }
@@ -525,7 +560,12 @@ export async function generateMOH730PDF(data: MOH730Data) {
       </head>
       <body>
         <div class="header">
-          <h1>REPUBLIC OF KENYA</h1>
+          <img src="/logo.png" alt="Kiplombe Medical Centre" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';" />
+          <div style="display: none;">
+            <h1 style="margin: 0; font-size: 24px; font-weight: bold; letter-spacing: 2px;">KIPLOMBE</h1>
+            <h2 style="margin: 5px 0; font-size: 18px; color: #333;">Medical Centre</h2>
+          </div>
+          <h1 style="margin-top: 15px;">REPUBLIC OF KENYA</h1>
           <h2>MINISTRY OF HEALTH</h2>
           <h2>MOH 730 - FACILITY INFORMATION REPORT</h2>
         </div>

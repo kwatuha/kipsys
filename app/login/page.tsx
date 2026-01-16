@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { AlertCircle, Loader2, Heart } from "lucide-react"
+import { HospitalLogoImage } from "@/components/hospital-logo-image"
 
 export default function LoginPage() {
   const { login, isLoading, isAuthenticated } = useAuth()
@@ -68,9 +69,7 @@ export default function LoginPage() {
           <CardHeader className="space-y-6 pb-8">
             <div className="flex justify-center">
               <div className="flex flex-col items-center space-y-4">
-                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-[#0f4c75] to-[#3282b8] shadow-lg">
-                  <Heart className="h-8 w-8 text-white" fill="white" />
-                </div>
+                <HospitalLogoImage variant="default" width={180} height={60} />
                 <div className="text-center space-y-2">
                   <h1 className="text-2xl font-bold text-[#0f4c75] tracking-tight">
                     Kiplombe Medical Centre
