@@ -450,6 +450,31 @@ export const inpatientApi = {
 
   deleteWard: (id: string) =>
     apiRequest<any>(`/api/inpatient/wards/${id}`, { method: 'DELETE' }),
+
+  // Inpatient Management
+  getAdmissionOverview: (id: string) =>
+    apiRequest<any>(`/api/inpatient/admissions/${id}/overview`),
+
+  getDoctorReviews: (id: string) =>
+    apiRequest<any[]>(`/api/inpatient/admissions/${id}/reviews`),
+
+  createDoctorReview: (id: string, data: any) =>
+    apiRequest<any>(`/api/inpatient/admissions/${id}/reviews`, { method: 'POST', body: data }),
+
+  getNursingCare: (id: string) =>
+    apiRequest<any[]>(`/api/inpatient/admissions/${id}/nursing-care`),
+
+  createNursingCare: (id: string, data: any) =>
+    apiRequest<any>(`/api/inpatient/admissions/${id}/nursing-care`, { method: 'POST', body: data }),
+
+  getVitalsSchedule: (id: string) =>
+    apiRequest<any>(`/api/inpatient/admissions/${id}/vitals-schedule`),
+
+  createVitalsSchedule: (id: string, data: any) =>
+    apiRequest<any>(`/api/inpatient/admissions/${id}/vitals-schedule`, { method: 'POST', body: data }),
+
+  recordVitals: (id: string, data: any) =>
+    apiRequest<any>(`/api/inpatient/admissions/${id}/vitals`, { method: 'POST', body: data }),
 };
 
 // Maternity API

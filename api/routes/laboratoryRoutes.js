@@ -237,7 +237,7 @@ router.post('/orders', async (req, res) => {
     try {
         await connection.beginTransaction();
 
-        const { orderNumber, patientId, orderedBy, orderDate, priority, status, clinicalNotes, clinicalIndication, items } = req.body;
+        const { orderNumber, patientId, admissionId, orderedBy, orderDate, priority, status, clinicalNotes, clinicalIndication, items } = req.body;
         const userId = req.user?.id || req.user?.userId || null;
 
         if (!items || items.length === 0) {
@@ -280,9 +280,9 @@ router.post('/orders', async (req, res) => {
 
         // 2. Insert order
         const [result] = await connection.execute(
-            `INSERT INTO lab_test_orders (orderNumber, patientId, orderedBy, orderDate, priority, status, clinicalIndication)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            [orderNum, patientId, orderedBy, orderDate || new Date(), priority || 'routine', status || 'pending', clinicalInfo]
+            `INSERT INTO lab_test_orders (orderNumber, patientId, admissionId, orderedBy, orderDate, priority, status, clinicalIndication)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [orderNum, patientId, admissionId || null, orderedBy, orderDate || new Date(), priority || 'routine', status || 'pending', clinicalInfo]
         );
         const orderId = result.insertId;
 

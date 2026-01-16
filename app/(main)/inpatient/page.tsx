@@ -9,6 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
 import { Search, Plus, FileText, BedDouble, Loader2, Edit, Trash2, Eye, MoreVertical } from "lucide-react"
 import { AddAdmissionForm } from "@/components/add-admission-form"
+import { InpatientManagement } from "@/components/inpatient-management"
 import { inpatientApi } from "@/lib/api"
 import { format } from "date-fns"
 import { toast } from "@/components/ui/use-toast"
@@ -153,14 +154,14 @@ export default function InpatientPage() {
         bedStatusFilter || undefined
       )
       setBeds(data)
-      
+
       // Calculate stats
       const total = data.length
       const occupied = data.filter((b: any) => b.status === 'occupied').length
       const available = data.filter((b: any) => b.status === 'available').length
       const icu = data.filter((b: any) => b.wardType === 'ICU' || b.wardName?.includes('ICU')).length
       const icuOccupied = data.filter((b: any) => (b.wardType === 'ICU' || b.wardName?.includes('ICU')) && b.status === 'occupied').length
-      
+
       setStats({
         totalBeds: total,
         occupiedBeds: occupied,
@@ -600,28 +601,28 @@ export default function InpatientPage() {
               <div className="flex items-center justify-between mb-4 gap-4 flex-wrap">
                 <div className="flex gap-2 flex-wrap items-center">
                   <span className="text-sm text-muted-foreground font-medium">Status:</span>
-                  <Button 
-                    variant={statusFilter === "" ? "default" : "outline"} 
+                  <Button
+                    variant={statusFilter === "" ? "default" : "outline"}
                     size="sm"
                     onClick={() => setStatusFilter("")}
                   >
                     All
                   </Button>
-                  <Button 
-                    variant={statusFilter === "admitted" ? "default" : "outline"} 
+                  <Button
+                    variant={statusFilter === "admitted" ? "default" : "outline"}
                     size="sm"
                     onClick={() => setStatusFilter("admitted")}
                   >
                     Admitted
                   </Button>
-                  <Button 
-                    variant={statusFilter === "discharged" ? "default" : "outline"} 
+                  <Button
+                    variant={statusFilter === "discharged" ? "default" : "outline"}
                     size="sm"
                     onClick={() => setStatusFilter("discharged")}
                   >
                     Discharged
                   </Button>
-                  
+
                   <span className="text-sm text-muted-foreground font-medium ml-4">Ward:</span>
                   <Select
                     value={wardFilter || "all"}
@@ -645,9 +646,9 @@ export default function InpatientPage() {
                 </div>
                 <div className="relative w-64">
                   <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input 
-                    type="search" 
-                    placeholder="Search patients..." 
+                  <Input
+                    type="search"
+                    placeholder="Search patients..."
                     className="w-full pl-8"
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
@@ -731,7 +732,7 @@ export default function InpatientPage() {
                                         <Edit className="mr-2 h-4 w-4" />
                                         Edit Admission
                                       </DropdownMenuItem>
-                                      <DropdownMenuItem 
+                                      <DropdownMenuItem
                                         onClick={() => {
                                           setDeletingAdmission(admission)
                                           setDeleteAdmissionOpen(true)
@@ -766,22 +767,22 @@ export default function InpatientPage() {
             <CardContent>
               <div className="flex items-center justify-between mb-4">
                 <div className="flex gap-2 flex-wrap">
-                  <Button 
-                    variant={bedStatusFilter === "" ? "default" : "outline"} 
+                  <Button
+                    variant={bedStatusFilter === "" ? "default" : "outline"}
                     size="sm"
                     onClick={() => setBedStatusFilter("")}
                   >
                     All Beds
                   </Button>
-                  <Button 
-                    variant={bedStatusFilter === "available" ? "default" : "outline"} 
+                  <Button
+                    variant={bedStatusFilter === "available" ? "default" : "outline"}
                     size="sm"
                     onClick={() => setBedStatusFilter("available")}
                   >
                     Available
                   </Button>
-                  <Button 
-                    variant={bedStatusFilter === "occupied" ? "default" : "outline"} 
+                  <Button
+                    variant={bedStatusFilter === "occupied" ? "default" : "outline"}
                     size="sm"
                     onClick={() => setBedStatusFilter("occupied")}
                   >
@@ -790,9 +791,9 @@ export default function InpatientPage() {
                 </div>
                 <div className="relative w-64">
                   <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input 
-                    type="search" 
-                    placeholder="Search beds..." 
+                  <Input
+                    type="search"
+                    placeholder="Search beds..."
                     className="w-full pl-8"
                     value={bedSearch}
                     onChange={(e) => setBedSearch(e.target.value)}
@@ -836,7 +837,7 @@ export default function InpatientPage() {
                               </Badge>
                             </TableCell>
                             <TableCell>
-                              {bed.firstName && bed.lastName 
+                              {bed.firstName && bed.lastName
                                 ? `${bed.firstName} ${bed.lastName} ${bed.patientNumber ? `(${bed.patientNumber})` : ''}`
                                 : "-"}
                             </TableCell>
@@ -856,7 +857,7 @@ export default function InpatientPage() {
                                   {bed.status === 'available' && (
                                     <>
                                       <DropdownMenuSeparator />
-                                      <DropdownMenuItem 
+                                      <DropdownMenuItem
                                         onClick={() => {
                                           setDeletingBed(bed)
                                           setDeleteBedOpen(true)
@@ -917,7 +918,7 @@ export default function InpatientPage() {
                         const capacity = parseInt(ward.capacity) || 0;
                         const occupancyRate = totalBeds > 0 ? Math.round((occupiedBeds / totalBeds) * 100) : 0;
                         const hasCapacity = availableBeds > 0;
-                        
+
                         return (
                           <TableRow key={ward.wardId}>
                             <TableCell className="font-medium">
@@ -978,8 +979,8 @@ export default function InpatientPage() {
             <CardContent>
               <div className="flex items-center justify-between mb-4">
                 <div className="flex gap-2 flex-wrap">
-                  <Button 
-                    variant={wardTypeFilter === "" ? "default" : "outline"} 
+                  <Button
+                    variant={wardTypeFilter === "" ? "default" : "outline"}
                     size="sm"
                     onClick={() => setWardTypeFilter("")}
                   >
@@ -998,9 +999,9 @@ export default function InpatientPage() {
                 </div>
                 <div className="relative w-64">
                   <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input 
-                    type="search" 
-                    placeholder="Search wards..." 
+                  <Input
+                    type="search"
+                    placeholder="Search wards..."
                     className="w-full pl-8"
                     value={wardSearch}
                     onChange={(e) => setWardSearch(e.target.value)}
@@ -1056,7 +1057,7 @@ export default function InpatientPage() {
                                     Edit Ward
                                   </DropdownMenuItem>
                                   <DropdownMenuSeparator />
-                                  <DropdownMenuItem 
+                                  <DropdownMenuItem
                                     onClick={() => {
                                       setDeletingWard(ward)
                                       setDeleteWardOpen(true)
@@ -1081,8 +1082,8 @@ export default function InpatientPage() {
         </TabsContent>
       </Tabs>
 
-      <AddAdmissionForm 
-        open={showAdmissionForm} 
+      <AddAdmissionForm
+        open={showAdmissionForm}
         onOpenChange={setShowAdmissionForm}
         onSuccess={() => {
           loadAdmissions()
@@ -1116,16 +1117,26 @@ export default function InpatientPage() {
         </DialogContent>
       </Dialog>
 
-      {/* View Admission Dialog */}
-      <Dialog open={viewAdmissionOpen} onOpenChange={setViewAdmissionOpen}>
-        <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Admission Details</DialogTitle>
-            <DialogDescription>
-              Admission {viewingAdmission?.admissionNumber || ''}
-            </DialogDescription>
-          </DialogHeader>
-          {viewingAdmission ? (
+      {/* Inpatient Management Dialog - Comprehensive View */}
+      {viewingAdmission && (
+        <InpatientManagement
+          admissionId={viewingAdmission.admissionId.toString()}
+          open={viewAdmissionOpen}
+          onOpenChange={setViewAdmissionOpen}
+        />
+      )}
+
+      {/* Old View Admission Dialog - Disabled, replaced by InpatientManagement above */}
+      {false && viewingAdmission && (
+        <Dialog open={viewAdmissionOpen} onOpenChange={setViewAdmissionOpen}>
+          <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Admission Details</DialogTitle>
+              <DialogDescription>
+                Admission {viewingAdmission?.admissionNumber || ''}
+              </DialogDescription>
+            </DialogHeader>
+            {viewingAdmission ? (
             <div className="space-y-6">
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -1223,6 +1234,7 @@ export default function InpatientPage() {
           ) : null}
         </DialogContent>
       </Dialog>
+      )}
 
       {/* Delete Confirmation Dialog */}
       <AlertDialog open={deleteAdmissionOpen} onOpenChange={(open) => !open && setDeleteAdmissionOpen(false)}>
@@ -1230,7 +1242,7 @@ export default function InpatientPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Cancel Admission</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to cancel admission "{deletingAdmission?.admissionNumber}"? 
+              Are you sure you want to cancel admission "{deletingAdmission?.admissionNumber}"?
               This will free the bed and mark the admission as cancelled. This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -1280,7 +1292,7 @@ export default function InpatientPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Bed</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete bed "{deletingBed?.bedNumber}"? 
+              Are you sure you want to delete bed "{deletingBed?.bedNumber}"?
               This action cannot be undone. The bed will be marked as inactive.
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -1359,7 +1371,7 @@ export default function InpatientPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Ward</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete ward "{deletingWard?.wardName}"? 
+              Are you sure you want to delete ward "{deletingWard?.wardName}"?
               This action cannot be undone. The ward will be marked as inactive.
               Wards with active beds cannot be deleted.
             </AlertDialogDescription>
@@ -1381,12 +1393,12 @@ export default function InpatientPage() {
 }
 
 // Edit Admission Form Component
-function EditAdmissionForm({ 
-  admission, 
-  onSave, 
+function EditAdmissionForm({
+  admission,
+  onSave,
   onCancel,
-  saving 
-}: { 
+  saving
+}: {
   admission: Admission
   onSave: (data: any) => void
   onCancel: () => void
@@ -1483,13 +1495,13 @@ function EditAdmissionForm({
 }
 
 // Edit Bed Form Component
-function EditBedForm({ 
-  bed, 
+function EditBedForm({
+  bed,
   wards,
-  onSave, 
+  onSave,
   onCancel,
-  saving 
-}: { 
+  saving
+}: {
   bed: any
   wards: any[]
   onSave: (data: any) => void
@@ -1628,12 +1640,12 @@ function EditBedForm({
 }
 
 // Edit Ward Form Component
-function EditWardForm({ 
-  ward, 
-  onSave, 
+function EditWardForm({
+  ward,
+  onSave,
   onCancel,
-  saving 
-}: { 
+  saving
+}: {
   ward: any | null
   onSave: (data: any) => void
   onCancel: () => void

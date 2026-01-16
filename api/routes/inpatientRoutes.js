@@ -13,7 +13,7 @@ router.get('/admissions', async (req, res) => {
         const offset = (page - 1) * limit;
 
         let query = `
-            SELECT a.*, 
+            SELECT a.*,
                    pt.firstName, pt.lastName, pt.patientNumber,
                    u.firstName as doctorFirstName, u.lastName as doctorLastName,
                    w.wardName, w.wardType,
@@ -77,7 +77,7 @@ router.get('/admissions/:id', async (req, res) => {
         const { id } = req.params;
 
         const [admissions] = await pool.execute(
-            `SELECT a.*, 
+            `SELECT a.*,
                     pt.firstName, pt.lastName, pt.patientNumber,
                     u.firstName as doctorFirstName, u.lastName as doctorLastName,
                     w.wardName, w.wardType, w.wardId,
@@ -156,7 +156,7 @@ router.post('/admissions', async (req, res) => {
 
         // Fetch created admission
         const [newAdmission] = await connection.execute(
-            `SELECT a.*, 
+            `SELECT a.*,
                     pt.firstName, pt.lastName, pt.patientNumber,
                     u.firstName as doctorFirstName, u.lastName as doctorLastName,
                     w.wardName, w.wardType,
@@ -287,7 +287,7 @@ router.put('/admissions/:id', async (req, res) => {
 
         // Fetch updated admission
         const [updated] = await connection.execute(
-            `SELECT a.*, 
+            `SELECT a.*,
                     pt.firstName, pt.lastName, pt.patientNumber,
                     u.firstName as doctorFirstName, u.lastName as doctorLastName,
                     w.wardName, w.wardType,
@@ -369,7 +369,7 @@ router.get('/beds', async (req, res) => {
         const offset = (page - 1) * limit;
 
         let query = `
-            SELECT b.*, 
+            SELECT b.*,
                    w.wardName, w.wardType,
                    a.admissionId, a.admissionNumber, a.admissionDate,
                    pt.firstName, pt.lastName, pt.patientNumber
@@ -411,7 +411,7 @@ router.get('/beds/:id', async (req, res) => {
         const { id } = req.params;
 
         const [beds] = await pool.execute(
-            `SELECT b.*, 
+            `SELECT b.*,
                    w.wardName, w.wardType,
                    a.admissionId, a.admissionNumber, a.admissionDate,
                    pt.firstName, pt.lastName, pt.patientNumber
@@ -508,7 +508,7 @@ router.put('/beds/:id', async (req, res) => {
 
         // Fetch updated bed
         const [updated] = await pool.execute(
-            `SELECT b.*, 
+            `SELECT b.*,
                    w.wardName, w.wardType,
                    a.admissionId, a.admissionNumber, a.admissionDate,
                    pt.firstName, pt.lastName, pt.patientNumber
@@ -579,7 +579,7 @@ router.get('/wards', async (req, res) => {
         const offset = (page - 1) * limit;
 
         let query = `
-            SELECT w.*, 
+            SELECT w.*,
                    COUNT(DISTINCT CASE WHEN a.status = 'admitted' THEN a.admissionId END) as admittedPatients,
                    COUNT(DISTINCT b.bedId) as totalBeds,
                    COUNT(DISTINCT CASE WHEN b.status = 'occupied' THEN b.bedId END) as occupiedBeds,
@@ -790,6 +790,411 @@ router.delete('/wards/:id', async (req, res) => {
     } catch (error) {
         console.error('Error deleting ward:', error);
         res.status(500).json({ message: 'Error deleting ward', error: error.message });
+    }
+});
+
+// ============================================
+// INPATIENT MANAGEMENT ROUTES
+// ============================================
+
+/**
+ * @route GET /api/inpatient/admissions/:id/overview
+ * @description Get comprehensive overview of an admission (reviews, nursing, vitals, procedures, labs)
+ */
+router.get('/admissions/:id/overview', async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // Get admission details
+        const [admissions] = await pool.execute(
+            `SELECT a.*,
+                    pt.firstName, pt.lastName, pt.patientNumber,
+                    u.firstName as doctorFirstName, u.lastName as doctorLastName,
+                    w.wardName, w.wardType, w.wardId,
+                    b.bedNumber, b.bedType, b.bedId
+             FROM admissions a
+             LEFT JOIN patients pt ON a.patientId = pt.patientId
+             LEFT JOIN users u ON a.admittingDoctorId = u.userId
+             LEFT JOIN beds b ON a.bedId = b.bedId
+             LEFT JOIN wards w ON b.wardId = w.wardId
+             WHERE a.admissionId = ?`,
+            [id]
+        );
+
+        if (admissions.length === 0) {
+            return res.status(404).json({ message: 'Admission not found' });
+        }
+
+        const admission = admissions[0];
+
+        // Get doctor reviews
+        const [reviews] = await pool.execute(
+            `SELECT r.*,
+                    u.firstName as doctorFirstName, u.lastName as doctorLastName
+             FROM inpatient_doctor_reviews r
+             LEFT JOIN users u ON r.reviewingDoctorId = u.userId
+             WHERE r.admissionId = ?
+             ORDER BY r.reviewDate DESC`,
+            [id]
+        );
+
+        // Get nursing care notes
+        const [nursingCare] = await pool.execute(
+            `SELECT n.*,
+                    u.firstName as nurseFirstName, u.lastName as nurseLastName
+             FROM inpatient_nursing_care n
+             LEFT JOIN users u ON n.nurseId = u.userId
+             WHERE n.admissionId = ?
+             ORDER BY n.careDate DESC`,
+            [id]
+        );
+
+        // Get vital signs
+        const [vitals] = await pool.execute(
+            `SELECT vs.*,
+                    u.firstName as recordedByFirstName, u.lastName as recordedByLastName
+             FROM vital_signs vs
+             LEFT JOIN users u ON vs.recordedBy = u.userId
+             WHERE vs.admissionId = ?
+             ORDER BY vs.recordedDate DESC`,
+            [id]
+        );
+
+        // Get vitals schedule
+        const [vitalsSchedule] = await pool.execute(
+            `SELECT * FROM inpatient_vitals_schedule
+             WHERE admissionId = ? AND isActive = 1
+             ORDER BY scheduleDate DESC
+             LIMIT 1`,
+            [id]
+        );
+
+        // Get procedures
+        const [procedures] = await pool.execute(
+            `SELECT pp.*,
+                    u.firstName as performedByFirstName, u.lastName as performedByLastName
+             FROM patient_procedures pp
+             LEFT JOIN users u ON pp.performedBy = u.userId
+             WHERE pp.admissionId = ?
+             ORDER BY pp.procedureDate DESC`,
+            [id]
+        );
+
+        // Get lab orders
+        const [labOrders] = await pool.execute(
+            `SELECT lo.*,
+                    u.firstName as orderedByFirstName, u.lastName as orderedByLastName
+             FROM lab_test_orders lo
+             LEFT JOIN users u ON lo.orderedBy = u.userId
+             WHERE lo.admissionId = ?
+             ORDER BY lo.orderDate DESC`,
+            [id]
+        );
+
+        // Get radiology orders
+        const [radiologyOrders] = await pool.execute(
+            `SELECT ro.*,
+                    u.firstName as orderedByFirstName, u.lastName as orderedByLastName
+             FROM radiology_exam_orders ro
+             LEFT JOIN users u ON ro.orderedBy = u.userId
+             WHERE ro.admissionId = ?
+             ORDER BY ro.orderDate DESC`,
+            [id]
+        );
+
+        // Get prescriptions
+        const [prescriptions] = await pool.execute(
+            `SELECT p.*,
+                    u.firstName as doctorFirstName, u.lastName as doctorLastName
+             FROM prescriptions p
+             LEFT JOIN users u ON p.doctorId = u.userId
+             WHERE p.admissionId = ?
+             ORDER BY p.prescriptionDate DESC`,
+            [id]
+        );
+
+        // Get diagnoses
+        const [diagnoses] = await pool.execute(
+            'SELECT * FROM admission_diagnoses WHERE admissionId = ? ORDER BY diagnosisType, diagnosisId',
+            [id]
+        );
+
+        // Get orders/consumables (invoices with consumables linked to this admission)
+        const [ordersInvoices] = await pool.execute(
+            `SELECT i.*,
+                    p.firstName as patientFirstName, p.lastName as patientLastName
+             FROM invoices i
+             LEFT JOIN patients p ON i.patientId = p.patientId
+             WHERE i.patientId = ?
+             AND (i.notes LIKE '%Consumables ordered%' OR i.notes LIKE '%consumables ordered%' OR i.notes LIKE '%inpatient%')
+             AND DATE(i.invoiceDate) >= DATE(?)
+             ORDER BY i.invoiceDate DESC`,
+            [admission.patientId, admission.admissionDate]
+        );
+
+        // Get invoice items for orders
+        const ordersWithItems = await Promise.all(ordersInvoices.map(async (invoice: any) => {
+            const [items] = await pool.execute(
+                `SELECT ii.*, sc.name as chargeName, sc.chargeCode
+                 FROM invoice_items ii
+                 LEFT JOIN service_charges sc ON ii.chargeId = sc.chargeId
+                 WHERE ii.invoiceId = ?
+                 ORDER BY ii.itemId`,
+                [invoice.invoiceId]
+            );
+            return {
+                ...invoice,
+                items: items || []
+            };
+        }));
+
+        res.status(200).json({
+            admission,
+            diagnoses,
+            reviews,
+            nursingCare,
+            vitals,
+            vitalsSchedule: vitalsSchedule[0] || null,
+            procedures,
+            labOrders,
+            radiologyOrders,
+            prescriptions,
+            orders: ordersWithItems,
+        });
+    } catch (error) {
+        console.error('Error fetching admission overview:', error);
+        res.status(500).json({ message: 'Error fetching admission overview', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/inpatient/admissions/:id/reviews
+ * @description Get doctor reviews for an admission
+ */
+router.get('/admissions/:id/reviews', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const [reviews] = await pool.execute(
+            `SELECT r.*,
+                    u.firstName as doctorFirstName, u.lastName as doctorLastName
+             FROM inpatient_doctor_reviews r
+             LEFT JOIN users u ON r.reviewingDoctorId = u.userId
+             WHERE r.admissionId = ?
+             ORDER BY r.reviewDate DESC`,
+            [id]
+        );
+        res.status(200).json(reviews);
+    } catch (error) {
+        console.error('Error fetching doctor reviews:', error);
+        res.status(500).json({ message: 'Error fetching doctor reviews', error: error.message });
+    }
+});
+
+/**
+ * @route POST /api/inpatient/admissions/:id/reviews
+ * @description Create a doctor review
+ */
+router.post('/admissions/:id/reviews', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { reviewDate, reviewingDoctorId, reviewType, subjective, objective, assessment, plan, notes, nextReviewDate } = req.body;
+
+        if (!reviewingDoctorId) {
+            return res.status(400).json({ message: 'Reviewing doctor ID is required' });
+        }
+
+        const [result] = await pool.execute(
+            `INSERT INTO inpatient_doctor_reviews
+             (admissionId, reviewDate, reviewingDoctorId, reviewType, subjective, objective, assessment, plan, notes, nextReviewDate)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [id, reviewDate || new Date(), reviewingDoctorId, reviewType || 'morning_round', subjective || null, objective || null, assessment || null, plan || null, notes || null, nextReviewDate || null]
+        );
+
+        const [newReview] = await pool.execute(
+            `SELECT r.*,
+                    u.firstName as doctorFirstName, u.lastName as doctorLastName
+             FROM inpatient_doctor_reviews r
+             LEFT JOIN users u ON r.reviewingDoctorId = u.userId
+             WHERE r.reviewId = ?`,
+            [result.insertId]
+        );
+
+        res.status(201).json(newReview[0]);
+    } catch (error) {
+        console.error('Error creating doctor review:', error);
+        res.status(500).json({ message: 'Error creating doctor review', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/inpatient/admissions/:id/nursing-care
+ * @description Get nursing care notes for an admission
+ */
+router.get('/admissions/:id/nursing-care', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const [care] = await pool.execute(
+            `SELECT n.*,
+                    u.firstName as nurseFirstName, u.lastName as nurseLastName
+             FROM inpatient_nursing_care n
+             LEFT JOIN users u ON n.nurseId = u.userId
+             WHERE n.admissionId = ?
+             ORDER BY n.careDate DESC`,
+            [id]
+        );
+        res.status(200).json(care);
+    } catch (error) {
+        console.error('Error fetching nursing care:', error);
+        res.status(500).json({ message: 'Error fetching nursing care', error: error.message });
+    }
+});
+
+/**
+ * @route POST /api/inpatient/admissions/:id/nursing-care
+ * @description Create a nursing care note
+ */
+router.post('/admissions/:id/nursing-care', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { careDate, nurseId, careType, shift, vitalSignsRecorded, observations, interventions, patientResponse, concerns, notes } = req.body;
+
+        if (!nurseId) {
+            return res.status(400).json({ message: 'Nurse ID is required' });
+        }
+
+        const [result] = await pool.execute(
+            `INSERT INTO inpatient_nursing_care
+             (admissionId, careDate, nurseId, careType, shift, vitalSignsRecorded, observations, interventions, patientResponse, concerns, notes)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [id, careDate || new Date(), nurseId, careType || 'observation', shift || 'morning', vitalSignsRecorded || false, observations || null, interventions || null, patientResponse || null, concerns || null, notes || null]
+        );
+
+        const [newCare] = await pool.execute(
+            `SELECT n.*,
+                    u.firstName as nurseFirstName, u.lastName as nurseLastName
+             FROM inpatient_nursing_care n
+             LEFT JOIN users u ON n.nurseId = u.userId
+             WHERE n.careId = ?`,
+            [result.insertId]
+        );
+
+        res.status(201).json(newCare[0]);
+    } catch (error) {
+        console.error('Error creating nursing care note:', error);
+        res.status(500).json({ message: 'Error creating nursing care note', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/inpatient/admissions/:id/vitals-schedule
+ * @description Get vitals schedule for an admission
+ */
+router.get('/admissions/:id/vitals-schedule', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const [schedule] = await pool.execute(
+            'SELECT * FROM inpatient_vitals_schedule WHERE admissionId = ? AND isActive = 1 ORDER BY scheduleDate DESC LIMIT 1',
+            [id]
+        );
+        res.status(200).json(schedule[0] || null);
+    } catch (error) {
+        console.error('Error fetching vitals schedule:', error);
+        res.status(500).json({ message: 'Error fetching vitals schedule', error: error.message });
+    }
+});
+
+/**
+ * @route POST /api/inpatient/admissions/:id/vitals-schedule
+ * @description Create or update vitals schedule for an admission
+ */
+router.post('/admissions/:id/vitals-schedule', async (req, res) => {
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
+        const { id } = req.params;
+        const { scheduleDate, scheduledTime1, scheduledTime2, scheduledTime3, scheduledTime4, frequency, notes } = req.body;
+
+        // Deactivate existing schedules for this admission
+        await connection.execute(
+            'UPDATE inpatient_vitals_schedule SET isActive = 0 WHERE admissionId = ?',
+            [id]
+        );
+
+        // Insert new schedule
+        const [result] = await connection.execute(
+            `INSERT INTO inpatient_vitals_schedule
+             (admissionId, scheduleDate, scheduledTime1, scheduledTime2, scheduledTime3, scheduledTime4, frequency, notes)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE
+             scheduledTime1 = VALUES(scheduledTime1),
+             scheduledTime2 = VALUES(scheduledTime2),
+             scheduledTime3 = VALUES(scheduledTime3),
+             scheduledTime4 = VALUES(scheduledTime4),
+             frequency = VALUES(frequency),
+             notes = VALUES(notes),
+             isActive = 1,
+             updatedAt = NOW()`,
+            [id, scheduleDate || new Date().toISOString().split('T')[0], scheduledTime1 || '06:00:00', scheduledTime2 || '12:00:00', scheduledTime3 || '18:00:00', scheduledTime4 || '00:00:00', frequency || '4x', notes || null]
+        );
+
+        await connection.commit();
+
+        const [newSchedule] = await connection.execute(
+            'SELECT * FROM inpatient_vitals_schedule WHERE scheduleId = ?',
+            [result.insertId]
+        );
+
+        res.status(201).json(newSchedule[0]);
+    } catch (error) {
+        await connection.rollback();
+        console.error('Error creating vitals schedule:', error);
+        res.status(500).json({ message: 'Error creating vitals schedule', error: error.message });
+    } finally {
+        connection.release();
+    }
+});
+
+/**
+ * @route POST /api/inpatient/admissions/:id/vitals
+ * @description Record vital signs for an inpatient admission
+ */
+router.post('/admissions/:id/vitals', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { recordedDate, systolicBP, diastolicBP, heartRate, respiratoryRate, temperature, oxygenSaturation, painScore, glasgowComaScale, weight, height, bmi, bloodGlucose, notes, recordedBy } = req.body;
+
+        // Get patient ID from admission
+        const [admissions] = await pool.execute(
+            'SELECT patientId FROM admissions WHERE admissionId = ?',
+            [id]
+        );
+
+        if (admissions.length === 0) {
+            return res.status(404).json({ message: 'Admission not found' });
+        }
+
+        const patientId = admissions[0].patientId;
+
+        const [result] = await pool.execute(
+            `INSERT INTO vital_signs
+             (patientId, admissionId, recordedDate, systolicBP, diastolicBP, heartRate, respiratoryRate, temperature, oxygenSaturation, painScore, glasgowComaScale, weight, height, bmi, bloodGlucose, context, notes, recordedBy)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'admission', ?, ?)`,
+            [patientId, id, recordedDate || new Date(), systolicBP || null, diastolicBP || null, heartRate || null, respiratoryRate || null, temperature || null, oxygenSaturation || null, painScore || null, glasgowComaScale || null, weight || null, height || null, bmi || null, bloodGlucose || null, notes || null, recordedBy || null]
+        );
+
+        const [newVital] = await pool.execute(
+            `SELECT vs.*,
+                    u.firstName as recordedByFirstName, u.lastName as recordedByLastName
+             FROM vital_signs vs
+             LEFT JOIN users u ON vs.recordedBy = u.userId
+             WHERE vs.vitalSignId = ?`,
+            [result.insertId]
+        );
+
+        res.status(201).json(newVital[0]);
+    } catch (error) {
+        console.error('Error recording vital signs:', error);
+        res.status(500).json({ message: 'Error recording vital signs', error: error.message });
     }
 });
 
