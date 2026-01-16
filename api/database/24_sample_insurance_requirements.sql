@@ -241,3 +241,4 @@ WHERE @jubilee_template_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM claim_requi
 -- You can run this script multiple times safely - it uses NOT EXISTS checks to prevent duplicates
 -- ============================================
 
+
