@@ -53,6 +53,7 @@ const diagnosesRoutes = require('./routes/diagnosesRoutes');
 const proceduresRoutes = require('./routes/proceduresRoutes');
 const ambulanceRoutes = require('./routes/ambulanceRoutes');
 const waiverRoutes = require('./routes/waiverRoutes');
+const mohReportsRoutes = require('./routes/mohReportsRoutes');
 
 const authenticate = require('./middleware/authenticate');
 
@@ -160,6 +161,7 @@ app.use('/api/diagnoses', diagnosesRoutes);
 app.use('/api/procedures', proceduresRoutes);
 app.use('/api/ambulance', ambulanceRoutes);
 app.use('/api/waivers', waiverRoutes);
+app.use('/api/moh-reports', mohReportsRoutes);
 app.use('/api/ledger', ledgerRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/procurement/purchase-orders', purchaseOrderRoutes);

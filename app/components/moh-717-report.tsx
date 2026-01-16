@@ -8,6 +8,8 @@ import { Input } from "@/components/ui/input"
 import { Download, FileText, Loader2 } from "lucide-react"
 import { format } from "date-fns"
 import { generateMOH717PDF } from "@/lib/moh-reports-pdf"
+import { mohReportsApi } from "@/lib/api"
+import { toast } from "@/components/ui/use-toast"
 
 export function MOH717Report() {
   const [startDate, setStartDate] = useState<string>("")
@@ -35,29 +37,38 @@ export function MOH717Report() {
 
     try {
       setGenerating(true)
-      // In a real implementation, fetch data from API
+      const periodStart = startDate || getDefaultDates().start
+      const periodEnd = endDate || getDefaultDates().end
+
+      // Fetch data from API
+      const workloadData = await mohReportsApi.get717(periodStart, periodEnd)
+
       const reportData = {
         facilityName: "Kiplombe Medical Centre",
         facilityCode: "00001", // This should come from facility settings
         period: {
-          start: startDate || getDefaultDates().start,
-          end: endDate || getDefaultDates().end,
+          start: periodStart,
+          end: periodEnd,
         },
-        // Mock data - replace with actual API call
         workload: {
-          outpatients: 0,
-          inpatients: 0,
-          deliveries: 0,
-          surgeries: 0,
-          laboratoryTests: 0,
-          radiologyExams: 0,
-          pharmacyPrescriptions: 0,
+          outpatients: workloadData.outpatients || 0,
+          inpatients: workloadData.inpatients || 0,
+          deliveries: workloadData.deliveries || 0,
+          surgeries: workloadData.surgeries || 0,
+          laboratoryTests: workloadData.laboratoryTests || 0,
+          radiologyExams: workloadData.radiologyExams || 0,
+          pharmacyPrescriptions: workloadData.pharmacyPrescriptions || 0,
         },
       }
 
       await generateMOH717PDF(reportData)
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error generating MOH 717 report:", error)
+      toast({
+        title: "Error",
+        description: error.message || "Failed to generate MOH 717 report",
+        variant: "destructive",
+      })
     } finally {
       setGenerating(false)
     }

@@ -8,6 +8,8 @@ import { Input } from "@/components/ui/input"
 import { Download, FileText, Loader2 } from "lucide-react"
 import { format } from "date-fns"
 import { generateMOH711PDF } from "@/lib/moh-reports-pdf"
+import { mohReportsApi } from "@/lib/api"
+import { toast } from "@/components/ui/use-toast"
 
 export function MOH711Report() {
   const [startDate, setStartDate] = useState<string>("")
@@ -27,28 +29,38 @@ export function MOH711Report() {
   const handleGenerate = async () => {
     try {
       setGenerating(true)
+      const periodStart = startDate || getDefaultDates().start
+      const periodEnd = endDate || getDefaultDates().end
+
+      // Fetch data from API
+      const immunizationData = await mohReportsApi.get711(periodStart, periodEnd)
+
       const reportData = {
         facilityName: "Kiplombe Medical Centre",
         facilityCode: "00001",
         period: {
-          start: startDate || getDefaultDates().start,
-          end: endDate || getDefaultDates().end,
+          start: periodStart,
+          end: periodEnd,
         },
         immunization: {
-          // Mock data - replace with actual API call
-          bcg: 0,
-          opv: 0,
-          dpt: 0,
-          measles: 0,
-          tetanus: 0,
-          hepatitisB: 0,
-          pentavalent: 0,
+          bcg: immunizationData.bcg || 0,
+          opv: immunizationData.opv || 0,
+          dpt: immunizationData.dpt || 0,
+          measles: immunizationData.measles || 0,
+          tetanus: immunizationData.tetanus || 0,
+          hepatitisB: immunizationData.hepatitisB || 0,
+          pentavalent: immunizationData.pentavalent || 0,
         },
       }
 
       await generateMOH711PDF(reportData)
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error generating MOH 711 report:", error)
+      toast({
+        title: "Error",
+        description: error.message || "Failed to generate MOH 711 report",
+        variant: "destructive",
+      })
     } finally {
       setGenerating(false)
     }

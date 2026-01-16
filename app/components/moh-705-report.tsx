@@ -8,6 +8,8 @@ import { Input } from "@/components/ui/input"
 import { Download, FileText, Loader2 } from "lucide-react"
 import { format } from "date-fns"
 import { generateMOH705PDF } from "@/lib/moh-reports-pdf"
+import { mohReportsApi } from "@/lib/api"
+import { toast } from "@/components/ui/use-toast"
 
 export function MOH705Report() {
   const [startDate, setStartDate] = useState<string>("")
@@ -27,28 +29,38 @@ export function MOH705Report() {
   const handleGenerate = async () => {
     try {
       setGenerating(true)
+      const periodStart = startDate || getDefaultDates().start
+      const periodEnd = endDate || getDefaultDates().end
+
+      // Fetch data from API
+      const morbidityData = await mohReportsApi.get705(periodStart, periodEnd)
+
       const reportData = {
         facilityName: "Kiplombe Medical Centre",
         facilityCode: "00001",
         period: {
-          start: startDate || getDefaultDates().start,
-          end: endDate || getDefaultDates().end,
+          start: periodStart,
+          end: periodEnd,
         },
         morbidity: {
-          // Mock data - replace with actual API call
-          malaria: 0,
-          respiratoryInfections: 0,
-          diarrhealDiseases: 0,
-          skinDiseases: 0,
-          eyeDiseases: 0,
-          injuries: 0,
-          otherConditions: 0,
+          malaria: morbidityData.malaria || 0,
+          respiratoryInfections: morbidityData.respiratoryInfections || 0,
+          diarrhealDiseases: morbidityData.diarrhealDiseases || 0,
+          skinDiseases: morbidityData.skinDiseases || 0,
+          eyeDiseases: morbidityData.eyeDiseases || 0,
+          injuries: morbidityData.injuries || 0,
+          otherConditions: morbidityData.otherConditions || 0,
         },
       }
 
       await generateMOH705PDF(reportData)
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error generating MOH 705 report:", error)
+      toast({
+        title: "Error",
+        description: error.message || "Failed to generate MOH 705 report",
+        variant: "destructive",
+      })
     } finally {
       setGenerating(false)
     }

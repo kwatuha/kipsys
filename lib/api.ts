@@ -1728,6 +1728,33 @@ export const waiverApi = {
     if (search) params.append('search', search);
     return apiRequest<any[]>(`/api/waivers/patients/outstanding?${params.toString()}`);
   },
+
+  getStaffForWaiver: (search?: string) => {
+    const params = new URLSearchParams();
+    if (search) params.append('search', search);
+    return apiRequest<any[]>(`/api/waivers/staff?${params.toString()}`);
+  },
+};
+
+// MOH Reports API
+export const mohReportsApi = {
+  get717: (startDate: string, endDate: string) =>
+    apiRequest<any>(`/api/moh-reports/717?startDate=${startDate}&endDate=${endDate}`),
+
+  get705: (startDate: string, endDate: string) =>
+    apiRequest<any>(`/api/moh-reports/705?startDate=${startDate}&endDate=${endDate}`),
+
+  get711: (startDate: string, endDate: string) =>
+    apiRequest<any>(`/api/moh-reports/711?startDate=${startDate}&endDate=${endDate}`),
+
+  get708: (startDate: string, endDate: string) =>
+    apiRequest<any>(`/api/moh-reports/708?startDate=${startDate}&endDate=${endDate}`),
+
+  get731Plus: (startDate: string, endDate: string) =>
+    apiRequest<any>(`/api/moh-reports/731-plus?startDate=${startDate}&endDate=${endDate}`),
+
+  get730: () =>
+    apiRequest<any>(`/api/moh-reports/730`),
 };
 
 // User API

@@ -8,6 +8,8 @@ import { Input } from "@/components/ui/input"
 import { Download, FileText, Loader2 } from "lucide-react"
 import { format } from "date-fns"
 import { generateMOH731PlusPDF } from "@/lib/moh-reports-pdf"
+import { mohReportsApi } from "@/lib/api"
+import { toast } from "@/components/ui/use-toast"
 
 export function MOH731PlusReport() {
   const [startDate, setStartDate] = useState<string>("")
@@ -27,27 +29,37 @@ export function MOH731PlusReport() {
   const handleGenerate = async () => {
     try {
       setGenerating(true)
+      const periodStart = startDate || getDefaultDates().start
+      const periodEnd = endDate || getDefaultDates().end
+
+      // Fetch data from API
+      const keyPopulationsData = await mohReportsApi.get731Plus(periodStart, periodEnd)
+
       const reportData = {
         facilityName: "Kiplombe Medical Centre",
         facilityCode: "00001",
         period: {
-          start: startDate || getDefaultDates().start,
-          end: endDate || getDefaultDates().end,
+          start: periodStart,
+          end: periodEnd,
         },
         keyPopulations: {
-          // Mock data - replace with actual API call
-          hivTesting: 0,
-          hivPositive: 0,
-          onART: 0,
-          viralLoad: 0,
-          tuberculosis: 0,
-          stiServices: 0,
+          hivTesting: keyPopulationsData.hivTesting || 0,
+          hivPositive: keyPopulationsData.hivPositive || 0,
+          onART: keyPopulationsData.onART || 0,
+          viralLoad: keyPopulationsData.viralLoad || 0,
+          tuberculosis: keyPopulationsData.tuberculosis || 0,
+          stiServices: keyPopulationsData.stiServices || 0,
         },
       }
 
       await generateMOH731PlusPDF(reportData)
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error generating MOH 731 Plus report:", error)
+      toast({
+        title: "Error",
+        description: error.message || "Failed to generate MOH 731 Plus report",
+        variant: "destructive",
+      })
     } finally {
       setGenerating(false)
     }

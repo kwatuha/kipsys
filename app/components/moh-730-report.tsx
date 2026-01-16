@@ -8,6 +8,8 @@ import { Input } from "@/components/ui/input"
 import { Download, FileText, Loader2 } from "lucide-react"
 import { format } from "date-fns"
 import { generateMOH730PDF } from "@/lib/moh-reports-pdf"
+import { mohReportsApi } from "@/lib/api"
+import { toast } from "@/components/ui/use-toast"
 
 export function MOH730Report() {
   const [startDate, setStartDate] = useState<string>("")
@@ -27,26 +29,36 @@ export function MOH730Report() {
   const handleGenerate = async () => {
     try {
       setGenerating(true)
+      const periodStart = startDate || getDefaultDates().start
+      const periodEnd = endDate || getDefaultDates().end
+
+      // Fetch data from API (730 doesn't need date range, but we keep it for consistency)
+      const facilityData = await mohReportsApi.get730()
+
       const reportData = {
         facilityName: "Kiplombe Medical Centre",
         facilityCode: "00001",
         period: {
-          start: startDate || getDefaultDates().start,
-          end: endDate || getDefaultDates().end,
+          start: periodStart,
+          end: periodEnd,
         },
         facility: {
-          // Mock data - replace with actual API call
-          beds: 0,
-          staff: 0,
-          equipment: 0,
-          infrastructure: "",
-          services: [],
+          beds: facilityData.beds || 0,
+          staff: facilityData.staff || 0,
+          equipment: facilityData.equipment || 0,
+          infrastructure: facilityData.infrastructure || "Modern healthcare facility with multiple departments",
+          services: facilityData.services || [],
         },
       }
 
       await generateMOH730PDF(reportData)
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error generating MOH 730 report:", error)
+      toast({
+        title: "Error",
+        description: error.message || "Failed to generate MOH 730 report",
+        variant: "destructive",
+      })
     } finally {
       setGenerating(false)
     }

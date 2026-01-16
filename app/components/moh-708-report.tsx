@@ -8,6 +8,8 @@ import { Input } from "@/components/ui/input"
 import { Download, FileText, Loader2 } from "lucide-react"
 import { format } from "date-fns"
 import { generateMOH708PDF } from "@/lib/moh-reports-pdf"
+import { mohReportsApi } from "@/lib/api"
+import { toast } from "@/components/ui/use-toast"
 
 export function MOH708Report() {
   const [startDate, setStartDate] = useState<string>("")
@@ -27,27 +29,37 @@ export function MOH708Report() {
   const handleGenerate = async () => {
     try {
       setGenerating(true)
+      const periodStart = startDate || getDefaultDates().start
+      const periodEnd = endDate || getDefaultDates().end
+
+      // Fetch data from API
+      const mchData = await mohReportsApi.get708(periodStart, periodEnd)
+
       const reportData = {
         facilityName: "Kiplombe Medical Centre",
         facilityCode: "00001",
         period: {
-          start: startDate || getDefaultDates().start,
-          end: endDate || getDefaultDates().end,
+          start: periodStart,
+          end: periodEnd,
         },
         mch: {
-          // Mock data - replace with actual API call
-          antenatalVisits: 0,
-          deliveries: 0,
-          postnatalVisits: 0,
-          familyPlanning: 0,
-          childClinic: 0,
-          growthMonitoring: 0,
+          antenatalVisits: mchData.antenatalVisits || 0,
+          deliveries: mchData.deliveries || 0,
+          postnatalVisits: mchData.postnatalVisits || 0,
+          familyPlanning: mchData.familyPlanning || 0,
+          childClinic: mchData.childClinic || 0,
+          growthMonitoring: mchData.growthMonitoring || 0,
         },
       }
 
       await generateMOH708PDF(reportData)
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error generating MOH 708 report:", error)
+      toast({
+        title: "Error",
+        description: error.message || "Failed to generate MOH 708 report",
+        variant: "destructive",
+      })
     } finally {
       setGenerating(false)
     }
