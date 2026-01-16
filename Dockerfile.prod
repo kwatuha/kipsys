@@ -35,7 +35,8 @@ COPY deploy/ ./deploy/
 # 3. Explicitly set permissions for the entrypoint
 # Using the specific script you have in your ls: docker-entrypoint-prod.sh
 COPY docker-entrypoint-prod.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY docker-entrypoint-fast.sh /entrypoint-fast.sh
+RUN chmod +x /entrypoint.sh /entrypoint-fast.sh
 
 # 4. Set production environment variables
 ENV NODE_ENV=production
