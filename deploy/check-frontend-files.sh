@@ -218,3 +218,4 @@ eval "$SSH_CMD" << 'CHECK_EOF'
     echo "3. Restart frontend: docker compose -f docker-compose.deploy.yml restart frontend"
 CHECK_EOF
 
+

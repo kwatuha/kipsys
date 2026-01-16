@@ -40,7 +40,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { insuranceApi } from "@/lib/api"
 import { toast } from "@/components/ui/use-toast"
-import { Loader2, Checklist } from "lucide-react"
+import { Loader2, ListChecks } from "lucide-react"
 import { AddInsuranceProviderForm } from "@/components/add-insurance-provider-form"
 import { ManageClaimRequirementsDialog } from "@/components/manage-claim-requirements-dialog"
 
@@ -132,7 +132,23 @@ export function InsuranceProvidersTable() {
     setEditingProvider(null)
   }
 
-  const filteredProviders = providers.filter((provider) => {
+  // Deduplicate providers by providerId, name, or code
+  // Keeps the first occurrence (oldest providerId) when duplicates are found
+  const uniqueProviders = providers.reduce((acc, provider) => {
+    // Check if a duplicate exists by ID, name, or code
+    const isDuplicate = acc.find(p =>
+      p.providerId === provider.providerId ||
+      (provider.providerName && p.providerName?.toLowerCase() === provider.providerName.toLowerCase()) ||
+      (provider.providerCode && p.providerCode?.toLowerCase() === provider.providerCode.toLowerCase())
+    )
+
+    if (!isDuplicate) {
+      acc.push(provider)
+    }
+    return acc
+  }, [] as any[])
+
+  const filteredProviders = uniqueProviders.filter((provider) => {
     if (!searchQuery) return true
     const query = searchQuery.toLowerCase()
     return (
@@ -227,7 +243,7 @@ export function InsuranceProvidersTable() {
                             setRequirementsDialogOpen(true)
                           }}
                         >
-                          <Checklist className="mr-2 h-4 w-4" />
+                          <ListChecks className="mr-2 h-4 w-4" />
                           Manage Requirements
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />

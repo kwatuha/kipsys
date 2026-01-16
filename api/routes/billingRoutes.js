@@ -227,17 +227,24 @@ router.delete('/charges/:id', async (req, res) => {
 router.get('/invoices', async (req, res) => {
     try {
         const { patientId, status } = req.query;
-        let query = 'SELECT * FROM invoices WHERE 1=1';
+        let query = `SELECT i.*,
+                            p.firstName as patientFirstName,
+                            p.lastName as patientLastName,
+                            p.patientNumber,
+                            p.phone as patientPhone
+                     FROM invoices i
+                     LEFT JOIN patients p ON i.patientId = p.patientId
+                     WHERE 1=1`;
         const params = [];
         if (patientId) {
-            query += ' AND patientId = ?';
+            query += ' AND i.patientId = ?';
             params.push(patientId);
         }
         if (status) {
-            query += ' AND status = ?';
+            query += ' AND i.status = ?';
             params.push(status);
         }
-        query += ' ORDER BY invoiceDate DESC';
+        query += ' ORDER BY i.invoiceDate DESC';
         const [rows] = await pool.execute(query, params);
         res.status(200).json(rows);
     } catch (error) {
@@ -1165,6 +1172,149 @@ router.get('/patients/:patientId/payments', async (req, res) => {
     } catch (error) {
         console.error('Error fetching patient payments:', error);
         res.status(500).json({ message: 'Error fetching patient payments', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/billing/payments
+ * @description Get all payments across all patients, grouped by batch receipt number
+ */
+router.get('/payments', async (req, res) => {
+    try {
+        const { patientId, startDate, endDate } = req.query;
+
+        // Get all paid invoices
+        let query = `
+            SELECT
+                i.invoiceId,
+                i.invoiceNumber,
+                i.invoiceDate,
+                i.totalAmount,
+                i.paidAmount,
+                i.paymentMethod,
+                i.updatedAt,
+                i.notes,
+                i.patientId,
+                p.firstName as patientFirstName,
+                p.lastName as patientLastName,
+                p.patientNumber
+            FROM invoices i
+            LEFT JOIN patients p ON i.patientId = p.patientId
+            WHERE i.status IN ('paid', 'partial')
+              AND i.paidAmount > 0
+        `;
+        const params = [];
+
+        if (patientId) {
+            query += ' AND i.patientId = ?';
+            params.push(patientId);
+        }
+
+        if (startDate) {
+            query += ' AND DATE(i.updatedAt) >= ?';
+            params.push(startDate);
+        }
+
+        if (endDate) {
+            query += ' AND DATE(i.updatedAt) <= ?';
+            params.push(endDate);
+        }
+
+        query += ' ORDER BY i.updatedAt DESC';
+
+        const [invoices] = await pool.execute(query, params);
+
+        // Group invoices by batch receipt number
+        const paymentBatches = new Map();
+        const singlePayments = [];
+
+        for (const invoice of invoices) {
+            // Extract batch receipt number from notes
+            const batchMatch = invoice.notes?.match(/Batch Receipt:\s*([A-Z0-9-]+)/);
+            const batchReceiptNumber = batchMatch ? batchMatch[1] : null;
+
+            if (batchReceiptNumber) {
+                // Group by batch receipt number
+                if (!paymentBatches.has(batchReceiptNumber)) {
+                    // Extract payment date from updatedAt (when payment was made)
+                    const paymentDate = invoice.updatedAt
+                        ? (invoice.updatedAt instanceof Date
+                            ? invoice.updatedAt.toISOString().split('T')[0]
+                            : invoice.updatedAt.toString().split('T')[0])
+                        : new Date().toISOString().split('T')[0];
+
+                    paymentBatches.set(batchReceiptNumber, {
+                        batchReceiptNumber,
+                        paymentDate: paymentDate,
+                        paymentMethod: invoice.paymentMethod || 'Cash',
+                        patientId: invoice.patientId,
+                        patientFirstName: invoice.patientFirstName,
+                        patientLastName: invoice.patientLastName,
+                        patientNumber: invoice.patientNumber,
+                        invoices: [],
+                        totalAmount: 0
+                    });
+                }
+                const batch = paymentBatches.get(batchReceiptNumber);
+
+                // Extract batch amount from notes
+                let batchAmount = parseFloat(invoice.paidAmount || 0);
+                const amountMatch = invoice.notes?.match(/Batch Amount:\s*([\d.]+)/);
+                if (amountMatch) {
+                    batchAmount = parseFloat(amountMatch[1]);
+                }
+
+                batch.invoices.push({
+                    invoiceId: invoice.invoiceId,
+                    invoiceNumber: invoice.invoiceNumber,
+                    invoiceDate: invoice.invoiceDate,
+                    totalAmount: invoice.totalAmount,
+                    amountPaid: batchAmount
+                });
+                batch.totalAmount += batchAmount;
+            } else {
+                // Single invoice payment (not part of a batch)
+                // Extract payment date from updatedAt (when payment was made)
+                const paymentDate = invoice.updatedAt
+                    ? (invoice.updatedAt instanceof Date
+                        ? invoice.updatedAt.toISOString().split('T')[0]
+                        : invoice.updatedAt.toString().split('T')[0])
+                    : new Date().toISOString().split('T')[0];
+
+                singlePayments.push({
+                    batchReceiptNumber: null,
+                    paymentDate: paymentDate,
+                    paymentMethod: invoice.paymentMethod || 'Cash',
+                    patientId: invoice.patientId,
+                    patientFirstName: invoice.patientFirstName,
+                    patientLastName: invoice.patientLastName,
+                    patientNumber: invoice.patientNumber,
+                    invoices: [{
+                        invoiceId: invoice.invoiceId,
+                        invoiceNumber: invoice.invoiceNumber,
+                        invoiceDate: invoice.invoiceDate,
+                        totalAmount: invoice.totalAmount,
+                        amountPaid: parseFloat(invoice.paidAmount || 0)
+                    }],
+                    totalAmount: parseFloat(invoice.paidAmount || 0)
+                });
+            }
+        }
+
+        // Combine batches and single payments, sort by date
+        const allPayments = [
+            ...Array.from(paymentBatches.values()),
+            ...singlePayments
+        ].sort((a, b) => {
+            const dateA = new Date(a.paymentDate).getTime();
+            const dateB = new Date(b.paymentDate).getTime();
+            return dateB - dateA; // Most recent first
+        });
+
+        res.status(200).json(allPayments);
+    } catch (error) {
+        console.error('Error fetching payments:', error);
+        res.status(500).json({ message: 'Error fetching payments', error: error.message });
     }
 });
 

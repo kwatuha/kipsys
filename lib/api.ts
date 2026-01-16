@@ -1036,6 +1036,55 @@ export const analyticsApi = {
 
   getSummary: () =>
     apiRequest<any>('/api/analytics/summary'),
+
+  getRevenueBySource: (params?: { months?: number; startDate?: string; endDate?: string }) => {
+    const queryParams = new URLSearchParams()
+    if (params?.months) queryParams.append('months', params.months.toString())
+    if (params?.startDate) queryParams.append('startDate', params.startDate)
+    if (params?.endDate) queryParams.append('endDate', params.endDate)
+    const query = queryParams.toString()
+    return apiRequest<any[]>(`/api/analytics/revenue-by-source${query ? `?${query}` : ''}`)
+  },
+
+  getPharmacySales: (params?: { months?: number; limit?: number; startDate?: string; endDate?: string }) => {
+    const queryParams = new URLSearchParams()
+    if (params?.months) queryParams.append('months', params.months.toString())
+    if (params?.limit) queryParams.append('limit', params.limit.toString())
+    if (params?.startDate) queryParams.append('startDate', params.startDate)
+    if (params?.endDate) queryParams.append('endDate', params.endDate)
+    const query = queryParams.toString()
+    return apiRequest<any>(`/api/analytics/pharmacy-sales${query ? `?${query}` : ''}`)
+  },
+
+  getInventoryValue: () =>
+    apiRequest<any>(`/api/analytics/inventory-value`),
+
+  getPaymentMethods: (params?: { months?: number; startDate?: string; endDate?: string }) => {
+    const queryParams = new URLSearchParams()
+    if (params?.months) queryParams.append('months', params.months.toString())
+    if (params?.startDate) queryParams.append('startDate', params.startDate)
+    if (params?.endDate) queryParams.append('endDate', params.endDate)
+    const query = queryParams.toString()
+    return apiRequest<any[]>(`/api/analytics/payment-methods${query ? `?${query}` : ''}`)
+  },
+
+  getRevenueTrends: (params?: { months?: number; startDate?: string; endDate?: string }) => {
+    const queryParams = new URLSearchParams()
+    if (params?.months) queryParams.append('months', params.months.toString())
+    if (params?.startDate) queryParams.append('startDate', params.startDate)
+    if (params?.endDate) queryParams.append('endDate', params.endDate)
+    const query = queryParams.toString()
+    return apiRequest<any[]>(`/api/analytics/revenue-trends${query ? `?${query}` : ''}`)
+  },
+
+  getRevenueWeekly: (params?: { weeks?: number; startDate?: string; endDate?: string }) => {
+    const queryParams = new URLSearchParams()
+    if (params?.weeks) queryParams.append('weeks', params.weeks.toString())
+    if (params?.startDate) queryParams.append('startDate', params.startDate)
+    if (params?.endDate) queryParams.append('endDate', params.endDate)
+    const query = queryParams.toString()
+    return apiRequest<any[]>(`/api/analytics/revenue-weekly${query ? `?${query}` : ''}`)
+  },
 };
 
 // Service Charges API
@@ -1170,6 +1219,15 @@ export const billingApi = {
 
   getPatientPayments: (patientId: string) =>
     apiRequest<any[]>(`/api/billing/patients/${patientId}/payments`),
+
+  getAllPayments: (params?: { patientId?: string; startDate?: string; endDate?: string }) => {
+    const queryParams = new URLSearchParams()
+    if (params?.patientId) queryParams.append('patientId', params.patientId)
+    if (params?.startDate) queryParams.append('startDate', params.startDate)
+    if (params?.endDate) queryParams.append('endDate', params.endDate)
+    const query = queryParams.toString()
+    return apiRequest<any[]>(`/api/billing/payments${query ? `?${query}` : ''}`)
+  },
 
   createMobilePaymentLog: (data: any) =>
     apiRequest<any>('/api/billing/mobile-payment-logs', { method: 'POST', body: data }),

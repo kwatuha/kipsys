@@ -143,3 +143,4 @@ eval "$SSH_CMD" << 'UPDATE_EOF'
     echo "   docker logs -f kiplombe_frontend"
 UPDATE_EOF
 
+

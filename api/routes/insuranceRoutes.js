@@ -39,7 +39,13 @@ router.get('/providers', async (req, res) => {
             params.push(searchTerm, searchTerm);
         }
 
-        query += ' ORDER BY providerName ASC';
+        // Order SHA first, then others alphabetically
+        query += ` ORDER BY
+            CASE
+                WHEN providerCode = 'SHA' OR providerName LIKE '%SHA%' OR providerName LIKE '%Social Health%' THEN 0
+                ELSE 1
+            END,
+            providerName ASC`;
 
         const [rows] = await pool.execute(query, params);
 

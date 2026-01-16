@@ -191,16 +191,6 @@ export const navigationCategories: NavigationCategory[] = [
         href: "/finance/assets",
       },
       {
-        title: "Hospital Charges",
-        icon: DollarSign,
-        href: "/finance/charges",
-      },
-      {
-        title: "Revenue Share",
-        icon: DollarSign,
-        href: "/finance/revenue-share",
-      },
-      {
         title: "Billing & Invoicing",
         icon: Receipt,
         href: "/billing",
@@ -277,6 +267,16 @@ export const navigationCategories: NavigationCategory[] = [
         href: "/administration",
       },
       {
+        title: "Hospital Charges",
+        icon: DollarSign,
+        href: "/finance/charges",
+      },
+      {
+        title: "Revenue Share",
+        icon: DollarSign,
+        href: "/finance/revenue-share",
+      },
+      {
         title: "Clinical Configuration",
         icon: ClipboardList,
         href: "/configuration",
@@ -308,4 +308,4 @@ export function getCategoryByPath(pathname: string): NavigationCategory {
   }
   // Default to overview if no match found
   return navigationCategories[0]
-} 
+}

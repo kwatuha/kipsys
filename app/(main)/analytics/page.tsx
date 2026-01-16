@@ -4,6 +4,7 @@ import { useState, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import {
   Bar,
   BarChart,
@@ -21,7 +22,7 @@ import {
 } from "recharts"
 import { useTheme } from "next-themes"
 import { analyticsApi } from "@/lib/api"
-import { Loader2, TrendingUp, DollarSign, Users, Calendar } from "lucide-react"
+import { Loader2, TrendingUp, DollarSign, Users, Calendar, Store, Package } from "lucide-react"
 
 const COLORS = ["#0088FE", "#00C49F", "#FFBB28", "#FF8042", "#8884d8", "#82ca9d", "#FF6B6B", "#6B66FF"]
 
@@ -34,6 +35,12 @@ export default function AnalyticsPage() {
   const [departmentData, setDepartmentData] = useState<any[]>([])
   const [summary, setSummary] = useState<any>(null)
   const [months, setMonths] = useState(12)
+  const [revenueBySource, setRevenueBySource] = useState<any[]>([])
+  const [pharmacySales, setPharmacySales] = useState<any>(null)
+  const [inventoryValue, setInventoryValue] = useState<any>(null)
+  const [paymentMethods, setPaymentMethods] = useState<any[]>([])
+  const [revenueTrends, setRevenueTrends] = useState<any[]>([])
+  const [weeklyRevenue, setWeeklyRevenue] = useState<any[]>([])
 
   useEffect(() => {
     loadAnalytics()
@@ -42,11 +49,28 @@ export default function AnalyticsPage() {
   const loadAnalytics = async () => {
     try {
       setLoading(true)
-      const [patients, revenue, departments, summaryData] = await Promise.all([
+      const [
+        patients,
+        revenue,
+        departments,
+        summaryData,
+        revenueBySourceData,
+        pharmacySalesData,
+        inventoryValueData,
+        paymentMethodsData,
+        revenueTrendsData,
+        weeklyRevenueData
+      ] = await Promise.all([
         analyticsApi.getPatients(months).catch(() => []),
         analyticsApi.getRevenue(months).catch(() => []),
         analyticsApi.getDepartments().catch(() => []),
         analyticsApi.getSummary().catch(() => null),
+        analyticsApi.getRevenueBySource({ months }).catch(() => []),
+        analyticsApi.getPharmacySales({ months, limit: 20 }).catch(() => null),
+        analyticsApi.getInventoryValue().catch(() => null),
+        analyticsApi.getPaymentMethods({ months }).catch(() => []),
+        analyticsApi.getRevenueTrends({ months }).catch(() => []),
+        analyticsApi.getRevenueWeekly({ weeks: Math.ceil(months * 4.33) }).catch(() => []),
       ])
 
       setPatientData(Array.isArray(patients) ? patients : [])
@@ -59,6 +83,12 @@ export default function AnalyticsPage() {
       setRevenueData(processedRevenue)
       setDepartmentData(Array.isArray(departments) ? departments : [])
       setSummary(summaryData)
+      setRevenueBySource(Array.isArray(revenueBySourceData) ? revenueBySourceData : [])
+      setPharmacySales(pharmacySalesData)
+      setInventoryValue(inventoryValueData)
+      setPaymentMethods(Array.isArray(paymentMethodsData) ? paymentMethodsData : [])
+      setRevenueTrends(Array.isArray(revenueTrendsData) ? revenueTrendsData : [])
+      setWeeklyRevenue(Array.isArray(weeklyRevenueData) ? weeklyRevenueData : [])
     } catch (error) {
       console.error("Error loading analytics:", error)
     } finally {
@@ -157,12 +187,681 @@ export default function AnalyticsPage() {
         </div>
       )}
 
-      <Tabs defaultValue="patients" className="w-full">
-        <TabsList className="grid w-full grid-cols-3">
+      <Tabs defaultValue="revenue-trends" className="w-full">
+        <TabsList className="grid w-full grid-cols-6">
+          <TabsTrigger value="revenue-trends">Revenue Trends</TabsTrigger>
+          <TabsTrigger value="revenue-sources">Revenue Sources</TabsTrigger>
+          <TabsTrigger value="pharmacy">Pharmacy Analytics</TabsTrigger>
+          <TabsTrigger value="inventory">Inventory Value</TabsTrigger>
           <TabsTrigger value="patients">Patient Statistics</TabsTrigger>
-          <TabsTrigger value="revenue">Revenue & Expenses</TabsTrigger>
-          <TabsTrigger value="departments">Department Analysis</TabsTrigger>
+          <TabsTrigger value="departments">Departments</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="revenue-trends" className="space-y-4 mt-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle>Monthly Revenue Comparison</CardTitle>
+                <CardDescription>Revenue by month for the last {months} months</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {revenueData.length === 0 ? (
+                  <div className="h-[400px] flex items-center justify-center text-muted-foreground">
+                    <div className="text-center">
+                      <p>No revenue data available</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="h-[400px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={revenueData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke={isDark ? "#333" : "#eee"} />
+                        <XAxis
+                          dataKey="name"
+                          stroke={isDark ? "#ffffff" : "#333"}
+                          tick={{ fill: isDark ? "#ffffff" : "#333", fontSize: 12 }}
+                        />
+                        <YAxis
+                          stroke={isDark ? "#ffffff" : "#333"}
+                          tick={{ fill: isDark ? "#ffffff" : "#333", fontSize: 12 }}
+                          tickFormatter={(value) => formatCurrency(value)}
+                        />
+                        <Tooltip
+                          contentStyle={{
+                            backgroundColor: isDark ? "#1f2937" : "#fff",
+                            color: isDark ? "#fff" : "#000",
+                            border: `1px solid ${isDark ? "#374151" : "#e5e7eb"}`,
+                          }}
+                          formatter={(value: any) => [formatCurrency(value), ""]}
+                        />
+                        <Legend />
+                        <Bar dataKey="Revenue" fill="#3b82f6" radius={[4, 4, 0, 0]} name="Revenue" />
+                        <Bar dataKey="Expenses" fill="#ef4444" radius={[4, 4, 0, 0]} name="Expenses" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Monthly Revenue Trend</CardTitle>
+                <CardDescription>Revenue trend over time with expenses</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {revenueData.length === 0 ? (
+                  <div className="h-[400px] flex items-center justify-center text-muted-foreground">
+                    <div className="text-center">
+                      <p>No revenue data available</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="h-[400px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={revenueData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke={isDark ? "#333" : "#eee"} />
+                        <XAxis
+                          dataKey="name"
+                          stroke={isDark ? "#ffffff" : "#333"}
+                          tick={{ fill: isDark ? "#ffffff" : "#333", fontSize: 12 }}
+                        />
+                        <YAxis
+                          stroke={isDark ? "#ffffff" : "#333"}
+                          tick={{ fill: isDark ? "#ffffff" : "#333", fontSize: 12 }}
+                          tickFormatter={(value) => formatCurrency(value)}
+                        />
+                        <Tooltip
+                          contentStyle={{
+                            backgroundColor: isDark ? "#1f2937" : "#fff",
+                            color: isDark ? "#fff" : "#000",
+                            border: `1px solid ${isDark ? "#374151" : "#e5e7eb"}`,
+                          }}
+                          formatter={(value) => [formatCurrency(value as number), ""]}
+                        />
+                        <Legend />
+                        <Line type="monotone" dataKey="Revenue" stroke="#3b82f6" strokeWidth={2} dot={{ r: 4 }} />
+                        <Line type="monotone" dataKey="Expenses" stroke="#ef4444" strokeWidth={2} dot={{ r: 4 }} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Weekly Revenue</CardTitle>
+              <CardDescription>Revenue breakdown by week</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {weeklyRevenue.length === 0 ? (
+                <div className="h-[400px] flex items-center justify-center text-muted-foreground">
+                  <div className="text-center">
+                    <p>No weekly revenue data available</p>
+                    <p className="text-sm mt-2">Data will appear as invoices are created and paid</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="h-[400px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={weeklyRevenue.slice(-12)}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={isDark ? "#333" : "#eee"} />
+                      <XAxis
+                        dataKey="weekLabel"
+                        stroke={isDark ? "#ffffff" : "#333"}
+                        tick={{ fill: isDark ? "#ffffff" : "#333", fontSize: 11 }}
+                        angle={-45}
+                        textAnchor="end"
+                        height={100}
+                      />
+                      <YAxis
+                        stroke={isDark ? "#ffffff" : "#333"}
+                        tick={{ fill: isDark ? "#ffffff" : "#333", fontSize: 12 }}
+                        tickFormatter={(value) => formatCurrency(value)}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: isDark ? "#1f2937" : "#fff",
+                          color: isDark ? "#fff" : "#000",
+                          border: `1px solid ${isDark ? "#374151" : "#e5e7eb"}`,
+                        }}
+                        formatter={(value: any) => [formatCurrency(value), "Revenue"]}
+                        labelFormatter={(label) => `Week: ${label}`}
+                      />
+                      <Bar dataKey="revenue" fill="#10b981" radius={[4, 4, 0, 0]} name="Revenue" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Monthly Revenue Summary</CardTitle>
+              <CardDescription>Detailed monthly revenue breakdown</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {revenueData.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">No revenue data available</div>
+              ) : (
+                <div className="rounded-md border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Month</TableHead>
+                        <TableHead className="text-right">Revenue</TableHead>
+                        <TableHead className="text-right">Expenses</TableHead>
+                        <TableHead className="text-right">Net Profit</TableHead>
+                        <TableHead className="text-right">Growth %</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {revenueData.map((item: any, index: number) => {
+                        const revenue = typeof item.Revenue === 'string' ? parseFloat(item.Revenue) : (item.Revenue || 0)
+                        const expenses = typeof item.Expenses === 'string' ? parseFloat(item.Expenses) : (item.Expenses || 0)
+                        const netProfit = revenue - expenses
+                        const prevRevenue = index > 0 ? (typeof revenueData[index - 1].Revenue === 'string' ? parseFloat(revenueData[index - 1].Revenue) : (revenueData[index - 1].Revenue || 0)) : revenue
+                        const growth = prevRevenue > 0 ? ((revenue - prevRevenue) / prevRevenue) * 100 : 0
+
+                        return (
+                          <TableRow key={index}>
+                            <TableCell className="font-medium">{item.name}</TableCell>
+                            <TableCell className="text-right">{formatCurrency(revenue)}</TableCell>
+                            <TableCell className="text-right">{formatCurrency(expenses)}</TableCell>
+                            <TableCell className={`text-right font-medium ${netProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              {formatCurrency(netProfit)}
+                            </TableCell>
+                            <TableCell className={`text-right ${growth >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              {growth >= 0 ? '+' : ''}{growth.toFixed(1)}%
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="revenue-sources" className="space-y-4 mt-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle>Revenue by Source</CardTitle>
+                <CardDescription>Breakdown of revenue by service category</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {revenueBySource.length === 0 ? (
+                  <div className="h-[400px] flex items-center justify-center text-muted-foreground">
+                    <div className="text-center">
+                      <p>No revenue data available</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="h-[400px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={revenueBySource.map((item: any) => ({
+                            name: item.source || item.name || 'Unknown',
+                            revenue: typeof item.revenue === 'string' ? parseFloat(item.revenue) || 0 : (parseFloat(item.revenue) || 0),
+                            value: typeof item.revenue === 'string' ? parseFloat(item.revenue) || 0 : (parseFloat(item.revenue) || 0),
+                          }))}
+                          cx="50%"
+                          cy="50%"
+                          labelLine={false}
+                          outerRadius={120}
+                          fill="#8884d8"
+                          dataKey="value"
+                          label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                        >
+                          {revenueBySource.map((entry: any, index: number) => (
+                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                          ))}
+                        </Pie>
+                        <Tooltip
+                          contentStyle={{
+                            backgroundColor: isDark ? "#1f2937" : "#fff",
+                            color: isDark ? "#fff" : "#000",
+                            border: `1px solid ${isDark ? "#374151" : "#e5e7eb"}`,
+                          }}
+                          formatter={(value: any) => formatCurrency(typeof value === 'string' ? parseFloat(value) : value)}
+                        />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Revenue by Source (Table)</CardTitle>
+                <CardDescription>Detailed revenue breakdown</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {revenueBySource.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">No data available</div>
+                ) : (
+                  <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                    {revenueBySource.map((item: any, index: number) => {
+                      const totalRevenue = revenueBySource.reduce((sum: number, r: any) => sum + parseFloat(r.revenue || 0), 0)
+                      return (
+                        <div key={index} className="flex items-center justify-between p-3 border rounded-lg">
+                          <div className="flex items-center gap-3">
+                            <div
+                              className="w-4 h-4 rounded"
+                              style={{ backgroundColor: COLORS[index % COLORS.length] }}
+                            />
+                            <div>
+                              <div className="font-medium">{item.source}</div>
+                              <div className="text-sm text-muted-foreground">
+                                {item.invoiceCount} invoices • {item.itemCount} items
+                              </div>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <div className="font-bold">{formatCurrency(parseFloat(item.revenue) || 0)}</div>
+                            <div className="text-xs text-muted-foreground">
+                              {totalRevenue > 0 ? `${((parseFloat(item.revenue) / totalRevenue) * 100).toFixed(1)}%` : '0%'}
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Payment Methods</CardTitle>
+              <CardDescription>Revenue breakdown by payment method</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {paymentMethods.length === 0 ? (
+                <div className="h-[300px] flex items-center justify-center text-muted-foreground">
+                  <div className="text-center">
+                    <p>No payment method data available</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="h-[300px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={paymentMethods}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={isDark ? "#333" : "#eee"} />
+                      <XAxis
+                        dataKey="paymentMethod"
+                        stroke={isDark ? "#ffffff" : "#333"}
+                        tick={{ fill: isDark ? "#ffffff" : "#333", fontSize: 12 }}
+                      />
+                      <YAxis
+                        stroke={isDark ? "#ffffff" : "#333"}
+                        tick={{ fill: isDark ? "#ffffff" : "#333", fontSize: 12 }}
+                        tickFormatter={(value) => formatCurrency(value)}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: isDark ? "#1f2937" : "#fff",
+                          color: isDark ? "#fff" : "#000",
+                          border: `1px solid ${isDark ? "#374151" : "#e5e7eb"}`,
+                        }}
+                        formatter={(value: any) => [formatCurrency(value), ""]}
+                      />
+                      <Bar dataKey="totalAmount" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="pharmacy" className="space-y-4 mt-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle>Top Selling Drugs (Revenue)</CardTitle>
+                <CardDescription>Top {pharmacySales?.topDrugsByRevenue?.length || 0} drugs by revenue</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {!pharmacySales || pharmacySales.topDrugsByRevenue?.length === 0 ? (
+                  <div className="h-[400px] flex items-center justify-center text-muted-foreground">
+                    <div className="text-center">
+                      <p>No pharmacy sales data available</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="h-[400px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart
+                        data={pharmacySales.topDrugsByRevenue.slice(0, 10)}
+                        layout="vertical"
+                      >
+                        <CartesianGrid strokeDasharray="3 3" stroke={isDark ? "#333" : "#eee"} />
+                        <XAxis
+                          type="number"
+                          stroke={isDark ? "#ffffff" : "#333"}
+                          tick={{ fill: isDark ? "#ffffff" : "#333", fontSize: 12 }}
+                          tickFormatter={(value) => formatCurrency(value)}
+                        />
+                        <YAxis
+                          type="category"
+                          dataKey="drugName"
+                          stroke={isDark ? "#ffffff" : "#333"}
+                          tick={{ fill: isDark ? "#ffffff" : "#333", fontSize: 13, fontWeight: 500 }}
+                          width={150}
+                        />
+                        <Tooltip
+                          contentStyle={{
+                            backgroundColor: isDark ? "#1f2937" : "#fff",
+                            color: isDark ? "#fff" : "#000",
+                            border: `1px solid ${isDark ? "#374151" : "#e5e7eb"}`,
+                          }}
+                          formatter={(value: any) => formatCurrency(value)}
+                        />
+                        <Bar dataKey="totalRevenue" fill="#10b981" radius={[0, 4, 4, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Top Selling Drugs (Quantity)</CardTitle>
+                <CardDescription>Top drugs by quantity sold</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {!pharmacySales || pharmacySales.topDrugsByRevenue?.length === 0 ? (
+                  <div className="h-[400px] flex items-center justify-center text-muted-foreground">
+                    <div className="text-center">
+                      <p>No pharmacy sales data available</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="h-[400px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart
+                        data={[...pharmacySales.topDrugsByRevenue].sort((a: any, b: any) => b.totalQuantitySold - a.totalQuantitySold).slice(0, 10)}
+                        layout="vertical"
+                      >
+                        <CartesianGrid strokeDasharray="3 3" stroke={isDark ? "#333" : "#eee"} />
+                        <XAxis
+                          type="number"
+                          stroke={isDark ? "#ffffff" : "#333"}
+                          tick={{ fill: isDark ? "#ffffff" : "#333" }}
+                        />
+                        <YAxis
+                          type="category"
+                          dataKey="drugName"
+                          stroke={isDark ? "#ffffff" : "#333"}
+                          tick={{ fill: isDark ? "#ffffff" : "#333", fontSize: 13, fontWeight: 500 }}
+                          width={150}
+                        />
+                        <Tooltip
+                          contentStyle={{
+                            backgroundColor: isDark ? "#1f2937" : "#fff",
+                            color: isDark ? "#fff" : "#000",
+                            border: `1px solid ${isDark ? "#374151" : "#e5e7eb"}`,
+                          }}
+                        />
+                        <Bar dataKey="totalQuantitySold" fill="#3b82f6" radius={[0, 4, 4, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Pharmacy Sales Trend</CardTitle>
+              <CardDescription>Monthly pharmacy revenue and quantity sold</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {!pharmacySales || pharmacySales.salesByMonth?.length === 0 ? (
+                <div className="h-[300px] flex items-center justify-center text-muted-foreground">
+                  <div className="text-center">
+                    <p>No pharmacy sales trend data available</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="h-[300px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={pharmacySales.salesByMonth}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={isDark ? "#333" : "#eee"} />
+                      <XAxis dataKey="monthName" stroke={isDark ? "#888" : "#333"} tick={{ fill: isDark ? "#888" : "#333" }} />
+                      <YAxis
+                        yAxisId="left"
+                        stroke={isDark ? "#888" : "#333"}
+                        tick={{ fill: isDark ? "#888" : "#333" }}
+                        tickFormatter={(value) => formatCurrency(value)}
+                      />
+                      <YAxis
+                        yAxisId="right"
+                        orientation="right"
+                        stroke={isDark ? "#888" : "#333"}
+                        tick={{ fill: isDark ? "#888" : "#333" }}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: isDark ? "#1f2937" : "#fff",
+                          color: isDark ? "#fff" : "#000",
+                          border: `1px solid ${isDark ? "#374151" : "#e5e7eb"}`,
+                        }}
+                        formatter={(value: any, name: string) => {
+                          if (name === 'revenue') return formatCurrency(value)
+                          return value
+                        }}
+                      />
+                      <Legend />
+                      <Line
+                        yAxisId="left"
+                        type="monotone"
+                        dataKey="revenue"
+                        stroke="#10b981"
+                        strokeWidth={2}
+                        dot={{ r: 4 }}
+                        name="Revenue (KES)"
+                      />
+                      <Line
+                        yAxisId="right"
+                        type="monotone"
+                        dataKey="quantitySold"
+                        stroke="#3b82f6"
+                        strokeWidth={2}
+                        dot={{ r: 4 }}
+                        name="Quantity Sold"
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Top Drugs Details</CardTitle>
+              <CardDescription>Detailed breakdown of top selling drugs</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {!pharmacySales || pharmacySales.topDrugsByRevenue?.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">No pharmacy sales data available</div>
+              ) : (
+                <div className="rounded-md border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Rank</TableHead>
+                        <TableHead>Drug Name</TableHead>
+                        <TableHead>Generic Name</TableHead>
+                        <TableHead className="text-right">Quantity Sold</TableHead>
+                        <TableHead className="text-right">Revenue</TableHead>
+                        <TableHead className="text-right">Invoices</TableHead>
+                        <TableHead className="text-right">Patients</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {pharmacySales.topDrugsByRevenue.slice(0, 20).map((drug: any, index: number) => (
+                        <TableRow key={drug.medicationId}>
+                          <TableCell className="font-medium">#{index + 1}</TableCell>
+                          <TableCell>
+                            <div>
+                              <div className="font-medium">{drug.drugName}</div>
+                              {drug.medicationCode && (
+                                <div className="text-xs text-muted-foreground">Code: {drug.medicationCode}</div>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell>{drug.genericName || '-'}</TableCell>
+                          <TableCell className="text-right">{drug.totalQuantitySold.toLocaleString()}</TableCell>
+                          <TableCell className="text-right font-medium">{formatCurrency(parseFloat(drug.totalRevenue) || 0)}</TableCell>
+                          <TableCell className="text-right">{drug.invoiceCount}</TableCell>
+                          <TableCell className="text-right">{drug.patientCount}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="inventory" className="space-y-4 mt-4">
+          <div className="grid gap-4 md:grid-cols-3">
+            {inventoryValue?.totals && (
+              <>
+                <Card>
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium">Total Inventory Value</CardTitle>
+                    <Package className="h-4 w-4 text-muted-foreground" />
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold">{formatCurrency(parseFloat(inventoryValue.totals.totalSellValue) || 0)}</div>
+                    <p className="text-xs text-muted-foreground">At selling price</p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium">Total Cost Value</CardTitle>
+                    <DollarSign className="h-4 w-4 text-muted-foreground" />
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold">{formatCurrency(parseFloat(inventoryValue.totals.totalCostValue) || 0)}</div>
+                    <p className="text-xs text-muted-foreground">At purchase price</p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium">Potential Profit</CardTitle>
+                    <TrendingUp className="h-4 w-4 text-muted-foreground" />
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold">{formatCurrency(parseFloat(inventoryValue.totals.totalPotentialProfit) || 0)}</div>
+                    <p className="text-xs text-muted-foreground">If all sold</p>
+                  </CardContent>
+                </Card>
+              </>
+            )}
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Inventory Value by Location</CardTitle>
+              <CardDescription>Drug store inventory value breakdown</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {!inventoryValue || inventoryValue.byLocation?.length === 0 ? (
+                <div className="h-[400px] flex items-center justify-center text-muted-foreground">
+                  <div className="text-center">
+                    <p>No inventory data available</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="h-[400px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={inventoryValue.byLocation}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={isDark ? "#333" : "#eee"} />
+                      <XAxis dataKey="location" stroke={isDark ? "#888" : "#333"} tick={{ fill: isDark ? "#888" : "#333" }} />
+                      <YAxis
+                        stroke={isDark ? "#888" : "#333"}
+                        tick={{ fill: isDark ? "#888" : "#333" }}
+                        tickFormatter={(value) => formatCurrency(value)}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: isDark ? "#1f2937" : "#fff",
+                          color: isDark ? "#fff" : "#000",
+                          border: `1px solid ${isDark ? "#374151" : "#e5e7eb"}`,
+                        }}
+                        formatter={(value: any) => formatCurrency(value)}
+                      />
+                      <Legend />
+                      <Bar dataKey="totalSellValue" fill="#10b981" radius={[4, 4, 0, 0]} name="Sell Value" />
+                      <Bar dataKey="totalCostValue" fill="#3b82f6" radius={[4, 4, 0, 0]} name="Cost Value" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Store Details</CardTitle>
+              <CardDescription>Detailed inventory breakdown by location</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {!inventoryValue || inventoryValue.byLocation?.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">No inventory data available</div>
+              ) : (
+                <div className="rounded-md border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Location/Store</TableHead>
+                        <TableHead className="text-right">Drug Count</TableHead>
+                        <TableHead className="text-right">Total Quantity</TableHead>
+                        <TableHead className="text-right">Cost Value</TableHead>
+                        <TableHead className="text-right">Sell Value</TableHead>
+                        <TableHead className="text-right">Potential Profit</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {inventoryValue.byLocation.map((location: any, index: number) => (
+                        <TableRow key={index}>
+                          <TableCell className="font-medium">
+                            <div className="flex items-center gap-2">
+                              <Store className="h-4 w-4 text-muted-foreground" />
+                              {location.location}
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-right">{location.drugCount}</TableCell>
+                          <TableCell className="text-right">{location.totalQuantity.toLocaleString()}</TableCell>
+                          <TableCell className="text-right">{formatCurrency(parseFloat(location.totalCostValue) || 0)}</TableCell>
+                          <TableCell className="text-right font-medium">{formatCurrency(parseFloat(location.totalSellValue) || 0)}</TableCell>
+                          <TableCell className="text-right text-green-600">{formatCurrency(parseFloat(location.potentialProfit) || 0)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
 
         <TabsContent value="patients" className="space-y-4 mt-4">
           <Card>

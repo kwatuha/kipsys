@@ -141,3 +141,4 @@ eval "$SSH_CMD" << 'FIX_EOF'
     echo "3. Rebuild if needed: docker compose -f docker-compose.deploy.yml build --no-cache frontend"
 FIX_EOF
 
+
