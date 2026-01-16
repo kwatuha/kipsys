@@ -108,3 +108,4 @@ SELECT tripId, logType, logDateTime, location FROM ambulance_trip_logs;
 - Foreign keys reference existing tables (users, patients) where applicable
 
 
+

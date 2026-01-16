@@ -25,7 +25,7 @@ async function triggerWorkflowProgression(connection, invoice, patientId, invoic
         const notes = invoiceData.notes || '';
         const itemDescriptions = invoiceData.itemDescriptions || '';
 
-        // Check if it's a prescription invoice - create pharmacy queue entry
+        // Check if it's a prescription invoice - create pharmacy queue entry and complete cashier queue
         if (notes.includes('Drug payment - Prescription:') || itemDescriptions.includes('Prescription')) {
             try {
                 const prescMatch = notes.match(/Prescription:\s*([A-Z0-9-]+)/);
@@ -37,6 +37,26 @@ async function triggerWorkflowProgression(connection, invoice, patientId, invoic
                     );
 
                     if (prescriptions.length > 0 && prescriptions[0].status === 'pending') {
+                        // Complete cashier queue entries for prescription payment
+                        const [cashierQueues] = await connection.execute(
+                            `SELECT queueId FROM queue_entries
+                             WHERE patientId = ? AND servicePoint = 'cashier'
+                             AND (notes LIKE ? OR notes LIKE ?)
+                             AND status NOT IN ('completed', 'cancelled')`,
+                            [patientId, `%Drug payment%`, `%Prescription: ${prescriptionNumber}%`]
+                        );
+
+                        for (const cashierQueue of cashierQueues) {
+                            await connection.execute(
+                                `UPDATE queue_entries
+                                 SET status = 'completed', endTime = NOW(), updatedAt = NOW(),
+                                     notes = CONCAT(COALESCE(notes, ''), ' - Completed: Prescription fees waived')
+                                 WHERE queueId = ?`,
+                                [cashierQueue.queueId]
+                            );
+                        }
+
+                        // Create pharmacy queue entry
                         const [existingQueue] = await connection.execute(
                             `SELECT queueId FROM queue_entries
                              WHERE patientId = ? AND servicePoint = 'pharmacy'
@@ -65,7 +85,7 @@ async function triggerWorkflowProgression(connection, invoice, patientId, invoic
             }
         }
 
-        // Check if it's a consultation fee invoice - create consultation queue entry
+        // Check if it's a consultation fee invoice - create consultation queue entry and complete cashier queue
         if (notes.includes('Consultation charge from triage') || itemDescriptions.includes('Consultation')) {
             try {
                 const triageMatch = notes.match(/triage\s+([A-Z0-9-]+)/i);
@@ -83,6 +103,26 @@ async function triggerWorkflowProgression(connection, invoice, patientId, invoic
                         if (triage.triageCategory === 'red') queuePriority = 'emergency';
                         else if (triage.triageCategory === 'yellow') queuePriority = 'urgent';
 
+                        // Complete cashier queue entries for consultation fees
+                        const [cashierQueues] = await connection.execute(
+                            `SELECT queueId FROM queue_entries
+                             WHERE patientId = ? AND servicePoint = 'cashier'
+                             AND (notes LIKE ? OR notes LIKE ?)
+                             AND status NOT IN ('completed', 'cancelled')`,
+                            [patientId, `%Consultation fees payment%`, `%Triage: ${triageNumber}%`]
+                        );
+
+                        for (const cashierQueue of cashierQueues) {
+                            await connection.execute(
+                                `UPDATE queue_entries
+                                 SET status = 'completed', endTime = NOW(), updatedAt = NOW(),
+                                     notes = CONCAT(COALESCE(notes, ''), ' - Completed: Consultation fees waived')
+                                 WHERE queueId = ?`,
+                                [cashierQueue.queueId]
+                            );
+                        }
+
+                        // Create consultation queue entry
                         const [existingConsultation] = await connection.execute(
                             `SELECT queueId FROM queue_entries
                              WHERE patientId = ? AND servicePoint = 'consultation'
@@ -99,7 +139,7 @@ async function triggerWorkflowProgression(connection, invoice, patientId, invoic
                             const consultationTicketNumber = `C-${String(consultationTicketNum).padStart(3, '0')}`;
 
                             const servicePoint = triage.assignedToDepartment || 'consultation';
-                            const notes = triage.assignedToDoctorId
+                            const queueNotes = triage.assignedToDoctorId
                                 ? `Assigned to doctor ID: ${triage.assignedToDoctorId} (Waived)`
                                 : 'Consultation (Waived)';
 
@@ -107,13 +147,74 @@ async function triggerWorkflowProgression(connection, invoice, patientId, invoic
                                 `INSERT INTO queue_entries
                                 (patientId, ticketNumber, servicePoint, priority, status, notes, createdBy)
                                 VALUES (?, ?, ?, ?, 'waiting', ?, ?)`,
-                                [patientId, consultationTicketNumber, servicePoint, queuePriority, notes, userId]
+                                [patientId, consultationTicketNumber, servicePoint, queuePriority, queueNotes, userId]
                             );
                         }
                     }
                 }
             } catch (consultationError) {
                 console.error('Error creating consultation queue after waiver:', consultationError);
+            }
+        }
+
+        // Check if it's a lab test invoice - create laboratory queue entry and complete cashier queue
+        if (notes.includes('Lab payment - Order:') || itemDescriptions.includes('Lab Test:')) {
+            try {
+                const labOrderMatch = notes.match(/Order:\s*([A-Z0-9-]+)/);
+                if (labOrderMatch && labOrderMatch[1]) {
+                    const orderNumber = labOrderMatch[1].trim();
+                    const [labOrders] = await connection.execute(
+                        'SELECT orderId, patientId, status, priority FROM lab_test_orders WHERE orderNumber = ?',
+                        [orderNumber]
+                    );
+
+                    if (labOrders.length > 0 && labOrders[0].status !== 'cancelled') {
+                        // Complete cashier queue entries for lab test payment
+                        const [cashierQueues] = await connection.execute(
+                            `SELECT queueId FROM queue_entries
+                             WHERE patientId = ? AND servicePoint = 'cashier'
+                             AND (notes LIKE ? OR notes LIKE ?)
+                             AND status NOT IN ('completed', 'cancelled')`,
+                            [patientId, `%Lab payment%`, `%Order: ${orderNumber}%`]
+                        );
+
+                        for (const cashierQueue of cashierQueues) {
+                            await connection.execute(
+                                `UPDATE queue_entries
+                                 SET status = 'completed', endTime = NOW(), updatedAt = NOW(),
+                                     notes = CONCAT(COALESCE(notes, ''), ' - Completed: Lab test fees waived')
+                                 WHERE queueId = ?`,
+                                [cashierQueue.queueId]
+                            );
+                        }
+
+                        // Create laboratory queue entry
+                        const [existingQueue] = await connection.execute(
+                            `SELECT queueId FROM queue_entries
+                             WHERE patientId = ? AND servicePoint = 'laboratory'
+                             AND notes LIKE ? AND status NOT IN ('completed', 'cancelled')`,
+                            [patientId, `%Order: ${orderNumber}%`]
+                        );
+
+                        if (existingQueue.length === 0) {
+                            const [labCount] = await connection.execute(
+                                'SELECT COUNT(*) as count FROM queue_entries WHERE DATE(arrivalTime) = CURDATE() AND servicePoint = "laboratory"'
+                            );
+                            const labTicketNum = labCount[0].count + 1;
+                            const labTicketNumber = `LAB-${String(labTicketNum).padStart(3, '0')}`;
+                            const queuePriority = (labOrders[0].priority === 'stat' || labOrders[0].priority === 'urgent') ? 'urgent' : 'normal';
+
+                            await connection.execute(
+                                `INSERT INTO queue_entries
+                                (patientId, ticketNumber, servicePoint, priority, status, notes, createdBy)
+                                VALUES (?, ?, 'laboratory', ?, 'waiting', ?, ?)`,
+                                [patientId, labTicketNumber, queuePriority, `Lab Order: ${orderNumber} (Waived)`, userId]
+                            );
+                        }
+                    }
+                }
+            } catch (labError) {
+                console.error('Error creating laboratory queue after waiver:', labError);
             }
         }
 

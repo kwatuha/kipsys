@@ -12,6 +12,7 @@ router.get('/', async (req, res) => {
 
         // We include 'hasPendingBills' using a subquery to identify patients with unpaid invoices
         // This is crucial for the UI to show warning icons/indicators
+        // For cashier queue, we also exclude patients whose consultation fees have been paid/waived
         let query = `
             SELECT q.*,
                    p.firstName as patientFirstName, p.lastName as patientLastName,
@@ -27,6 +28,57 @@ router.get('/', async (req, res) => {
             WHERE 1=1
         `;
         const params = [];
+
+        // For cashier queue, exclude patients whose consultation, prescription, or lab test fees are paid/waived
+        // and who have no other pending bills
+        if (servicePoint === 'cashier') {
+            query += ` AND (
+                -- Patient has bills that are NOT consultation, prescription, or lab test related
+                EXISTS (
+                    SELECT 1 FROM invoices i
+                    WHERE i.patientId = q.patientId
+                    AND i.status NOT IN ('paid', 'cancelled', 'draft')
+                    AND i.balance > 0
+                    AND i.notes NOT LIKE '%Consultation charge from triage%'
+                    AND i.notes NOT LIKE '%Consultation%'
+                    AND i.notes NOT LIKE '%Drug payment - Prescription:%'
+                    AND i.notes NOT LIKE '%Lab payment - Order:%'
+                )
+                OR
+                -- Patient has consultation bills that are NOT paid/waived
+                EXISTS (
+                    SELECT 1 FROM invoices i
+                    LEFT JOIN bill_waivers bw ON i.invoiceId = bw.invoiceId AND bw.status = 'approved'
+                    WHERE i.patientId = q.patientId
+                    AND (i.notes LIKE '%Consultation charge from triage%' OR i.notes LIKE '%Consultation%')
+                    AND i.status NOT IN ('paid', 'cancelled', 'draft')
+                    AND i.balance > 0
+                    AND (bw.waiverId IS NULL OR bw.status != 'approved')
+                )
+                OR
+                -- Patient has prescription bills that are NOT paid/waived
+                EXISTS (
+                    SELECT 1 FROM invoices i
+                    LEFT JOIN bill_waivers bw ON i.invoiceId = bw.invoiceId AND bw.status = 'approved'
+                    WHERE i.patientId = q.patientId
+                    AND i.notes LIKE '%Drug payment - Prescription:%'
+                    AND i.status NOT IN ('paid', 'cancelled', 'draft')
+                    AND i.balance > 0
+                    AND (bw.waiverId IS NULL OR bw.status != 'approved')
+                )
+                OR
+                -- Patient has lab test bills that are NOT paid/waived
+                EXISTS (
+                    SELECT 1 FROM invoices i
+                    LEFT JOIN bill_waivers bw ON i.invoiceId = bw.invoiceId AND bw.status = 'approved'
+                    WHERE i.patientId = q.patientId
+                    AND i.notes LIKE '%Lab payment - Order:%'
+                    AND i.status NOT IN ('paid', 'cancelled', 'draft')
+                    AND i.balance > 0
+                    AND (bw.waiverId IS NULL OR bw.status != 'approved')
+                )
+            )`;
+        }
 
         // By default, exclude completed and cancelled entries for active queue
         // Set includeCompleted=true to see all entries including completed ones
@@ -98,15 +150,40 @@ router.post('/', async (req, res) => {
             }
 
             // Validate that patient has pending bills before adding to cashier queue
+            // Exclude consultation, prescription, and lab test bills that are paid/waived
             const [pendingBills] = await pool.execute(
-                `SELECT COUNT(*) as unpaidCount FROM invoices
-                 WHERE patientId = ? AND status NOT IN ('paid', 'cancelled', 'draft') AND balance > 0`,
+                `SELECT COUNT(*) as unpaidCount FROM invoices i
+                 LEFT JOIN bill_waivers bw ON i.invoiceId = bw.invoiceId AND bw.status = 'approved'
+                 WHERE i.patientId = ?
+                 AND i.status NOT IN ('paid', 'cancelled', 'draft')
+                 AND i.balance > 0
+                 AND NOT (
+                     (i.notes LIKE '%Consultation charge from triage%' OR i.notes LIKE '%Consultation%')
+                     AND (
+                         (i.status = 'paid' AND i.balance <= 0)
+                         OR (bw.waiverId IS NOT NULL AND bw.status = 'approved')
+                     )
+                 )
+                 AND NOT (
+                     i.notes LIKE '%Drug payment - Prescription:%'
+                     AND (
+                         (i.status = 'paid' AND i.balance <= 0)
+                         OR (bw.waiverId IS NOT NULL AND bw.status = 'approved')
+                     )
+                 )
+                 AND NOT (
+                     i.notes LIKE '%Lab payment - Order:%'
+                     AND (
+                         (i.status = 'paid' AND i.balance <= 0)
+                         OR (bw.waiverId IS NOT NULL AND bw.status = 'approved')
+                     )
+                 )`,
                 [queueData.patientId]
             );
 
             if (pendingBills[0].unpaidCount === 0) {
                 return res.status(400).json({
-                    message: 'Cannot add patient to cashier queue: Patient has no pending bills.',
+                    message: 'Cannot add patient to cashier queue: Patient has no pending bills (all bills are paid or waived).',
                     error: 'NO_PENDING_BILLS'
                 });
             }
@@ -322,10 +399,35 @@ router.put('/:id/status', async (req, res) => {
         const entry = current[0];
 
         // 2. NEW LOGIC: If trying to complete a Cashier entry, check for unpaid bills
+        // Exclude consultation, prescription, and lab test fees that have been paid or waived
         if (status === 'completed' && entry.servicePoint === 'cashier') {
             const [bills] = await pool.execute(
-                `SELECT COUNT(*) as unpaidCount FROM invoices
-                 WHERE patientId = ? AND status NOT IN ('paid', 'cancelled', 'draft') AND balance > 0`,
+                `SELECT COUNT(*) as unpaidCount FROM invoices i
+                 LEFT JOIN bill_waivers bw ON i.invoiceId = bw.invoiceId AND bw.status = 'approved'
+                 WHERE i.patientId = ?
+                 AND i.status NOT IN ('paid', 'cancelled', 'draft')
+                 AND i.balance > 0
+                 AND NOT (
+                     (i.notes LIKE '%Consultation charge from triage%' OR i.notes LIKE '%Consultation%')
+                     AND (
+                         (i.status = 'paid' AND i.balance <= 0)
+                         OR (bw.waiverId IS NOT NULL AND bw.status = 'approved')
+                     )
+                 )
+                 AND NOT (
+                     i.notes LIKE '%Drug payment - Prescription:%'
+                     AND (
+                         (i.status = 'paid' AND i.balance <= 0)
+                         OR (bw.waiverId IS NOT NULL AND bw.status = 'approved')
+                     )
+                 )
+                 AND NOT (
+                     i.notes LIKE '%Lab payment - Order:%'
+                     AND (
+                         (i.status = 'paid' AND i.balance <= 0)
+                         OR (bw.waiverId IS NOT NULL AND bw.status = 'approved')
+                     )
+                 )`,
                 [entry.patientId]
             );
 
@@ -398,10 +500,35 @@ router.post('/:id/archive', async (req, res) => {
         const queue = queueEntries[0];
 
         // NEW LOGIC: Block archiving for cashier point if patient still owes money
+        // Exclude consultation, prescription, and lab test fees that have been paid or waived
         if (queue.servicePoint === 'cashier') {
             const [bills] = await connection.execute(
-                `SELECT COUNT(*) as unpaidCount FROM invoices
-                 WHERE patientId = ? AND status NOT IN ('paid', 'cancelled', 'draft') AND balance > 0`,
+                `SELECT COUNT(*) as unpaidCount FROM invoices i
+                 LEFT JOIN bill_waivers bw ON i.invoiceId = bw.invoiceId AND bw.status = 'approved'
+                 WHERE i.patientId = ?
+                 AND i.status NOT IN ('paid', 'cancelled', 'draft')
+                 AND i.balance > 0
+                 AND NOT (
+                     (i.notes LIKE '%Consultation charge from triage%' OR i.notes LIKE '%Consultation%')
+                     AND (
+                         (i.status = 'paid' AND i.balance <= 0)
+                         OR (bw.waiverId IS NOT NULL AND bw.status = 'approved')
+                     )
+                 )
+                 AND NOT (
+                     i.notes LIKE '%Drug payment - Prescription:%'
+                     AND (
+                         (i.status = 'paid' AND i.balance <= 0)
+                         OR (bw.waiverId IS NOT NULL AND bw.status = 'approved')
+                     )
+                 )
+                 AND NOT (
+                     i.notes LIKE '%Lab payment - Order:%'
+                     AND (
+                         (i.status = 'paid' AND i.balance <= 0)
+                         OR (bw.waiverId IS NOT NULL AND bw.status = 'approved')
+                     )
+                 )`,
                 [queue.patientId]
             );
 
@@ -699,10 +826,20 @@ router.post('/cashier/cleanup', async (req, res) => {
         const keptQueues = [];
 
         for (const queue of cashierQueues) {
-            // Check if patient has pending bills
+            // Check if patient has pending bills (excluding consultation fees that are paid/waived)
             const [pendingBills] = await connection.execute(
-                `SELECT COUNT(*) as unpaidCount FROM invoices
-                 WHERE patientId = ? AND status NOT IN ('paid', 'cancelled', 'draft') AND balance > 0`,
+                `SELECT COUNT(*) as unpaidCount FROM invoices i
+                 LEFT JOIN bill_waivers bw ON i.invoiceId = bw.invoiceId AND bw.status = 'approved'
+                 WHERE i.patientId = ?
+                 AND i.status NOT IN ('paid', 'cancelled', 'draft')
+                 AND i.balance > 0
+                 AND NOT (
+                     (i.notes LIKE '%Consultation charge from triage%' OR i.notes LIKE '%Consultation%')
+                     AND (
+                         (i.status = 'paid' AND i.balance <= 0)
+                         OR (bw.waiverId IS NOT NULL AND bw.status = 'approved')
+                     )
+                 )`,
                 [queue.patientId]
             );
 

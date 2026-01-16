@@ -312,3 +312,4 @@ if (patientData.patientType === 'insurance' && patientData.insuranceCompanyId) {
 
 
 
+

@@ -47,3 +47,4 @@ After placing your logo file:
 2. Check the login page to see if the logo appears
 3. Print a test receipt or invoice to verify logo appears in printed documents
 
+

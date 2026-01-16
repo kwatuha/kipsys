@@ -29,6 +29,7 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Search, Plus, CheckCircle, XCircle, Eye, DollarSign, Loader2, FileText, User, Building2, ExternalLink, ChevronRight, ChevronLeft } from "lucide-react"
+import * as React from "react"
 import { StaffCombobox } from "@/components/staff-combobox"
 import { Checkbox } from "@/components/ui/checkbox"
 import { waiverApi, billingApi } from "@/lib/api"
@@ -54,10 +55,12 @@ export function BillWaiverManagement() {
   const [isViewOpen, setIsViewOpen] = useState(false)
   const [isApproveOpen, setIsApproveOpen] = useState(false)
   const [isRejectOpen, setIsRejectOpen] = useState(false)
+  const [isBulkApproveOpen, setIsBulkApproveOpen] = useState(false)
   const [selectedWaiver, setSelectedWaiver] = useState<any>(null)
   const [formLoading, setFormLoading] = useState(false)
   const [approveLoading, setApproveLoading] = useState(false)
   const [rejectLoading, setRejectLoading] = useState(false)
+  const [bulkApproveLoading, setBulkApproveLoading] = useState(false)
   const [stats, setStats] = useState<any>(null)
 
   // New waiver creation flow state
@@ -69,6 +72,14 @@ export function BillWaiverManagement() {
   const [invoiceWaiverAmounts, setInvoiceWaiverAmounts] = useState<Record<number, number>>({})
   const [waiverStep, setWaiverStep] = useState<"patient" | "invoices" | "details">("patient")
   const [allowMultipleBills, setAllowMultipleBills] = useState(true)
+
+  // Bulk approval flow state
+  const [bulkApproveStep, setBulkApproveStep] = useState<"patient" | "waivers">("patient")
+  const [bulkApprovePatientSearch, setBulkApprovePatientSearch] = useState("")
+  const [bulkApproveSelectedPatient, setBulkApproveSelectedPatient] = useState<any>(null)
+  const [patientPendingWaivers, setPatientPendingWaivers] = useState<any[]>([])
+  const [selectedWaiversForApproval, setSelectedWaiversForApproval] = useState<Set<number>>(new Set())
+  const [approvalNotes, setApprovalNotes] = useState("")
 
   // Form state
   const [formData, setFormData] = useState({
@@ -103,6 +114,17 @@ export function BillWaiverManagement() {
       loadPatientsWithBills()
     }
   }, [isFormOpen, waiverStep])
+
+  // Debounced search for patients with bills
+  useEffect(() => {
+    if (!isFormOpen || waiverStep !== "patient") return
+
+    const timeoutId = setTimeout(() => {
+      loadPatientsWithBills()
+    }, 300) // Debounce for 300ms
+
+    return () => clearTimeout(timeoutId)
+  }, [patientSearchQuery, isFormOpen, waiverStep])
 
   const loadWaivers = async () => {
     try {
@@ -186,6 +208,137 @@ export function BillWaiverManagement() {
         variant: "destructive",
       })
     }
+  }
+
+  const loadPatientsWithPendingWaivers = async (search?: string): Promise<any[]> => {
+    try {
+      // Get all pending waivers and group by patient
+      const pendingWaivers = await waiverApi.getAll("pending", undefined, undefined, undefined, undefined, search)
+      const patientMap = new Map<number, any>()
+
+      pendingWaivers.forEach((waiver: any) => {
+        const patientId = waiver.patientId
+        if (!patientMap.has(patientId)) {
+          patientMap.set(patientId, {
+            patientId: patientId,
+            firstName: waiver.patientFirstName || waiver.firstName,
+            lastName: waiver.patientLastName || waiver.lastName,
+            patientNumber: waiver.patientNumber,
+            phone: waiver.phone,
+            pendingWaiverCount: 0,
+            totalPendingAmount: 0,
+          })
+        }
+        const patient = patientMap.get(patientId)
+        patient.pendingWaiverCount += 1
+        patient.totalPendingAmount += parseFloat(waiver.waivedAmount || 0)
+      })
+
+      return Array.from(patientMap.values())
+    } catch (error: any) {
+      console.error("Error loading patients with pending waivers:", error)
+      toast({
+        title: "Error loading patients",
+        description: error.message || "Failed to load patients with pending waivers",
+        variant: "destructive",
+      })
+      return []
+    }
+  }
+
+  const loadPatientPendingWaivers = async (patientId: string) => {
+    try {
+      const data = await waiverApi.getAll("pending", undefined, undefined, patientId)
+      setPatientPendingWaivers(data || [])
+
+      // Select all by default
+      const waiverIds = new Set<number>()
+      data.forEach((waiver: any) => {
+        waiverIds.add(waiver.waiverId)
+      })
+      setSelectedWaiversForApproval(waiverIds)
+    } catch (error: any) {
+      console.error("Error loading patient pending waivers:", error)
+      toast({
+        title: "Error loading waivers",
+        description: error.message || "Failed to load pending waivers for patient",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleBulkApprove = async () => {
+    if (selectedWaiversForApproval.size === 0) {
+      toast({
+        title: "No waivers selected",
+        description: "Please select at least one waiver to approve",
+        variant: "destructive",
+      })
+      return
+    }
+
+    try {
+      setBulkApproveLoading(true)
+      const userId = localStorage.getItem("userId") || "1"
+
+      const approvalPromises = Array.from(selectedWaiversForApproval).map(async (waiverId) => {
+        try {
+          await waiverApi.approve(waiverId.toString(), {
+            approvedBy: userId,
+            notes: approvalNotes || "Bulk approved",
+          })
+          return { success: true, waiverId }
+        } catch (error: any) {
+          console.error(`Error approving waiver ${waiverId}:`, error)
+          return { success: false, waiverId, error: error.message || "Failed to approve" }
+        }
+      })
+
+      const results = await Promise.all(approvalPromises)
+      const successful = results.filter((r) => r.success)
+      const failed = results.filter((r) => !r.success)
+
+      if (failed.length > 0) {
+        toast({
+          title: "Partial Success",
+          description: `Approved ${successful.length} waiver(s), but ${failed.length} failed. ${failed.map((f) => f.error).join(", ")}`,
+          variant: "destructive",
+        })
+      } else {
+        toast({
+          title: "Waivers Approved",
+          description: `Successfully approved ${successful.length} waiver(s).`,
+        })
+      }
+
+      setIsBulkApproveOpen(false)
+      setBulkApproveSelectedPatient(null)
+      setPatientPendingWaivers([])
+      setSelectedWaiversForApproval(new Set())
+      setApprovalNotes("")
+      setBulkApproveStep("patient")
+      loadWaivers()
+      loadStats()
+    } catch (error: any) {
+      console.error("Error bulk approving waivers:", error)
+      toast({
+        title: "Error approving waivers",
+        description: error.message || "Failed to approve waivers",
+        variant: "destructive",
+      })
+    } finally {
+      setBulkApproveLoading(false)
+    }
+  }
+
+  const handleOpenBulkApprove = () => {
+    setBulkApproveStep("patient")
+    setBulkApproveSelectedPatient(null)
+    setPatientPendingWaivers([])
+    setSelectedWaiversForApproval(new Set())
+    setApprovalNotes("")
+    setBulkApprovePatientSearch("")
+    setIsBulkApproveOpen(true)
   }
 
   const handleCreateWaiver = async () => {
@@ -385,8 +538,22 @@ export function BillWaiverManagement() {
           return { success: true, invoiceId, result }
         } catch (error: any) {
           console.error(`Error creating waiver for invoice ${invoiceId}:`, error)
-          const errorMessage = error.message || error.error || error.response?.error || "Failed to create waiver"
-          return { success: false, invoiceId, error: errorMessage }
+          // Extract error message from various possible locations in the error object
+          // The API returns { message: "..." }, which apiRequest extracts to error.message
+          // But we also check error.response in case the structure is different
+          let errorMessage = "Failed to create waiver"
+          if (typeof error === 'string') {
+            errorMessage = error
+          } else if (error?.message) {
+            errorMessage = error.message
+          } else if (error?.error) {
+            errorMessage = error.error
+          } else if (error?.response?.message) {
+            errorMessage = error.response.message
+          } else if (error?.response?.error) {
+            errorMessage = error.response.error
+          }
+          return { success: false, invoiceId, error: errorMessage, invoiceNumber: invoice.invoiceNumber }
         }
       })
 
@@ -395,13 +562,36 @@ export function BillWaiverManagement() {
       const failed = results.filter((r) => !r.success)
 
       if (failed.length > 0) {
-        toast({
-          title: "Partial Success",
-          description: `Created ${successful.length} waiver(s), but ${failed.length} failed. ${failed.map((f) => f.error).join(", ")}`,
-          variant: "destructive",
-        })
-        // Still close dialog and reload if at least one succeeded
-        if (successful.length > 0) {
+        // If all waivers failed, show a clear error message
+        if (successful.length === 0) {
+          const errorMessages = failed.map((f) => {
+            const invoiceInfo = f.invoiceNumber ? ` (Invoice: ${f.invoiceNumber})` : ''
+            return `${f.error}${invoiceInfo}`
+          }).join("\n")
+
+          toast({
+            title: "Failed to Create Waivers",
+            description: errorMessages.length > 200
+              ? `${errorMessages.substring(0, 200)}...`
+              : errorMessages,
+            variant: "destructive",
+            duration: 10000, // Show for 10 seconds so user can read it
+          })
+          // Don't close dialog so user can fix the issue
+        } else {
+          // Some succeeded, some failed
+          const errorMessages = failed.map((f) => {
+            const invoiceInfo = f.invoiceNumber ? ` (Invoice: ${f.invoiceNumber})` : ''
+            return `${f.error}${invoiceInfo}`
+          }).join(", ")
+
+          toast({
+            title: "Partial Success",
+            description: `Created ${successful.length} waiver(s), but ${failed.length} failed. ${errorMessages}`,
+            variant: "destructive",
+            duration: 10000,
+          })
+          // Close dialog and reload if at least one succeeded
           setIsFormOpen(false)
           loadWaivers()
           loadStats()
@@ -589,10 +779,16 @@ export function BillWaiverManagement() {
               <CardTitle>Bill Waivers</CardTitle>
               <CardDescription>Manage patient bill waivers and approvals</CardDescription>
             </div>
-            <Button onClick={handleCreateWaiver}>
-              <Plus className="h-4 w-4 mr-2" />
-              Create Waiver
-            </Button>
+            <div className="flex gap-2">
+              <Button onClick={handleOpenBulkApprove} variant="outline">
+                <CheckCircle className="h-4 w-4 mr-2" />
+                Bulk Approve
+              </Button>
+              <Button onClick={handleCreateWaiver}>
+                <Plus className="h-4 w-4 mr-2" />
+                Create Waiver
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
@@ -1313,6 +1509,319 @@ export function BillWaiverManagement() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Bulk Approve Dialog */}
+      <Dialog open={isBulkApproveOpen} onOpenChange={setIsBulkApproveOpen}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Bulk Approve Waivers</DialogTitle>
+            <DialogDescription>
+              {bulkApproveStep === "patient" && "Select a patient with pending waivers"}
+              {bulkApproveStep === "waivers" && "Select waivers to approve"}
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* Step 1: Select Patient */}
+          {bulkApproveStep === "patient" && (
+            <BulkApprovePatientStep
+              searchQuery={bulkApprovePatientSearch}
+              onSearchChange={setBulkApprovePatientSearch}
+              onPatientSelect={async (patient) => {
+                setBulkApproveSelectedPatient(patient)
+                await loadPatientPendingWaivers(patient.patientId.toString())
+                setBulkApproveStep("waivers")
+              }}
+              onLoadPatients={loadPatientsWithPendingWaivers}
+            />
+          )}
+
+          {/* Step 2: Select Waivers */}
+          {bulkApproveStep === "waivers" && bulkApproveSelectedPatient && (
+            <BulkApproveWaiversStep
+              patient={bulkApproveSelectedPatient}
+              waivers={patientPendingWaivers}
+              selectedWaivers={selectedWaiversForApproval}
+              onSelectedWaiversChange={setSelectedWaiversForApproval}
+              approvalNotes={approvalNotes}
+              onApprovalNotesChange={setApprovalNotes}
+              onBack={() => {
+                setBulkApproveStep("patient")
+                setBulkApproveSelectedPatient(null)
+                setPatientPendingWaivers([])
+                setSelectedWaiversForApproval(new Set())
+              }}
+            />
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsBulkApproveOpen(false)}>
+              Cancel
+            </Button>
+            {bulkApproveStep === "patient" && (
+              <Button onClick={() => setIsBulkApproveOpen(false)}>Close</Button>
+            )}
+            {bulkApproveStep === "waivers" && (
+              <Button
+                onClick={handleBulkApprove}
+                disabled={bulkApproveLoading || selectedWaiversForApproval.size === 0}
+              >
+                {bulkApproveLoading
+                  ? "Approving..."
+                  : `Approve ${selectedWaiversForApproval.size} Waiver(s)`}
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
+// Bulk Approve Patient Selection Step Component
+function BulkApprovePatientStep({
+  searchQuery,
+  onSearchChange,
+  onPatientSelect,
+  onLoadPatients,
+}: {
+  searchQuery: string
+  onSearchChange: (query: string) => void
+  onPatientSelect: (patient: any) => void
+  onLoadPatients: (search?: string) => Promise<any[]>
+}) {
+  const [patients, setPatients] = useState<any[]>([])
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    loadPatients()
+  }, [])
+
+  const loadPatients = async () => {
+    try {
+      setLoading(true)
+      const data = await onLoadPatients(searchQuery)
+      setPatients(data || [])
+    } catch (error) {
+      console.error("Error loading patients:", error)
+      setPatients([])
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <Label>Search Patients with Pending Waivers</Label>
+        <div className="flex gap-2">
+          <Input
+            placeholder="Search by name, patient number, or phone..."
+            value={searchQuery}
+            onChange={(e) => onSearchChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                loadPatients()
+              }
+            }}
+          />
+          <Button type="button" variant="outline" onClick={loadPatients} size="icon">
+            <Search className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+      <div className="border rounded-lg max-h-[400px] overflow-y-auto">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Patient</TableHead>
+              <TableHead>Patient Number</TableHead>
+              <TableHead>Phone</TableHead>
+              <TableHead>Pending Waivers</TableHead>
+              <TableHead>Total Amount</TableHead>
+              <TableHead>Action</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {loading ? (
+              <TableRow>
+                <TableCell colSpan={6} className="text-center py-8">
+                  <Loader2 className="h-4 w-4 animate-spin mx-auto" />
+                </TableCell>
+              </TableRow>
+            ) : patients.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                  No patients with pending waivers found
+                </TableCell>
+              </TableRow>
+            ) : (
+              patients.map((patient) => (
+                <TableRow key={patient.patientId}>
+                  <TableCell className="font-medium">
+                    {patient.firstName} {patient.lastName}
+                  </TableCell>
+                  <TableCell>{patient.patientNumber}</TableCell>
+                  <TableCell>{patient.phone || "-"}</TableCell>
+                  <TableCell>{patient.pendingWaiverCount}</TableCell>
+                  <TableCell>
+                    {new Intl.NumberFormat("en-KE", { style: "currency", currency: "KES" }).format(
+                      patient.totalPendingAmount
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <Button size="sm" onClick={() => onPatientSelect(patient)} variant="outline">
+                      Select <ChevronRight className="h-4 w-4 ml-1" />
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </div>
+    </div>
+  )
+}
+
+// Bulk Approve Waivers Selection Step Component
+function BulkApproveWaiversStep({
+  patient,
+  waivers,
+  selectedWaivers,
+  onSelectedWaiversChange,
+  approvalNotes,
+  onApprovalNotesChange,
+  onBack,
+}: {
+  patient: any
+  waivers: any[]
+  selectedWaivers: Set<number>
+  onSelectedWaiversChange: (waivers: Set<number>) => void
+  approvalNotes: string
+  onApprovalNotesChange: (notes: string) => void
+  onBack: () => void
+}) {
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between p-4 bg-muted rounded-lg">
+        <div>
+          <p className="font-medium">
+            {patient.firstName} {patient.lastName}
+          </p>
+          <p className="text-sm text-muted-foreground">
+            {patient.patientNumber} • {patient.phone || "No phone"}
+          </p>
+        </div>
+        <Button variant="outline" size="sm" onClick={onBack}>
+          <ChevronLeft className="h-4 w-4 mr-1" />
+          Change Patient
+        </Button>
+      </div>
+
+      <div className="border rounded-lg max-h-[400px] overflow-y-auto">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-12">
+                <Checkbox
+                  checked={waivers.length > 0 && selectedWaivers.size === waivers.length}
+                  onCheckedChange={(checked) => {
+                    if (checked) {
+                      const allIds = new Set(waivers.map((w) => w.waiverId))
+                      onSelectedWaiversChange(allIds)
+                    } else {
+                      onSelectedWaiversChange(new Set())
+                    }
+                  }}
+                />
+              </TableHead>
+              <TableHead>Waiver Number</TableHead>
+              <TableHead>Invoice</TableHead>
+              <TableHead>Type</TableHead>
+              <TableHead>Amount</TableHead>
+              <TableHead>Requested</TableHead>
+              <TableHead>Reason</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {waivers.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                  No pending waivers found for this patient
+                </TableCell>
+              </TableRow>
+            ) : (
+              waivers.map((waiver) => {
+                const isSelected = selectedWaivers.has(waiver.waiverId)
+                return (
+                  <TableRow key={waiver.waiverId}>
+                    <TableCell>
+                      <Checkbox
+                        checked={isSelected}
+                        onCheckedChange={(checked) => {
+                          const newSelected = new Set(selectedWaivers)
+                          if (checked) {
+                            newSelected.add(waiver.waiverId)
+                          } else {
+                            newSelected.delete(waiver.waiverId)
+                          }
+                          onSelectedWaiversChange(newSelected)
+                        }}
+                      />
+                    </TableCell>
+                    <TableCell className="font-medium">{waiver.waiverNumber}</TableCell>
+                    <TableCell>{waiver.invoiceNumber}</TableCell>
+                    <TableCell>{waiver.waiverTypeName}</TableCell>
+                    <TableCell>
+                      {new Intl.NumberFormat("en-KE", { style: "currency", currency: "KES" }).format(
+                        waiver.waivedAmount || 0
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {waiver.requestedAt
+                        ? format(new Date(waiver.requestedAt), "MMM dd, yyyy")
+                        : "-"}
+                    </TableCell>
+                    <TableCell className="max-w-xs truncate">{waiver.reason || "-"}</TableCell>
+                  </TableRow>
+                )
+              })
+            )}
+          </TableBody>
+        </Table>
+      </div>
+
+      {selectedWaivers.size > 0 && (
+        <div className="p-4 bg-muted rounded-lg">
+          <div className="flex justify-between items-center">
+            <div>
+              <p className="text-sm text-muted-foreground">Selected Waivers</p>
+              <p className="font-medium">{selectedWaivers.size} waiver(s)</p>
+            </div>
+            <div className="text-right">
+              <p className="text-sm text-muted-foreground">Total Amount</p>
+              <p className="text-lg font-bold text-green-600">
+                {new Intl.NumberFormat("en-KE", { style: "currency", currency: "KES" }).format(
+                  waivers
+                    .filter((w) => selectedWaivers.has(w.waiverId))
+                    .reduce((sum, w) => sum + parseFloat(w.waivedAmount || 0), 0)
+                )}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div>
+        <Label htmlFor="approvalNotes">Approval Notes (Optional)</Label>
+        <Textarea
+          id="approvalNotes"
+          value={approvalNotes}
+          onChange={(e) => onApprovalNotesChange(e.target.value)}
+          placeholder="Add notes for this approval..."
+          rows={2}
+        />
+      </div>
     </div>
   )
 }
