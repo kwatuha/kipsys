@@ -762,10 +762,10 @@ router.post('/', async (req, res) => {
             [finalWaivedAmount, invoiceId]
         );
 
-        // Update invoice status if fully paid
+        // Update invoice status - set to "waived" if fully waived, "partial" if partially waived
         if (isFullWaiver) {
             await connection.execute(
-                'UPDATE invoices SET status = "paid", updatedAt = CURRENT_TIMESTAMP WHERE invoiceId = ?',
+                'UPDATE invoices SET status = "waived", updatedAt = CURRENT_TIMESTAMP WHERE invoiceId = ?',
                 [invoiceId]
             );
         } else if (invoice.balance - finalWaivedAmount > 0) {
@@ -891,8 +891,16 @@ router.put('/:id/approve', async (req, res) => {
         );
 
         if (invoiceDetails.length > 0) {
+            const invoice = invoiceDetails[0];
+            // Update invoice status to "waived" if fully waived
+            if (waiver.isFullWaiver) {
+                await connection.execute(
+                    'UPDATE invoices SET status = "waived", updatedAt = CURRENT_TIMESTAMP WHERE invoiceId = ?',
+                    [waiver.invoiceId]
+                );
+            }
             // Trigger workflow progression (waived = paid)
-            await triggerWorkflowProgression(connection, invoiceDetails[0], waiver.patientId, waiver.invoiceId, approvedBy);
+            await triggerWorkflowProgression(connection, invoice, waiver.patientId, waiver.invoiceId, approvedBy);
         }
 
         await connection.commit();

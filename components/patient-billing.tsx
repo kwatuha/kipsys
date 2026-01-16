@@ -94,12 +94,22 @@ export function PatientBilling({ patientId }: { patientId: string }) {
         const invoiceDate = new Date(inv.invoiceDate || inv.date || new Date())
         const dueDate = inv.dueDate ? new Date(inv.dueDate) : new Date(invoiceDate.getTime() + 30 * 24 * 60 * 60 * 1000) // 30 days default
 
+        // Determine status: check for waived status first, then paid, then pending
+        let status = 'Pending'
+        if (inv.status === 'waived') {
+          status = 'Waived'
+        } else if (paidAmount >= totalAmount || inv.status === 'paid') {
+          status = 'Paid'
+        } else if (inv.status === 'partial') {
+          status = 'Partial'
+        }
+
         return {
           id: inv.invoiceNumber || `INV-${inv.invoiceId}`,
           invoiceId: inv.invoiceId, // Store invoiceId for dialog
           date: invoiceDate.toISOString().split('T')[0],
           amount: totalAmount,
-          status: paidAmount >= totalAmount ? 'Paid' : 'Pending',
+          status: status,
           dueDate: dueDate.toISOString().split('T')[0],
           items: items,
           paymentMethod: inv.paymentMethod || 'N/A',
@@ -137,7 +147,8 @@ export function PatientBilling({ patientId }: { patientId: string }) {
   }
 
   const paidInvoices = invoices.filter((bill) => bill.status === "Paid")
-  const pendingInvoices = invoices.filter((bill) => bill.status === "Pending")
+  const pendingInvoices = invoices.filter((bill) => bill.status === "Pending" || bill.status === "Partial")
+  const waivedInvoices = invoices.filter((bill) => bill.status === "Waived")
 
   // Calculate totals
   const totalBilled = invoices.reduce((sum, bill) => sum + bill.amount, 0)
@@ -213,6 +224,7 @@ export function PatientBilling({ patientId }: { patientId: string }) {
             <TabsTrigger value="all">All Invoices</TabsTrigger>
             <TabsTrigger value="pending">Pending</TabsTrigger>
             <TabsTrigger value="paid">Paid</TabsTrigger>
+            <TabsTrigger value="waived">Waived</TabsTrigger>
             <TabsTrigger value="payments">Payments</TabsTrigger>
           </TabsList>
 
@@ -240,7 +252,15 @@ export function PatientBilling({ patientId }: { patientId: string }) {
                         <TableCell>KES {bill.insuranceCoverage.toLocaleString()}</TableCell>
                         <TableCell>KES {bill.patientResponsibility.toLocaleString()}</TableCell>
                         <TableCell>
-                          <Badge variant={bill.status === "Paid" ? "default" : "secondary"}>{bill.status}</Badge>
+                          <Badge
+                            variant={
+                              bill.status === "Paid" ? "default" :
+                              bill.status === "Waived" ? "outline" :
+                              "secondary"
+                            }
+                          >
+                            {bill.status}
+                          </Badge>
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-2">
@@ -354,6 +374,63 @@ export function PatientBilling({ patientId }: { patientId: string }) {
               </div>
             ) : (
               <div className="text-center py-4 text-muted-foreground">No paid invoices found</div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="waived" className="space-y-4">
+            {waivedInvoices.length > 0 ? (
+              <div className="rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Invoice #</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Amount</TableHead>
+                      <TableHead>Insurance</TableHead>
+                      <TableHead>Patient</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {waivedInvoices.map((bill) => (
+                      <TableRow key={bill.id}>
+                        <TableCell className="font-medium">{bill.id}</TableCell>
+                        <TableCell>{bill.date}</TableCell>
+                        <TableCell>KES {bill.amount.toLocaleString()}</TableCell>
+                        <TableCell>KES {bill.insuranceCoverage.toLocaleString()}</TableCell>
+                        <TableCell>KES {bill.patientResponsibility.toLocaleString()}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline">Waived</Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                if (bill.invoiceId) {
+                                  setSelectedInvoiceId(bill.invoiceId.toString())
+                                  setInvoiceDialogOpen(true)
+                                }
+                              }}
+                            >
+                              <Eye className="h-4 w-4 mr-1" />
+                              View
+                            </Button>
+                            <Button variant="outline" size="sm">
+                              <Download className="h-4 w-4 mr-1" />
+                              PDF
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            ) : (
+              <div className="text-center py-4 text-muted-foreground">No waived invoices found</div>
             )}
           </TabsContent>
 
