@@ -135,3 +135,4 @@ docker exec kiplombe_frontend ls -la /app/.next/standalone
 docker logs kiplombe_frontend | grep -E "Creating|Compiled|Route" | head -20
 ```
 
+

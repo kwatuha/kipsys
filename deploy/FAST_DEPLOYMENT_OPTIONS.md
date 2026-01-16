@@ -115,3 +115,4 @@ I'll create:
 2. `docker-entrypoint-fast.sh` - Smart entrypoint that checks for changes
 3. `deploy/fast-update.sh` - Script for quick code updates
 
+

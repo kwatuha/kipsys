@@ -136,3 +136,4 @@ docker compose -f docker-compose.fast-deploy.yml restart frontend
 - `deploy/fast-update.sh` - Quick update script
 - `deploy/SWITCH_TO_FAST_DEPLOY.md` - Detailed setup guide
 
+

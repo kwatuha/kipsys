@@ -158,3 +158,4 @@ If auto-healing doesn't work, try these steps:
 2. Check connection pool settings in API
 3. Restart MySQL: `docker restart kiplombe_mysql`
 
+

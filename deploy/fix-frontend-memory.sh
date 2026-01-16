@@ -73,3 +73,4 @@ echo "The build should now complete without being killed."
 echo "Monitor with: docker logs -f kiplombe_frontend"
 echo ""
 
+

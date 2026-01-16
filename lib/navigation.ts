@@ -32,6 +32,7 @@ import {
   Shield,
   Bell,
   Store,
+  Ambulance,
 } from "lucide-react"
 
 export interface NavigationItem {
@@ -151,6 +152,11 @@ export const navigationCategories: NavigationCategory[] = [
         title: "ICU",
         icon: HeartPulse,
         href: "/icu",
+      },
+      {
+        title: "Ambulance Management",
+        icon: Ambulance,
+        href: "/ambulance",
       },
     ],
   },

@@ -102,3 +102,4 @@ docker compose -f docker-compose.deploy.yml up -d
 - **Hot fixes**: Use fast deploy for immediate fixes
 - **Major releases**: Use standard deploy for clean builds
 
+

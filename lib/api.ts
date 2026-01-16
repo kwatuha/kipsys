@@ -1621,6 +1621,52 @@ export const proceduresApi = {
     apiRequest<any>('/api/procedures/patient', { method: 'POST', body: data }),
 };
 
+// Ambulance API
+export const ambulanceApi = {
+  getAll: (status?: string, search?: string) => {
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    if (search) params.append('search', search);
+    return apiRequest<any[]>(`/api/ambulance?${params.toString()}`);
+  },
+
+  getById: (id: string) =>
+    apiRequest<any>(`/api/ambulance/${id}`),
+
+  create: (data: any) =>
+    apiRequest<any>('/api/ambulance', { method: 'POST', body: data }),
+
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/ambulance/${id}`, { method: 'PUT', body: data }),
+
+  delete: (id: string) =>
+    apiRequest<any>(`/api/ambulance/${id}`, { method: 'DELETE' }),
+
+  // Trips
+  getTrips: (status?: string, tripType?: string, search?: string, page = 1, limit = 50) => {
+    const params = new URLSearchParams({
+      page: page.toString(),
+      limit: limit.toString(),
+    });
+    if (status) params.append('status', status);
+    if (tripType) params.append('tripType', tripType);
+    if (search) params.append('search', search);
+    return apiRequest<any[]>(`/api/ambulance/trips/all?${params.toString()}`);
+  },
+
+  getTrip: (id: string) =>
+    apiRequest<any>(`/api/ambulance/trips/${id}`),
+
+  createTrip: (data: any) =>
+    apiRequest<any>('/api/ambulance/trips', { method: 'POST', body: data }),
+
+  updateTrip: (id: string, data: any) =>
+    apiRequest<any>(`/api/ambulance/trips/${id}`, { method: 'PUT', body: data }),
+
+  deleteTrip: (id: string) =>
+    apiRequest<any>(`/api/ambulance/trips/${id}`, { method: 'DELETE' }),
+};
+
 // User API
 export const userApi = {
   getAll: () =>

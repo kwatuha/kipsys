@@ -159,3 +159,4 @@ The `deploy.resources` syntax requires docker-compose v2+. If you get errors, yo
 - Resource limits are conservative - adjust based on your server capacity
 - Health checks have retries built-in to avoid false positives
 
+
