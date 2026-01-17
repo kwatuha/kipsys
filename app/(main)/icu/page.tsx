@@ -22,6 +22,7 @@ import { Search, Plus, FileText, Activity, Heart, Edit, Trash2, MoreHorizontal, 
 import { AddAdmissionForm } from "@/components/add-admission-form"
 import { AddBedForm } from "@/components/add-bed-form"
 import { AddEquipmentForm } from "@/components/add-equipment-form"
+import { ICUManagement } from "@/components/icu-management"
 import { icuApi } from "@/lib/api"
 import { toast } from "@/components/ui/use-toast"
 import { useRouter } from "next/navigation"
@@ -66,6 +67,8 @@ export default function ICUPage() {
   const [deletingEquipment, setDeletingEquipment] = useState<any>(null)
   const [deleteEquipmentLoading, setDeleteEquipmentLoading] = useState(false)
   const [addEquipmentOpen, setAddEquipmentOpen] = useState(false)
+  const [viewICUAdmissionOpen, setViewICUAdmissionOpen] = useState(false)
+  const [viewingICUAdmission, setViewingICUAdmission] = useState<any>(null)
 
   // Set mounted state to avoid hydration mismatch
   useEffect(() => {
@@ -150,15 +153,8 @@ export default function ICUPage() {
   }
 
   const handleViewRecords = (admission: any) => {
-    if (admission.patientId) {
-      router.push(`/patients/${admission.patientId}`)
-    } else {
-      toast({
-        title: "Error",
-        description: "Patient ID not found",
-        variant: "destructive",
-      })
-    }
+    setViewingICUAdmission(admission)
+    setViewICUAdmissionOpen(true)
   }
 
   const handleEdit = (admission: any) => {
@@ -406,29 +402,29 @@ export default function ICUPage() {
             <CardContent>
               <div className="flex items-center justify-between mb-4">
                 <div className="flex gap-2">
-                  <Button 
-                    variant={statusFilter === null ? "default" : "outline"} 
+                  <Button
+                    variant={statusFilter === null ? "default" : "outline"}
                     size="sm"
                     onClick={() => setStatusFilter(null)}
                   >
                     All
                   </Button>
-                  <Button 
-                    variant={statusFilter === "critical" ? "default" : "outline"} 
+                  <Button
+                    variant={statusFilter === "critical" ? "default" : "outline"}
                     size="sm"
                     onClick={() => setStatusFilter("critical")}
                   >
                     Critical
                   </Button>
-                  <Button 
-                    variant={statusFilter === "serious" ? "default" : "outline"} 
+                  <Button
+                    variant={statusFilter === "serious" ? "default" : "outline"}
                     size="sm"
                     onClick={() => setStatusFilter("serious")}
                   >
                     Serious
                   </Button>
-                  <Button 
-                    variant={statusFilter === "stable" ? "default" : "outline"} 
+                  <Button
+                    variant={statusFilter === "stable" ? "default" : "outline"}
                     size="sm"
                     onClick={() => setStatusFilter("stable")}
                   >
@@ -437,9 +433,9 @@ export default function ICUPage() {
                 </div>
                 <div className="relative w-64">
                   <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input 
-                    type="search" 
-                    placeholder="Search patients..." 
+                  <Input
+                    type="search"
+                    placeholder="Search patients..."
                     className="w-full pl-8"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
@@ -480,7 +476,7 @@ export default function ICUPage() {
                         <TableRow key={admission.icuAdmissionId}>
                           <TableCell className="font-medium">{admission.admissionNumber || `ICU-${admission.icuAdmissionId}`}</TableCell>
                           <TableCell>
-                            {admission.firstName && admission.lastName 
+                            {admission.firstName && admission.lastName
                               ? `${admission.firstName} ${admission.lastName}`
                               : "Unknown Patient"}
                             {admission.patientNumber && (
@@ -535,7 +531,7 @@ export default function ICUPage() {
                                   <FileText className="mr-2 h-4 w-4" />
                                   View Records
                                 </DropdownMenuItem>
-                                <DropdownMenuItem 
+                                <DropdownMenuItem
                                   onClick={() => setDeletingAdmission(admission)}
                                   className="text-red-600"
                                 >
@@ -892,8 +888,8 @@ export default function ICUPage() {
         </TabsContent>
       </Tabs>
 
-      <AddAdmissionForm 
-        open={addAdmissionOpen} 
+      <AddAdmissionForm
+        open={addAdmissionOpen}
         onOpenChange={handleCloseForm}
         onSuccess={() => {
           loadAdmissions()
@@ -907,7 +903,7 @@ export default function ICUPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Discharge ICU Admission</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to discharge this ICU admission? 
+              Are you sure you want to discharge this ICU admission?
               {deletingAdmission && (
                 <>
                   <br />
@@ -1087,6 +1083,15 @@ export default function ICUPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* ICU Management Dialog */}
+      {viewingICUAdmission && (
+        <ICUManagement
+          icuAdmissionId={viewingICUAdmission.icuAdmissionId.toString()}
+          open={viewICUAdmissionOpen}
+          onOpenChange={setViewICUAdmissionOpen}
+        />
+      )}
     </div>
   )
 }

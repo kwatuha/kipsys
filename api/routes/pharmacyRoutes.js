@@ -336,7 +336,7 @@ router.post('/prescriptions', async (req, res) => {
     try {
         await connection.beginTransaction();
 
-        const { prescriptionNumber, patientId, doctorId, prescriptionDate, status, notes, items } = req.body;
+        const { prescriptionNumber, patientId, doctorId, prescriptionDate, status, notes, items, admissionId } = req.body;
         const userId = req.user?.id || null;
 
         // 1. Generate prescription number
@@ -347,9 +347,9 @@ router.post('/prescriptions', async (req, res) => {
         }
 
         const [result] = await connection.execute(
-            `INSERT INTO prescriptions (prescriptionNumber, patientId, doctorId, prescriptionDate, status, notes)
-             VALUES (?, ?, ?, ?, ?, ?)`,
-            [prescNumber, patientId, doctorId, prescriptionDate || new Date(), status || 'pending', notes]
+            `INSERT INTO prescriptions (prescriptionNumber, patientId, doctorId, prescriptionDate, status, notes, admissionId)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [prescNumber, patientId, doctorId, prescriptionDate || new Date(), status || 'pending', notes, admissionId || null]
         );
         const prescriptionId = result.insertId;
 

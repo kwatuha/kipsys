@@ -144,3 +144,4 @@ CREATE TABLE IF NOT EXISTS waiver_staff_payments (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 
+

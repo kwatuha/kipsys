@@ -48,3 +48,4 @@ After placing your logo file:
 3. Print a test receipt or invoice to verify logo appears in printed documents
 
 
+

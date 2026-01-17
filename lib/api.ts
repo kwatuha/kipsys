@@ -515,6 +515,9 @@ export const icuApi = {
   getAdmission: (id: string) =>
     apiRequest<any>(`/api/icu/admissions/${id}`),
 
+  getAdmissionOverview: (id: string) =>
+    apiRequest<any>(`/api/icu/admissions/${id}/overview`),
+
   createAdmission: (data: any) =>
     apiRequest<any>('/api/icu/admissions', { method: 'POST', body: data }),
 
@@ -523,6 +526,18 @@ export const icuApi = {
 
   deleteAdmission: (id: string) =>
     apiRequest<any>(`/api/icu/admissions/${id}`, { method: 'DELETE' }),
+
+  getMonitoring: (id: string) =>
+    apiRequest<any[]>(`/api/icu/admissions/${id}/monitoring`),
+
+  createMonitoring: (id: string, data: any) =>
+    apiRequest<any>(`/api/icu/admissions/${id}/monitoring`, { method: 'POST', body: data }),
+
+  updateMonitoring: (id: string, monitoringId: string, data: any) =>
+    apiRequest<any>(`/api/icu/admissions/${id}/monitoring/${monitoringId}`, { method: 'PUT', body: data }),
+
+  deleteMonitoring: (id: string, monitoringId: string) =>
+    apiRequest<any>(`/api/icu/admissions/${id}/monitoring/${monitoringId}`, { method: 'DELETE' }),
 
   getBeds: (status?: string, page = 1, limit = 100) =>
     apiRequest<any[]>(`/api/icu/beds?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(status && { status }) })}`),

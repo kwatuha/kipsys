@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Plus, Clock, Activity, Stethoscope, Pill, FlaskConical, Calendar, User, FileText, AlertCircle, Eye, Package } from "lucide-react"
-import { inpatientApi, laboratoryApi, userApi, doctorsApi, serviceChargeApi, billingApi } from "@/lib/api"
+import { inpatientApi, laboratoryApi, userApi, doctorsApi, serviceChargeApi, billingApi, proceduresApi, pharmacyApi } from "@/lib/api"
 import { format } from "date-fns"
 import { toast } from "@/components/ui/use-toast"
 import { useAuth } from "@/lib/auth/auth-context"
@@ -89,6 +89,32 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
   })
   const [savingLabOrder, setSavingLabOrder] = useState(false)
 
+  // Procedures states
+  const [procedureDialogOpen, setProcedureDialogOpen] = useState(false)
+  const [procedures, setProcedures] = useState<any[]>([])
+  const [procedureForm, setProcedureForm] = useState({
+    procedureId: "",
+    procedureDate: new Date().toISOString().split('T')[0],
+    performedBy: user?.userId?.toString() || "",
+    notes: "",
+    complications: "",
+  })
+  const [savingProcedure, setSavingProcedure] = useState(false)
+
+  // Medications/Prescriptions states
+  const [prescriptionDialogOpen, setPrescriptionDialogOpen] = useState(false)
+  const [medications, setMedications] = useState<any[]>([])
+  const [prescriptionForm, setPrescriptionForm] = useState({
+    medicationId: "",
+    dosage: "",
+    frequency: "",
+    duration: "",
+    quantity: "",
+    instructions: "",
+  })
+  const [savingPrescription, setSavingPrescription] = useState(false)
+  const [isQuantityManuallyEdited, setIsQuantityManuallyEdited] = useState(false)
+
   // Orders/Consumables states
   const [consumables, setConsumables] = useState<any[]>([])
   const [orderDialogOpen, setOrderDialogOpen] = useState(false)
@@ -140,6 +166,36 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
       setConsumables(consumablesList || [])
     } catch (error) {
       console.error("Error loading consumables:", error)
+    }
+  }
+
+  const loadProcedures = async () => {
+    try {
+      const proceduresList = await proceduresApi.getAll(undefined, undefined, true)
+      console.log("Loaded procedures:", proceduresList?.length || 0, proceduresList)
+      setProcedures(proceduresList || [])
+    } catch (error) {
+      console.error("Error loading procedures:", error)
+      toast({
+        title: "Error",
+        description: "Failed to load procedures. Please try again.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const loadMedications = async () => {
+    try {
+      const medicationsList = await pharmacyApi.getMedications(undefined, 1, 1000) // Get all medications
+      console.log("Loaded medications:", medicationsList?.length || 0, medicationsList)
+      setMedications(medicationsList || [])
+    } catch (error) {
+      console.error("Error loading medications:", error)
+      toast({
+        title: "Error",
+        description: "Failed to load medications. Please try again.",
+        variant: "destructive",
+      })
     }
   }
 
@@ -332,16 +388,23 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
         throw new Error("Patient ID not found")
       }
 
-      await laboratoryApi.createOrder({
-        patientId: patientId.toString(),
+      const labOrderData = {
+        patientId: parseInt(patientId.toString()),
         admissionId: admissionId,
-        testTypes: [{
+        orderedBy: parseInt(user?.userId?.toString() || "0"),
+        orderDate: new Date().toISOString().split('T')[0],
+        priority: labOrderForm.priority,
+        clinicalIndication: labOrderForm.clinicalIndication || null,
+        items: [{
           testTypeId: parseInt(labOrderForm.testTypeId),
-          priority: labOrderForm.priority,
-          clinicalIndication: labOrderForm.clinicalIndication,
+          notes: labOrderForm.clinicalIndication || null,
         }],
-        orderDate: new Date().toISOString(),
-      })
+      }
+
+      console.log("Saving lab order:", labOrderData)
+
+      const result = await laboratoryApi.createOrder(labOrderData)
+      console.log("Lab order saved:", result)
 
       toast({
         title: "Success",
@@ -371,12 +434,30 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
     }
   }, [labOrderDialogOpen])
 
+  useEffect(() => {
+    if (procedureDialogOpen) {
+      loadProcedures()
+    }
+  }, [procedureDialogOpen])
+
+  useEffect(() => {
+    if (prescriptionDialogOpen) {
+      loadMedications()
+    }
+  }, [prescriptionDialogOpen])
+
   const loadTestTypes = async () => {
     try {
       const types = await laboratoryApi.getTestTypes()
-      setTestTypes(types)
+      console.log("Loaded test types:", types?.length || 0, types)
+      setTestTypes(types || [])
     } catch (error) {
       console.error("Error loading test types:", error)
+      toast({
+        title: "Error",
+        description: "Failed to load test types. Please try again.",
+        variant: "destructive",
+      })
     }
   }
 
@@ -454,6 +535,117 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
       })
     } finally {
       setSavingOrder(false)
+    }
+  }
+
+  const handleSaveProcedure = async () => {
+    if (!procedureForm.procedureId) {
+      toast({
+        title: "Error",
+        description: "Please select a procedure",
+        variant: "destructive",
+      })
+      return
+    }
+
+    try {
+      setSavingProcedure(true)
+      const patientId = overview?.admission?.patientId
+      if (!patientId) {
+        throw new Error("Patient ID not found")
+      }
+
+      await proceduresApi.createPatientProcedure({
+        patientId: patientId.toString(),
+        procedureId: parseInt(procedureForm.procedureId),
+        procedureDate: procedureForm.procedureDate,
+        performedBy: parseInt(procedureForm.performedBy),
+        notes: procedureForm.notes || null,
+        complications: procedureForm.complications || null,
+        admissionId: admissionId,
+      })
+
+      toast({
+        title: "Success",
+        description: "Procedure created successfully",
+      })
+      setProcedureDialogOpen(false)
+      setProcedureForm({
+        procedureId: "",
+        procedureDate: new Date().toISOString().split('T')[0],
+        performedBy: user?.userId?.toString() || "",
+        notes: "",
+        complications: "",
+      })
+      loadOverview()
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to create procedure",
+        variant: "destructive",
+      })
+    } finally {
+      setSavingProcedure(false)
+    }
+  }
+
+  const handleSavePrescription = async () => {
+    if (!prescriptionForm.medicationId || !prescriptionForm.dosage || !prescriptionForm.frequency || !prescriptionForm.duration) {
+      toast({
+        title: "Error",
+        description: "Please fill in all required fields (medication, dosage, frequency, duration)",
+        variant: "destructive",
+      })
+      return
+    }
+
+    try {
+      setSavingPrescription(true)
+      const patientId = overview?.admission?.patientId
+      if (!patientId) {
+        throw new Error("Patient ID not found")
+      }
+
+      const prescriptionData = {
+        patientId: patientId.toString(),
+        doctorId: user?.userId?.toString() || "",
+        prescriptionDate: new Date().toISOString().split('T')[0],
+        status: 'pending',
+        admissionId: admissionId,
+        items: [{
+          medicationId: parseInt(prescriptionForm.medicationId),
+          dosage: prescriptionForm.dosage,
+          frequency: prescriptionForm.frequency,
+          duration: prescriptionForm.duration,
+          quantity: prescriptionForm.quantity ? parseInt(prescriptionForm.quantity) : null,
+          instructions: prescriptionForm.instructions || null,
+        }],
+      }
+
+      await pharmacyApi.createPrescription(prescriptionData)
+
+      toast({
+        title: "Success",
+        description: "Prescription created successfully",
+      })
+      setPrescriptionDialogOpen(false)
+      setPrescriptionForm({
+        medicationId: "",
+        dosage: "",
+        frequency: "",
+        duration: "",
+        quantity: "",
+        instructions: "",
+      })
+      loadOverview()
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to create prescription",
+        variant: "destructive",
+      })
+    } finally {
+      setSavingPrescription(false)
     }
   }
 
@@ -1199,7 +1391,93 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
 
           {/* Procedures Tab */}
           <TabsContent value="procedures" className="space-y-4">
-            <h3 className="text-lg font-semibold">Procedures</h3>
+            <div className="flex justify-between items-center">
+              <h3 className="text-lg font-semibold">Procedures</h3>
+              <Dialog open={procedureDialogOpen} onOpenChange={setProcedureDialogOpen}>
+                <DialogTrigger asChild>
+                  <Button><Plus className="mr-2 h-4 w-4" />Add Procedure</Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Add Procedure</DialogTitle>
+                    <DialogDescription>Record a procedure performed on this patient</DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-4">
+                    <div>
+                      <Label>Procedure *</Label>
+                      <Select value={procedureForm.procedureId} onValueChange={(v) => setProcedureForm({ ...procedureForm, procedureId: v })}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select procedure" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {procedures.length > 0 ? (
+                            procedures.map((proc: any) => (
+                              <SelectItem key={proc.procedureId} value={proc.procedureId.toString()}>
+                                {proc.procedureName}
+                                {proc.category && ` (${proc.category})`}
+                                {proc.cost && ` - KES ${parseFloat(proc.cost).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                                {proc.duration && ` - ${proc.duration} min`}
+                              </SelectItem>
+                            ))
+                          ) : (
+                            <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                              No procedures available
+                            </div>
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label>Procedure Date *</Label>
+                      <Input
+                        type="date"
+                        value={procedureForm.procedureDate}
+                        onChange={(e) => setProcedureForm({ ...procedureForm, procedureDate: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <Label>Performed By *</Label>
+                      <Select value={procedureForm.performedBy} onValueChange={(v) => setProcedureForm({ ...procedureForm, performedBy: v })}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select doctor" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {doctors.map((doc: any) => (
+                            <SelectItem key={doc.userId} value={doc.userId.toString()}>
+                              {doc.firstName} {doc.lastName}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label>Notes</Label>
+                      <Textarea
+                        placeholder="Procedure notes..."
+                        value={procedureForm.notes}
+                        onChange={(e) => setProcedureForm({ ...procedureForm, notes: e.target.value })}
+                        rows={3}
+                      />
+                    </div>
+                    <div>
+                      <Label>Complications</Label>
+                      <Textarea
+                        placeholder="Any complications..."
+                        value={procedureForm.complications}
+                        onChange={(e) => setProcedureForm({ ...procedureForm, complications: e.target.value })}
+                        rows={2}
+                      />
+                    </div>
+                    <div className="flex justify-end gap-2">
+                      <Button variant="outline" onClick={() => setProcedureDialogOpen(false)}>Cancel</Button>
+                      <Button onClick={handleSaveProcedure} disabled={savingProcedure}>
+                        {savingProcedure ? "Saving..." : "Save Procedure"}
+                      </Button>
+                    </div>
+                  </div>
+                </DialogContent>
+              </Dialog>
+            </div>
             <Card>
               <CardContent className="p-0">
                 <Table>
@@ -1255,11 +1533,18 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                           <SelectValue placeholder="Select test type" />
                         </SelectTrigger>
                         <SelectContent>
-                          {testTypes.map((type) => (
-                            <SelectItem key={type.testTypeId} value={type.testTypeId.toString()}>
-                              {type.testName}
-                            </SelectItem>
-                          ))}
+                          {testTypes.length > 0 ? (
+                            testTypes.map((type) => (
+                              <SelectItem key={type.testTypeId} value={type.testTypeId.toString()}>
+                                {type.testName} {type.category && `(${type.category})`}
+                                {type.cost && ` - KES ${parseFloat(type.cost).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                              </SelectItem>
+                            ))
+                          ) : (
+                            <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                              No test types available
+                            </div>
+                          )}
                         </SelectContent>
                       </Select>
                     </div>
@@ -1467,7 +1752,99 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
 
           {/* Medications Tab */}
           <TabsContent value="medications" className="space-y-4">
-            <h3 className="text-lg font-semibold">Prescriptions</h3>
+            <div className="flex justify-between items-center">
+              <h3 className="text-lg font-semibold">Prescriptions</h3>
+              <Dialog open={prescriptionDialogOpen} onOpenChange={setPrescriptionDialogOpen}>
+                <DialogTrigger asChild>
+                  <Button><Plus className="mr-2 h-4 w-4" />Add Prescription</Button>
+                </DialogTrigger>
+                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                  <DialogHeader>
+                    <DialogTitle>Add Prescription</DialogTitle>
+                    <DialogDescription>Prescribe medication for this patient</DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-4">
+                    <div>
+                      <Label>Medication *</Label>
+                      <Select value={prescriptionForm.medicationId} onValueChange={(v) => setPrescriptionForm({ ...prescriptionForm, medicationId: v })}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select medication" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {medications.length > 0 ? (
+                            medications.map((med: any) => (
+                              <SelectItem key={med.medicationId} value={med.medicationId.toString()}>
+                                {med.name || med.medicationName} {med.strength && `(${med.strength})`}
+                              </SelectItem>
+                            ))
+                          ) : (
+                            <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                              No medications available
+                            </div>
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <Label>Dosage *</Label>
+                        <Input
+                          placeholder="e.g., 500mg"
+                          value={prescriptionForm.dosage}
+                          onChange={(e) => setPrescriptionForm({ ...prescriptionForm, dosage: e.target.value })}
+                        />
+                      </div>
+                      <div>
+                        <Label>Frequency *</Label>
+                        <Input
+                          placeholder="e.g., Twice daily"
+                          value={prescriptionForm.frequency}
+                          onChange={(e) => setPrescriptionForm({ ...prescriptionForm, frequency: e.target.value })}
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <Label>Duration *</Label>
+                        <Input
+                          placeholder="e.g., 7 days"
+                          value={prescriptionForm.duration}
+                          onChange={(e) => setPrescriptionForm({ ...prescriptionForm, duration: e.target.value })}
+                        />
+                      </div>
+                      <div>
+                        <Label>Quantity</Label>
+                        <Input
+                          type="number"
+                          placeholder="Auto-calculated"
+                          value={prescriptionForm.quantity}
+                          onChange={(e) => {
+                            setPrescriptionForm({ ...prescriptionForm, quantity: e.target.value })
+                            setIsQuantityManuallyEdited(true)
+                          }}
+                          onFocus={() => setIsQuantityManuallyEdited(true)}
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <Label>Instructions</Label>
+                      <Textarea
+                        placeholder="Special instructions for the patient..."
+                        value={prescriptionForm.instructions}
+                        onChange={(e) => setPrescriptionForm({ ...prescriptionForm, instructions: e.target.value })}
+                        rows={3}
+                      />
+                    </div>
+                    <div className="flex justify-end gap-2">
+                      <Button variant="outline" onClick={() => setPrescriptionDialogOpen(false)}>Cancel</Button>
+                      <Button onClick={handleSavePrescription} disabled={savingPrescription}>
+                        {savingPrescription ? "Saving..." : "Save Prescription"}
+                      </Button>
+                    </div>
+                  </div>
+                </DialogContent>
+              </Dialog>
+            </div>
             <Card>
               <CardContent className="p-0">
                 <Table>
@@ -1475,6 +1852,7 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                     <TableRow>
                       <TableHead>Date</TableHead>
                       <TableHead>Prescription Number</TableHead>
+                      <TableHead>Medications</TableHead>
                       <TableHead>Doctor</TableHead>
                       <TableHead>Status</TableHead>
                     </TableRow>
@@ -1485,6 +1863,7 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                         <TableRow key={prescription.prescriptionId}>
                           <TableCell>{format(new Date(prescription.prescriptionDate), "PP")}</TableCell>
                           <TableCell>{prescription.prescriptionNumber}</TableCell>
+                          <TableCell>{prescription.medicationNames || "N/A"}</TableCell>
                           <TableCell>{prescription.doctorFirstName} {prescription.doctorLastName}</TableCell>
                           <TableCell>
                             <Badge variant="outline">{prescription.status || "active"}</Badge>
@@ -1493,7 +1872,7 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                       ))
                     ) : (
                       <TableRow>
-                        <TableCell colSpan={4} className="text-center text-muted-foreground">
+                        <TableCell colSpan={5} className="text-center text-muted-foreground">
                           No prescriptions yet
                         </TableCell>
                       </TableRow>

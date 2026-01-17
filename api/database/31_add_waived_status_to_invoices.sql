@@ -16,3 +16,4 @@ WHERE bw.status = 'approved'
   AND bw.isFullWaiver = 1
   AND i.balance <= 0;
 
+

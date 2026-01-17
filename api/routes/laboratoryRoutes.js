@@ -237,17 +237,27 @@ router.post('/orders', async (req, res) => {
     try {
         await connection.beginTransaction();
 
-        const { orderNumber, patientId, admissionId, orderedBy, orderDate, priority, status, clinicalNotes, clinicalIndication, items } = req.body;
+        const { orderNumber, patientId, admissionId, orderedBy, orderDate, priority, status, clinicalNotes, clinicalIndication, items, testTypes } = req.body;
         const userId = req.user?.id || req.user?.userId || null;
 
-        if (!items || items.length === 0) {
+        // Support both 'items' and 'testTypes' formats for backward compatibility
+        let finalItems = items || [];
+        if (testTypes && testTypes.length > 0 && !items) {
+            // Convert testTypes format to items format
+            finalItems = testTypes.map(test => ({
+                testTypeId: test.testTypeId,
+                notes: test.clinicalIndication || null,
+            }));
+        }
+
+        if (!finalItems || finalItems.length === 0) {
             return res.status(400).json({ message: 'No tests provided in the order' });
         }
 
         // --- DUPLICATE PREVENTION LOGIC ---
         // Check if any of the requested testTypes already exist for this patient
         // in an incomplete state (status is not 'completed' and not 'cancelled')
-        for (const item of items) {
+        for (const item of finalItems) {
             const [pendingTests] = await connection.execute(
                 `SELECT ltt.testName, lo.orderNumber
                  FROM lab_test_order_items loi
@@ -290,7 +300,7 @@ router.post('/orders', async (req, res) => {
         let totalAmount = 0;
         const invoiceItems = [];
 
-        for (const item of items) {
+        for (const item of finalItems) {
             // Save lab order item
             await connection.execute(
                 `INSERT INTO lab_test_order_items (orderId, testTypeId, notes, status)

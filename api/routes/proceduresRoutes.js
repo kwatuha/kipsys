@@ -357,7 +357,7 @@ router.post('/patient', async (req, res) => {
     try {
         await connection.beginTransaction();
 
-        const { patientId, procedureId, procedureCode, procedureName, procedureDate, performedBy, notes, complications } = req.body;
+        const { patientId, procedureId, procedureCode, procedureName, procedureDate, performedBy, notes, complications, admissionId } = req.body;
         const userId = req.user?.id;
 
         if (!patientId || !procedureDate) {
@@ -387,8 +387,8 @@ router.post('/patient', async (req, res) => {
 
         const [result] = await connection.execute(
             `INSERT INTO patient_procedures
-            (patientId, procedureId, procedureCode, procedureName, procedureDate, performedBy, notes, complications)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            (patientId, procedureId, procedureCode, procedureName, procedureDate, performedBy, notes, complications, admissionId)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 patientId,
                 procedureId || null,
@@ -397,7 +397,8 @@ router.post('/patient', async (req, res) => {
                 procedureDate,
                 performedBy || userId || null,
                 notes || null,
-                complications || null
+                complications || null,
+                admissionId || null
             ]
         );
 

@@ -109,3 +109,4 @@ SELECT tripId, logType, logDateTime, location FROM ambulance_trip_logs;
 
 
 
+

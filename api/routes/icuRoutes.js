@@ -13,7 +13,7 @@ router.get('/admissions', async (req, res) => {
         const offset = (page - 1) * limit;
 
         let query = `
-            SELECT ia.*, 
+            SELECT ia.*,
                    a.admissionNumber, a.admissionDate, a.expectedDischargeDate, a.notes as admissionNotes, a.admittingDoctorId,
                    pt.patientId, pt.firstName, pt.lastName, pt.patientNumber,
                    u.firstName as doctorFirstName, u.lastName as doctorLastName, u.userId as doctorUserId,
@@ -58,7 +58,7 @@ router.get('/admissions/:id', async (req, res) => {
         const { id } = req.params;
 
         const [admissions] = await pool.execute(
-            `SELECT ia.*, 
+            `SELECT ia.*,
                     a.admissionNumber, a.admissionDate, a.expectedDischargeDate, a.notes as admissionNotes, a.admittingDoctorId,
                     pt.patientId, pt.firstName, pt.lastName, pt.patientNumber,
                     u.firstName as doctorFirstName, u.lastName as doctorLastName, u.userId as doctorUserId,
@@ -92,9 +92,9 @@ router.post('/admissions', async (req, res) => {
     try {
         await connection.beginTransaction();
 
-        const { 
-            patientId, icuBedId, admissionDate, admittingDoctorId, 
-            admissionReason, initialCondition, status, expectedDischargeDate, notes 
+        const {
+            patientId, icuBedId, admissionDate, admittingDoctorId,
+            admissionReason, initialCondition, status, expectedDischargeDate, notes
         } = req.body;
 
         console.log('ICU Admission Request:', {
@@ -116,7 +116,7 @@ router.post('/admissions', async (req, res) => {
                 // Validate the format is YYYY-MM-DD HH:MM:SS or YYYY-MM-DD
                 const datetimeRegex = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
                 const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-                
+
                 if (datetimeRegex.test(admissionDate)) {
                     // Already in correct format, use as-is
                     parsedAdmissionDate = admissionDate;
@@ -182,7 +182,7 @@ router.post('/admissions', async (req, res) => {
         // For ICU admissions, we'll use a placeholder bedId
         // First, get a placeholder bedId - use a simple query to avoid connection issues
         let bedIdForAdmission = 1; // Default fallback
-        
+
         try {
             const [bedCheck] = await connection.query(
                 'SELECT bedId FROM beds ORDER BY bedId LIMIT 1'
@@ -243,7 +243,7 @@ router.post('/admissions', async (req, res) => {
 
         // Fetch created admission
         const [newAdmission] = await connection.execute(
-            `SELECT ia.*, 
+            `SELECT ia.*,
                     a.admissionNumber, a.admissionDate, a.expectedDischargeDate, a.notes as admissionNotes,
                     pt.firstName, pt.lastName, pt.patientNumber,
                     u.firstName as doctorFirstName, u.lastName as doctorLastName,
@@ -265,13 +265,13 @@ router.post('/admissions', async (req, res) => {
         console.error('Error code:', error.code);
         console.error('Error sqlState:', error.sqlState);
         console.error('Error sqlMessage:', error.sqlMessage);
-        
+
         // Return more detailed error information
         const errorMessage = error.sqlMessage || error.message || 'Unknown error';
         const errorCode = error.code || 'UNKNOWN';
-        
-        res.status(500).json({ 
-            message: 'Error creating ICU admission', 
+
+        res.status(500).json({
+            message: 'Error creating ICU admission',
             error: errorMessage,
             code: errorCode,
             sqlState: error.sqlState
@@ -291,13 +291,13 @@ router.put('/admissions/:id', async (req, res) => {
         await connection.beginTransaction();
 
         const { id } = req.params;
-        const { 
-            icuBedId, admissionReason, initialCondition, status, expectedDischargeDate, notes 
+        const {
+            icuBedId, admissionReason, initialCondition, status, expectedDischargeDate, notes
         } = req.body;
 
         // Check if admission exists
         const [existing] = await connection.execute(
-            `SELECT ia.icuBedId, ia.status 
+            `SELECT ia.icuBedId, ia.status
              FROM icu_admissions ia
              WHERE ia.icuAdmissionId = ?`,
             [id]
@@ -367,7 +367,7 @@ router.put('/admissions/:id', async (req, res) => {
 
         // Fetch updated admission
         const [updated] = await connection.execute(
-            `SELECT ia.*, 
+            `SELECT ia.*,
                     a.admissionNumber, a.admissionDate, a.expectedDischargeDate, a.notes as admissionNotes,
                     pt.firstName, pt.lastName, pt.patientNumber,
                     u.firstName as doctorFirstName, u.lastName as doctorLastName,
@@ -404,7 +404,7 @@ router.delete('/admissions/:id', async (req, res) => {
 
         // Get admission details
         const [admission] = await connection.execute(
-            `SELECT ia.icuBedId, ia.admissionId, ia.status 
+            `SELECT ia.icuBedId, ia.admissionId, ia.status
              FROM icu_admissions ia
              WHERE ia.icuAdmissionId = ?`,
             [id]
@@ -457,7 +457,7 @@ router.get('/beds', async (req, res) => {
                    a.admissionNumber,
                    pt.firstName, pt.lastName, pt.patientNumber
             FROM icu_beds ib
-            LEFT JOIN icu_admissions ia ON ib.icuBedId = ia.icuBedId 
+            LEFT JOIN icu_admissions ia ON ib.icuBedId = ia.icuBedId
                 AND ia.status IN ('critical', 'serious', 'stable', 'improving')
             LEFT JOIN admissions a ON ia.admissionId = a.admissionId
             LEFT JOIN patients pt ON a.patientId = pt.patientId
@@ -495,7 +495,7 @@ router.get('/beds/:id', async (req, res) => {
                     a.admissionNumber,
                     pt.firstName, pt.lastName, pt.patientNumber
              FROM icu_beds ib
-             LEFT JOIN icu_admissions ia ON ib.icuBedId = ia.icuBedId 
+             LEFT JOIN icu_admissions ia ON ib.icuBedId = ia.icuBedId
                  AND ia.status IN ('critical', 'serious', 'stable', 'improving')
              LEFT JOIN admissions a ON ia.admissionId = a.admissionId
              LEFT JOIN patients pt ON a.patientId = pt.patientId
@@ -831,6 +831,312 @@ router.delete('/equipment/:id', async (req, res) => {
     } catch (error) {
         console.error('Error deleting ICU equipment:', error);
         res.status(500).json({ message: 'Error deleting ICU equipment', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/icu/admissions/:id/overview
+ * @description Get comprehensive overview of an ICU admission (monitoring, reviews, equipment, etc.)
+ */
+router.get('/admissions/:id/overview', async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // Get ICU admission details
+        const [icuAdmissions] = await pool.execute(
+            `SELECT ia.*,
+                    a.admissionNumber, a.admissionDate, a.expectedDischargeDate, a.notes as admissionNotes,
+                    a.admittingDoctorId, a.patientId, a.admissionDiagnosis, a.admissionReason,
+                    pt.firstName, pt.lastName, pt.patientNumber,
+                    u.firstName as doctorFirstName, u.lastName as doctorLastName,
+                    ib.bedNumber, ib.bedType, ib.equipmentList, ib.icuBedId
+             FROM icu_admissions ia
+             LEFT JOIN admissions a ON ia.admissionId = a.admissionId
+             LEFT JOIN patients pt ON a.patientId = pt.patientId
+             LEFT JOIN users u ON a.admittingDoctorId = u.userId
+             LEFT JOIN icu_beds ib ON ia.icuBedId = ib.icuBedId
+             WHERE ia.icuAdmissionId = ?`,
+            [id]
+        );
+
+        if (icuAdmissions.length === 0) {
+            return res.status(404).json({ message: 'ICU admission not found' });
+        }
+
+        const icuAdmission = icuAdmissions[0];
+
+        // Get ICU monitoring records
+        const [monitoring] = await pool.execute(
+            `SELECT m.*,
+                    u.firstName as recordedByFirstName, u.lastName as recordedByLastName
+             FROM icu_monitoring m
+             LEFT JOIN users u ON m.recordedBy = u.userId
+             WHERE m.icuAdmissionId = ?
+             ORDER BY m.monitoringDateTime DESC`,
+            [id]
+        );
+
+        // Get equipment assigned to this admission
+        const [equipment] = await pool.execute(
+            `SELECT e.*
+             FROM icu_equipment e
+             WHERE e.assignedToAdmissionId = ?
+             ORDER BY e.equipmentName`,
+            [id]
+        );
+
+        // Get procedures linked to the general admission
+        const [procedures] = await pool.execute(
+            `SELECT pp.*,
+                    p.procedureName, p.procedureCode,
+                    u.firstName as performedByFirstName, u.lastName as performedByLastName
+             FROM patient_procedures pp
+             LEFT JOIN procedures p ON pp.procedureId = p.procedureId
+             LEFT JOIN users u ON pp.performedBy = u.userId
+             WHERE pp.admissionId = ?
+             ORDER BY pp.procedureDate DESC`,
+            [icuAdmission.admissionId]
+        );
+
+        // Get lab orders linked to the general admission with test names
+        const [labOrdersRaw] = await pool.execute(
+            `SELECT lo.*,
+                    u.firstName as orderedByFirstName, u.lastName as orderedByLastName
+             FROM lab_test_orders lo
+             LEFT JOIN users u ON lo.orderedBy = u.userId
+             WHERE lo.admissionId = ?
+             ORDER BY lo.orderDate DESC`,
+            [icuAdmission.admissionId]
+        );
+
+        // Get lab order items with test names for each order
+        const labOrders = await Promise.all(labOrdersRaw.map(async (order) => {
+            const [items] = await pool.execute(
+                `SELECT loi.*, ltt.testName, ltt.testCode
+                 FROM lab_test_order_items loi
+                 LEFT JOIN lab_test_types ltt ON loi.testTypeId = ltt.testTypeId
+                 WHERE loi.orderId = ?
+                 ORDER BY loi.itemId`,
+                [order.orderId]
+            );
+            // For display, use the first test name or join all if multiple
+            const testNames = items.map((item) => item.testName).filter(Boolean);
+            return {
+                ...order,
+                items: items || [],
+                testName: testNames.length > 0 ? testNames.join(', ') : null
+            };
+        }));
+
+        // Get prescriptions linked to the general admission with medication items
+        const [prescriptionsRaw] = await pool.execute(
+            `SELECT p.*,
+                    u.firstName as doctorFirstName, u.lastName as doctorLastName
+             FROM prescriptions p
+             LEFT JOIN users u ON p.doctorId = u.userId
+             WHERE p.admissionId = ?
+             ORDER BY p.prescriptionDate DESC`,
+            [icuAdmission.admissionId]
+        );
+
+        // Get prescription items with medication names for each prescription
+        const prescriptions = await Promise.all(prescriptionsRaw.map(async (prescription) => {
+            const [items] = await pool.execute(
+                `SELECT pi.*, m.name as medicationNameFromCatalog
+                 FROM prescription_items pi
+                 LEFT JOIN medications m ON pi.medicationId = m.medicationId
+                 WHERE pi.prescriptionId = ?
+                 ORDER BY pi.itemId`,
+                [prescription.prescriptionId]
+            );
+            // For display, use medication names from items or catalog
+            const medicationNames = items.map((item) =>
+                item.medicationNameFromCatalog || item.medicationName
+            ).filter(Boolean);
+            return {
+                ...prescription,
+                items: items || [],
+                medicationNames: medicationNames.length > 0 ? medicationNames.join(', ') : null
+            };
+        }));
+
+        // Get orders/consumables (invoices with consumables linked to this admission)
+        const [ordersInvoices] = await pool.execute(
+            `SELECT i.*,
+                    p.firstName as patientFirstName, p.lastName as patientLastName
+             FROM invoices i
+             LEFT JOIN patients p ON i.patientId = p.patientId
+             WHERE i.patientId = ?
+             AND (i.notes LIKE '%Consumables ordered%' OR i.notes LIKE '%consumables ordered%' OR i.notes LIKE '%ICU%' OR i.notes LIKE '%icu%')
+             AND DATE(i.invoiceDate) >= DATE(?)
+             ORDER BY i.invoiceDate DESC`,
+            [icuAdmission.patientId, icuAdmission.admissionDate || new Date().toISOString().split('T')[0]]
+        );
+
+        // Get invoice items for orders
+        const ordersWithItems = await Promise.all(ordersInvoices.map(async (invoice) => {
+            const [items] = await pool.execute(
+                `SELECT ii.*, sc.name as chargeName, sc.chargeCode
+                 FROM invoice_items ii
+                 LEFT JOIN service_charges sc ON ii.chargeId = sc.chargeId
+                 WHERE ii.invoiceId = ?
+                 ORDER BY ii.itemId`,
+                [invoice.invoiceId]
+            );
+            return {
+                ...invoice,
+                items: items || []
+            };
+        }));
+
+        res.status(200).json({
+            icuAdmission,
+            monitoring,
+            equipment,
+            procedures,
+            labOrders,
+            prescriptions,
+            orders: ordersWithItems,
+        });
+    } catch (error) {
+        console.error('Error fetching ICU admission overview:', error);
+        res.status(500).json({ message: 'Error fetching ICU admission overview', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/icu/admissions/:id/monitoring
+ * @description Get ICU monitoring records for an admission
+ */
+router.get('/admissions/:id/monitoring', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const [monitoring] = await pool.execute(
+            `SELECT m.*,
+                    u.firstName as recordedByFirstName, u.lastName as recordedByLastName
+             FROM icu_monitoring m
+             LEFT JOIN users u ON m.recordedBy = u.userId
+             WHERE m.icuAdmissionId = ?
+             ORDER BY m.monitoringDateTime DESC`,
+            [id]
+        );
+        res.status(200).json(monitoring);
+    } catch (error) {
+        console.error('Error fetching ICU monitoring:', error);
+        res.status(500).json({ message: 'Error fetching ICU monitoring', error: error.message });
+    }
+});
+
+/**
+ * @route POST /api/icu/admissions/:id/monitoring
+ * @description Create a new ICU monitoring record
+ */
+router.post('/admissions/:id/monitoring', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const {
+            monitoringDateTime, heartRate, systolicBP, diastolicBP, meanArterialPressure,
+            respiratoryRate, oxygenSaturation, temperature, glasgowComaScale,
+            centralVenousPressure, urineOutput, ventilatorSettings, medicationInfusions, notes, recordedBy
+        } = req.body;
+
+        const [result] = await pool.execute(
+            `INSERT INTO icu_monitoring
+             (icuAdmissionId, monitoringDateTime, heartRate, systolicBP, diastolicBP, meanArterialPressure,
+              respiratoryRate, oxygenSaturation, temperature, glasgowComaScale, centralVenousPressure,
+              urineOutput, ventilatorSettings, medicationInfusions, notes, recordedBy)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [id, monitoringDateTime || new Date(), heartRate || null, systolicBP || null, diastolicBP || null,
+             meanArterialPressure || null, respiratoryRate || null, oxygenSaturation || null, temperature || null,
+             glasgowComaScale || null, centralVenousPressure || null, urineOutput || null,
+             ventilatorSettings || null, medicationInfusions || null, notes || null, recordedBy || null]
+        );
+
+        const [newMonitoring] = await pool.execute(
+            `SELECT m.*,
+                    u.firstName as recordedByFirstName, u.lastName as recordedByLastName
+             FROM icu_monitoring m
+             LEFT JOIN users u ON m.recordedBy = u.userId
+             WHERE m.monitoringId = ?`,
+            [result.insertId]
+        );
+
+        res.status(201).json(newMonitoring[0]);
+    } catch (error) {
+        console.error('Error creating ICU monitoring:', error);
+        res.status(500).json({ message: 'Error creating ICU monitoring', error: error.message });
+    }
+});
+
+/**
+ * @route PUT /api/icu/admissions/:id/monitoring/:monitoringId
+ * @description Update an ICU monitoring record
+ */
+router.put('/admissions/:id/monitoring/:monitoringId', async (req, res) => {
+    try {
+        const { id, monitoringId } = req.params;
+        const updates = [];
+        const values = [];
+
+        const fields = ['monitoringDateTime', 'heartRate', 'systolicBP', 'diastolicBP', 'meanArterialPressure',
+                       'respiratoryRate', 'oxygenSaturation', 'temperature', 'glasgowComaScale',
+                       'centralVenousPressure', 'urineOutput', 'ventilatorSettings', 'medicationInfusions', 'notes'];
+
+        fields.forEach(field => {
+            if (req.body[field] !== undefined) {
+                updates.push(`${field} = ?`);
+                values.push(req.body[field] || null);
+            }
+        });
+
+        if (updates.length === 0) {
+            return res.status(400).json({ message: 'No fields to update' });
+        }
+
+        values.push(monitoringId, id);
+
+        await pool.execute(
+            `UPDATE icu_monitoring SET ${updates.join(', ')} WHERE monitoringId = ? AND icuAdmissionId = ?`,
+            values
+        );
+
+        const [updated] = await pool.execute(
+            `SELECT m.*,
+                    u.firstName as recordedByFirstName, u.lastName as recordedByLastName
+             FROM icu_monitoring m
+             LEFT JOIN users u ON m.recordedBy = u.userId
+             WHERE m.monitoringId = ?`,
+            [monitoringId]
+        );
+
+        res.status(200).json(updated[0]);
+    } catch (error) {
+        console.error('Error updating ICU monitoring:', error);
+        res.status(500).json({ message: 'Error updating ICU monitoring', error: error.message });
+    }
+});
+
+/**
+ * @route DELETE /api/icu/admissions/:id/monitoring/:monitoringId
+ * @description Delete an ICU monitoring record
+ */
+router.delete('/admissions/:id/monitoring/:monitoringId', async (req, res) => {
+    try {
+        const { id, monitoringId } = req.params;
+
+        const [result] = await pool.execute(
+            'DELETE FROM icu_monitoring WHERE monitoringId = ? AND icuAdmissionId = ?',
+            [monitoringId, id]
+        );
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: 'Monitoring record not found' });
+        }
+
+        res.status(200).json({ message: 'Monitoring record deleted successfully' });
+    } catch (error) {
+        console.error('Error deleting ICU monitoring:', error);
+        res.status(500).json({ message: 'Error deleting ICU monitoring', error: error.message });
     }
 });
 

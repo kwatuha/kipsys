@@ -880,8 +880,8 @@ router.get('/admissions/:id/overview', async (req, res) => {
             [id]
         );
 
-        // Get lab orders
-        const [labOrders] = await pool.execute(
+        // Get lab orders with test names
+        const [labOrdersRaw] = await pool.execute(
             `SELECT lo.*,
                     u.firstName as orderedByFirstName, u.lastName as orderedByLastName
              FROM lab_test_orders lo
@@ -890,6 +890,25 @@ router.get('/admissions/:id/overview', async (req, res) => {
              ORDER BY lo.orderDate DESC`,
             [id]
         );
+
+        // Get lab order items with test names for each order
+        const labOrders = await Promise.all(labOrdersRaw.map(async (order) => {
+            const [items] = await pool.execute(
+                `SELECT loi.*, ltt.testName, ltt.testCode
+                 FROM lab_test_order_items loi
+                 LEFT JOIN lab_test_types ltt ON loi.testTypeId = ltt.testTypeId
+                 WHERE loi.orderId = ?
+                 ORDER BY loi.itemId`,
+                [order.orderId]
+            );
+            // For display, use the first test name or join all if multiple
+            const testNames = items.map((item) => item.testName).filter(Boolean);
+            return {
+                ...order,
+                items: items || [],
+                testName: testNames.length > 0 ? testNames.join(', ') : null
+            };
+        }));
 
         // Get radiology orders
         const [radiologyOrders] = await pool.execute(
@@ -902,8 +921,8 @@ router.get('/admissions/:id/overview', async (req, res) => {
             [id]
         );
 
-        // Get prescriptions
-        const [prescriptions] = await pool.execute(
+        // Get prescriptions with medication items
+        const [prescriptionsRaw] = await pool.execute(
             `SELECT p.*,
                     u.firstName as doctorFirstName, u.lastName as doctorLastName
              FROM prescriptions p
@@ -912,6 +931,27 @@ router.get('/admissions/:id/overview', async (req, res) => {
              ORDER BY p.prescriptionDate DESC`,
             [id]
         );
+
+        // Get prescription items with medication names for each prescription
+        const prescriptions = await Promise.all(prescriptionsRaw.map(async (prescription) => {
+            const [items] = await pool.execute(
+                `SELECT pi.*, m.name as medicationNameFromCatalog
+                 FROM prescription_items pi
+                 LEFT JOIN medications m ON pi.medicationId = m.medicationId
+                 WHERE pi.prescriptionId = ?
+                 ORDER BY pi.itemId`,
+                [prescription.prescriptionId]
+            );
+            // For display, use medication names from items or catalog
+            const medicationNames = items.map((item) =>
+                item.medicationNameFromCatalog || item.medicationName
+            ).filter(Boolean);
+            return {
+                ...prescription,
+                items: items || [],
+                medicationNames: medicationNames.length > 0 ? medicationNames.join(', ') : null
+            };
+        }));
 
         // Get diagnoses
         const [diagnoses] = await pool.execute(
@@ -929,11 +969,11 @@ router.get('/admissions/:id/overview', async (req, res) => {
              AND (i.notes LIKE '%Consumables ordered%' OR i.notes LIKE '%consumables ordered%' OR i.notes LIKE '%inpatient%')
              AND DATE(i.invoiceDate) >= DATE(?)
              ORDER BY i.invoiceDate DESC`,
-            [admission.patientId, admission.admissionDate]
+            [admission.patientId, admission.admissionDate || new Date().toISOString().split('T')[0]]
         );
 
         // Get invoice items for orders
-        const ordersWithItems = await Promise.all(ordersInvoices.map(async (invoice: any) => {
+        const ordersWithItems = await Promise.all(ordersInvoices.map(async (invoice) => {
             const [items] = await pool.execute(
                 `SELECT ii.*, sc.name as chargeName, sc.chargeCode
                  FROM invoice_items ii
