@@ -22,7 +22,8 @@ import {
   Activity,
   Stethoscope,
   User,
-  ChevronDown
+  ChevronDown,
+  Scan
 } from "lucide-react"
 import { format } from "date-fns"
 
@@ -71,7 +72,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { patientApi, doctorsApi, pharmacyApi, laboratoryApi, medicalRecordsApi, billingApi, proceduresApi, serviceChargeApi, appointmentsApi, queueApi } from "@/lib/api"
+import { patientApi, doctorsApi, pharmacyApi, laboratoryApi, medicalRecordsApi, billingApi, proceduresApi, serviceChargeApi, appointmentsApi, queueApi, radiologyApi } from "@/lib/api"
 import { useCriticalNotifications } from "@/lib/critical-notifications-context"
 import { toast } from "@/components/ui/use-toast"
 import { useAuth } from "@/lib/auth/auth-context"
@@ -115,6 +116,18 @@ const procedureSchema = z.object({
   alreadySaved: z.boolean().optional(), // Track if already saved
 })
 
+const radiologyOrderSchema = z.object({
+  examTypeId: z.string({
+    required_error: "Please select an examination type.",
+  }),
+  bodyPart: z.string().optional(),
+  clinicalIndication: z.string().optional(),
+  priority: z.enum(["routine", "urgent", "stat"]).default("routine"),
+  scheduledDate: z.string().optional(),
+  notes: z.string().optional(),
+  alreadySaved: z.boolean().optional(), // Track if already saved
+})
+
 const orderSchema = z.object({
   chargeId: z.string({
     required_error: "Please select a consumable/order.",
@@ -154,12 +167,14 @@ const encounterFormSchema = z.object({
   medications: z.array(medicationSchema).optional(),
   labTests: z.array(labTestSchema).optional(),
   procedures: z.array(procedureSchema).optional(),
+  radiologyOrders: z.array(radiologyOrderSchema).optional(),
   orders: z.array(orderSchema).optional(),
 })
 
 type MedicationValues = z.infer<typeof medicationSchema>
 type LabTestValues = z.infer<typeof labTestSchema>
 type ProcedureValues = z.infer<typeof procedureSchema>
+type RadiologyOrderValues = z.infer<typeof radiologyOrderSchema>
 type OrderValues = z.infer<typeof orderSchema>
 type EncounterFormValues = z.infer<typeof encounterFormSchema>
 
@@ -182,6 +197,15 @@ const defaultProcedure: ProcedureValues = {
   procedureId: "",
   notes: "",
   complications: "",
+}
+
+const defaultRadiologyOrder: RadiologyOrderValues = {
+  examTypeId: "",
+  bodyPart: "",
+  clinicalIndication: "",
+  priority: "routine",
+  scheduledDate: "",
+  notes: "",
 }
 
 const defaultOrder: OrderValues = {
@@ -225,14 +249,19 @@ export function PatientEncounterForm({
   const [activeTab, setActiveTab] = useState("encounter")
   const [prescriptionSheetOpen, setPrescriptionSheetOpen] = useState(false)
   const [proceduresSheetOpen, setProceduresSheetOpen] = useState(false)
+  const [radiologySheetOpen, setRadiologySheetOpen] = useState(false)
   const [ordersSheetOpen, setOrdersSheetOpen] = useState(false)
   const [procedures, setProcedures] = useState<any[]>([])
+  const [examTypes, setExamTypes] = useState<any[]>([])
   const [consumables, setConsumables] = useState<any[]>([])
   const [addProcedureDialogOpen, setAddProcedureDialogOpen] = useState(false)
+  const [addRadiologyDialogOpen, setAddRadiologyDialogOpen] = useState(false)
   const [addOrderDialogOpen, setAddOrderDialogOpen] = useState(false)
   const [editingProcedureIndex, setEditingProcedureIndex] = useState<number | null>(null)
+  const [editingRadiologyIndex, setEditingRadiologyIndex] = useState<number | null>(null)
   const [editingOrderIndex, setEditingOrderIndex] = useState<number | null>(null)
   const [tempProcedure, setTempProcedure] = useState<ProcedureValues>(defaultProcedure)
+  const [tempRadiologyOrder, setTempRadiologyOrder] = useState<RadiologyOrderValues>(defaultRadiologyOrder)
   const [tempOrder, setTempOrder] = useState<OrderValues>(defaultOrder)
   const [labTestsSheetOpen, setLabTestsSheetOpen] = useState(false)
   const [symptomsSheetOpen, setSymptomsSheetOpen] = useState(false)
@@ -338,6 +367,7 @@ export function PatientEncounterForm({
       medications: [],
       labTests: [],
       procedures: [],
+      radiologyOrders: [],
       orders: [],
     },
   })
@@ -358,6 +388,11 @@ export function PatientEncounterForm({
   const { fields: procedureFields, append: appendProcedure, remove: removeProcedure } = useFieldArray({
     control: form.control,
     name: "procedures",
+  })
+
+  const { fields: radiologyOrderFields, append: appendRadiologyOrder, remove: removeRadiologyOrder } = useFieldArray({
+    control: form.control,
+    name: "radiologyOrders",
   })
 
   const { fields: orderFields, append: appendOrder, remove: removeOrder } = useFieldArray({
@@ -810,11 +845,12 @@ export function PatientEncounterForm({
       setIsLoadingData(true)
       setLoading(true)
       setError(null)
-      const [doctorsData, testTypesData, medicationsData, proceduresData, consumablesData] = await Promise.all([
+      const [doctorsData, testTypesData, medicationsData, proceduresData, examTypesData, consumablesData] = await Promise.all([
         doctorsApi.getAll(),
         laboratoryApi.getTestTypes(),
         pharmacyApi.getMedications(undefined, 1, 1000), // Get all medications for lookup
         proceduresApi.getAll(undefined, undefined, true), // Get active procedures
+        radiologyApi.getExamTypes(undefined, undefined, 1, 1000), // Get all exam types
         serviceChargeApi.getAll(undefined, undefined, undefined, undefined, 'Consumable'), // Get consumables
       ])
 
@@ -823,7 +859,21 @@ export function PatientEncounterForm({
       setDoctors(doctorsData)
       setTestTypes(testTypesData)
       setMedications(medicationsData)
-      setProcedures(proceduresData || [])
+      // Filter out radiology from procedures (if category contains "Radiology" or name contains radiology-related terms)
+      const filteredProcedures = (proceduresData || []).filter((proc: any) => {
+        const category = (proc.category || '').toLowerCase()
+        const name = (proc.procedureName || '').toLowerCase()
+        return !category.includes('radiology') &&
+               !name.includes('x-ray') &&
+               !name.includes('xray') &&
+               !name.includes('ct scan') &&
+               !name.includes('mri') &&
+               !name.includes('ultrasound') &&
+               !name.includes('radiology')
+      })
+      setProcedures(filteredProcedures)
+      console.log('📷 Loaded exam types:', examTypesData?.length || 0, examTypesData)
+      setExamTypes(examTypesData || [])
       setConsumables(consumablesData || [])
 
       // Auto-fill doctor field with logged-in user if they are a doctor
@@ -1206,6 +1256,31 @@ export function PatientEncounterForm({
         // No need to create invoice here - it's done in api/routes/proceduresRoutes.js
       } else {
         console.log('⏭️ Skipping procedure creation - no unsaved procedures')
+      }
+
+      // 4.5. Create radiology orders if any (only unsaved ones)
+      const unsavedRadiologyOrders = data.radiologyOrders?.filter((order: any) => !order.alreadySaved) || []
+      console.log('📷 Saving radiology orders:', { total: data.radiologyOrders?.length || 0, unsaved: unsavedRadiologyOrders.length })
+      if (unsavedRadiologyOrders.length > 0) {
+        const radiologyOrderPromises = unsavedRadiologyOrders.map((order: any) => {
+          const orderData = {
+            patientId: parseInt(data.patientId),
+            orderedBy: parseInt(data.doctorId),
+            examTypeId: parseInt(order.examTypeId),
+            orderDate: format(data.encounterDate, 'yyyy-MM-dd'),
+            bodyPart: order.bodyPart || null,
+            clinicalIndication: order.clinicalIndication || null,
+            priority: order.priority || 'routine',
+            status: 'pending',
+            scheduledDate: order.scheduledDate || null,
+            notes: order.notes || null,
+          }
+          return radiologyApi.createOrder(orderData)
+        })
+        const radiologyOrderResults = await Promise.all(radiologyOrderPromises)
+        console.log('✅ Radiology orders created:', radiologyOrderResults.length)
+      } else {
+        console.log('⏭️ Skipping radiology order creation - no unsaved orders')
       }
 
       // 5. Create orders/consumables invoice if any (only unsaved ones)
@@ -2312,6 +2387,9 @@ const clearDraftFromStorage = (patientId:any) => {
                   } else if (value === "procedures") {
                     setProceduresSheetOpen(true)
                     setActiveTab("encounter") // Keep encounter tab active
+                  } else if (value === "radiology") {
+                    setRadiologySheetOpen(true)
+                    setActiveTab("encounter") // Keep encounter tab active
                   } else if (value === "orders") {
                     setOrdersSheetOpen(true)
                     setActiveTab("encounter") // Keep encounter tab active
@@ -2321,7 +2399,7 @@ const clearDraftFromStorage = (patientId:any) => {
                 }} className="flex-1 flex flex-col overflow-hidden min-h-0">
                   {/* Sticky Tabs Navigation - Compact */}
                   <div className="px-4 py-1.5 border-b bg-background flex-shrink-0">
-                    <TabsList className="grid w-full grid-cols-8 h-auto gap-1">
+                    <TabsList className="grid w-full grid-cols-9 h-auto gap-1">
                       <TabsTrigger value="encounter" className="py-1.5 h-auto text-xs">
                         <FileText className="h-3 w-3 mr-1" />
                         <span>Encounter</span>
@@ -2348,6 +2426,13 @@ const clearDraftFromStorage = (patientId:any) => {
                       }}>
                         <Stethoscope className="h-3 w-3 mr-1" />
                         <span>Procedures</span>
+                      </TabsTrigger>
+                      <TabsTrigger value="radiology" className="py-1.5 h-auto text-xs" onClick={() => {
+                        setRadiologySheetOpen(true)
+                        setActiveTab("encounter") // Keep encounter tab active
+                      }}>
+                        <Scan className="h-3 w-3 mr-1" />
+                        <span>Radiology</span>
                       </TabsTrigger>
                       <TabsTrigger value="orders" className="py-1.5 h-auto text-xs" onClick={() => {
                         setOrdersSheetOpen(true)
@@ -2612,6 +2697,15 @@ const clearDraftFromStorage = (patientId:any) => {
                       <div className="text-center text-muted-foreground">
                         <Stethoscope className="h-12 w-12 mx-auto mb-4 opacity-50" />
                         <p className="text-sm">Click "Procedures" tab to open procedure recording</p>
+                      </div>
+                    </div>
+                  </TabsContent>
+
+                  <TabsContent value="radiology" className="flex-1 overflow-hidden min-h-0">
+                    <div className="flex items-center justify-center h-full">
+                      <div className="text-center text-muted-foreground">
+                        <Scan className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                        <p className="text-sm">Click "Radiology" tab to open radiology order recording</p>
                       </div>
                     </div>
                   </TabsContent>
@@ -3626,6 +3720,142 @@ const clearDraftFromStorage = (patientId:any) => {
         </SheetContent>
       </Sheet>
 
+      {/* Radiology Sheet */}
+      <Sheet open={radiologySheetOpen} onOpenChange={setRadiologySheetOpen}>
+        <SheetContent side="right" className="w-full sm:w-[90vw] sm:max-w-5xl p-0 flex flex-col overflow-hidden">
+          <SheetHeader className="px-6 pt-6 pb-4 border-b flex-shrink-0">
+            <SheetTitle className="flex items-center gap-2">
+              <Scan className="h-5 w-5" />
+              Radiology Orders
+            </SheetTitle>
+            <SheetDescription>
+              Order radiology examinations for this patient encounter
+            </SheetDescription>
+          </SheetHeader>
+          <ScrollArea className="flex-1 px-6">
+            <div className="space-y-4 mt-4 pb-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-md font-medium">Radiology Orders</h3>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setEditingRadiologyIndex(null)
+                    setTempRadiologyOrder(defaultRadiologyOrder)
+                    setAddRadiologyDialogOpen(true)
+                  }}
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Radiology Order
+                </Button>
+              </div>
+              {radiologyOrderFields.length === 0 ? (
+                <Card>
+                  <CardContent className="py-8 text-center text-muted-foreground">
+                    No radiology orders recorded. Click "Add Radiology Order" to record an order.
+                  </CardContent>
+                </Card>
+              ) : (
+                <div className="rounded-md border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Examination</TableHead>
+                        <TableHead>Body Part</TableHead>
+                        <TableHead>Clinical Indication</TableHead>
+                        <TableHead>Priority</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {radiologyOrderFields.map((field, index) => {
+                        const examTypeId = form.watch(`radiologyOrders.${index}.examTypeId`)
+                        // Try both string and number comparison
+                        const examType = examTypes.find((e: any) => {
+                          const eId = e.examTypeId?.toString()
+                          const formId = examTypeId?.toString()
+                          return eId === formId ||
+                                 e.examTypeId === parseInt(formId || '0') ||
+                                 parseInt(eId || '0') === parseInt(formId || '0')
+                        })
+                        const examName = examType?.examName || (examTypeId ? `Exam ID: ${examTypeId}` : "No exam selected")
+                        return (
+                          <TableRow key={field.id}>
+                            <TableCell className="font-medium">{examName}</TableCell>
+                            <TableCell>{form.watch(`radiologyOrders.${index}.bodyPart`) || "-"}</TableCell>
+                            <TableCell className="max-w-xs truncate">{form.watch(`radiologyOrders.${index}.clinicalIndication`) || "-"}</TableCell>
+                            <TableCell>
+                              <Badge variant={form.watch(`radiologyOrders.${index}.priority`) === 'stat' || form.watch(`radiologyOrders.${index}.priority`) === 'urgent' ? 'destructive' : 'outline'}>
+                                {form.watch(`radiologyOrders.${index}.priority`)?.toUpperCase() || 'ROUTINE'}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <div className="flex items-center justify-end gap-2">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    setEditingRadiologyIndex(index)
+                                    const orderData = form.getValues(`radiologyOrders.${index}`)
+                                    setTempRadiologyOrder(orderData || defaultRadiologyOrder)
+                                    setAddRadiologyDialogOpen(true)
+                                  }}
+                                  className="h-8 w-8 p-0"
+                                >
+                                  <Eye className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => removeRadiologyOrder(index)}
+                                  className="h-8 w-8 p-0 text-destructive hover:text-destructive"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </div>
+          </ScrollArea>
+          <SheetFooter className="px-6 py-4 border-t bg-background flex-shrink-0">
+            <div className="flex items-center justify-between w-full">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setRadiologySheetOpen(false)}
+              >
+                Close
+              </Button>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground">
+                  Radiology orders will be saved with the encounter
+                </span>
+                <Button
+                  type="button"
+                  onClick={() => {
+                    setRadiologySheetOpen(false)
+                    form.handleSubmit(onSubmit)()
+                  }}
+                  disabled={isSubmitting}
+                >
+                  {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Save Encounter
+                </Button>
+              </div>
+            </div>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
+
       {/* Orders/Consumables Sheet */}
       <Sheet open={ordersSheetOpen} onOpenChange={setOrdersSheetOpen}>
         <SheetContent side="right" className="w-full sm:w-[90vw] sm:max-w-5xl p-0 flex flex-col overflow-hidden">
@@ -4210,6 +4440,146 @@ const clearDraftFromStorage = (patientId:any) => {
                   {editingLabTestIndex !== null ? "Update" : "Add"} Test
                 </Button>
               </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add/Edit Radiology Order Dialog */}
+      <Dialog open={addRadiologyDialogOpen} onOpenChange={setAddRadiologyDialogOpen}>
+        <DialogContent className="sm:max-w-[600px] z-[121]" overlayClassName="z-[120]">
+          <DialogHeader>
+            <DialogTitle>
+              {editingRadiologyIndex !== null ? "Edit Radiology Order" : "Add Radiology Order"}
+            </DialogTitle>
+            <DialogDescription>
+              {editingRadiologyIndex !== null ? "Update the radiology order details" : "Order a radiology examination for this patient encounter"}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                Examination Type *
+              </label>
+              <Select
+                onValueChange={(value) => setTempRadiologyOrder({ ...tempRadiologyOrder, examTypeId: value })}
+                value={tempRadiologyOrder.examTypeId || ""}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select examination type" />
+                </SelectTrigger>
+                <SelectContent>
+                  {examTypes.length > 0 ? (
+                    examTypes.map((exam: any) => (
+                      <SelectItem key={exam.examTypeId} value={exam.examTypeId.toString()}>
+                        {exam.examName}
+                        {exam.category && ` (${exam.category})`}
+                        {exam.cost && ` - KES ${parseFloat(exam.cost).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                      </SelectItem>
+                    ))
+                  ) : (
+                    <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                      No examination types available
+                    </div>
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                Body Part
+              </label>
+              <Input
+                placeholder="e.g., Chest, Abdomen, Head"
+                value={tempRadiologyOrder.bodyPart || ""}
+                onChange={(e) => setTempRadiologyOrder({ ...tempRadiologyOrder, bodyPart: e.target.value })}
+              />
+              <p className="text-sm text-muted-foreground">Optional</p>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                Clinical Indication
+              </label>
+              <Textarea
+                placeholder="Reason for ordering this examination"
+                value={tempRadiologyOrder.clinicalIndication || ""}
+                onChange={(e) => setTempRadiologyOrder({ ...tempRadiologyOrder, clinicalIndication: e.target.value })}
+              />
+              <p className="text-sm text-muted-foreground">Optional</p>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                Priority *
+              </label>
+              <Select
+                onValueChange={(value: "routine" | "urgent" | "stat") => setTempRadiologyOrder({ ...tempRadiologyOrder, priority: value })}
+                value={tempRadiologyOrder.priority || "routine"}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select priority" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="routine">Routine</SelectItem>
+                  <SelectItem value="urgent">Urgent</SelectItem>
+                  <SelectItem value="stat">STAT</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                Scheduled Date
+              </label>
+              <Input
+                type="datetime-local"
+                value={tempRadiologyOrder.scheduledDate || ""}
+                onChange={(e) => setTempRadiologyOrder({ ...tempRadiologyOrder, scheduledDate: e.target.value })}
+              />
+              <p className="text-sm text-muted-foreground">Optional</p>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                Notes
+              </label>
+              <Textarea
+                placeholder="Additional notes"
+                value={tempRadiologyOrder.notes || ""}
+                onChange={(e) => setTempRadiologyOrder({ ...tempRadiologyOrder, notes: e.target.value })}
+              />
+              <p className="text-sm text-muted-foreground">Optional</p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setAddRadiologyDialogOpen(false)
+                setEditingRadiologyIndex(null)
+                setTempRadiologyOrder(defaultRadiologyOrder)
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={() => {
+                if (!tempRadiologyOrder.examTypeId) {
+                  return
+                }
+                if (editingRadiologyIndex !== null) {
+                  form.setValue(`radiologyOrders.${editingRadiologyIndex}`, tempRadiologyOrder)
+                } else {
+                  const newOrder = { ...tempRadiologyOrder, alreadySaved: false }
+                  console.log('➕ Adding radiology order to form:', newOrder)
+                  appendRadiologyOrder(newOrder)
+                }
+                setAddRadiologyDialogOpen(false)
+                setEditingRadiologyIndex(null)
+                setTempRadiologyOrder(defaultRadiologyOrder)
+              }}
+              disabled={!tempRadiologyOrder.examTypeId}
+            >
+              {editingRadiologyIndex !== null ? "Update" : "Add"} Order
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

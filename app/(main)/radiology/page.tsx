@@ -8,11 +8,13 @@ import { Textarea } from "@/components/ui/textarea"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
-import { Search, Plus, Download, Loader2, MoreVertical, Eye, CheckCircle, XCircle, ImageIcon, Edit, Trash2, FileText } from "lucide-react"
+import { Search, Plus, Download, Loader2, MoreVertical, Eye, CheckCircle, XCircle, ImageIcon, Edit, Trash2, FileText, Printer } from "lucide-react"
 import { AddExaminationForm } from "@/components/add-examination-form"
-import { radiologyApi } from "@/lib/api"
+import { radiologyApi, doctorsApi } from "@/lib/api"
 import { format } from "date-fns"
 import { toast } from "@/components/ui/use-toast"
+import { printRadiologyOrder, downloadRadiologyOrderPDF, printCombinedRadiologyReport, downloadCombinedRadiologyReportPDF } from "@/lib/radiology-results-pdf"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -82,7 +84,13 @@ export default function RadiologyPage() {
   const [categoryFilter, setCategoryFilter] = useState<string>("")
   const [search, setSearch] = useState("")
   const [catalogSearch, setCatalogSearch] = useState("")
-  
+  const [dateFrom, setDateFrom] = useState<string>("")
+  const [dateTo, setDateTo] = useState<string>("")
+  const [doctorFilter, setDoctorFilter] = useState<string>("")
+  const [doctors, setDoctors] = useState<any[]>([])
+  const [loadingDoctors, setLoadingDoctors] = useState(false)
+  const [printingReport, setPrintingReport] = useState(false)
+
   // Order actions state
   const [viewOrderOpen, setViewOrderOpen] = useState(false)
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null)
@@ -137,17 +145,59 @@ export default function RadiologyPage() {
     loadExamTypes()
   }, [categoryFilter, catalogSearch])
 
+  useEffect(() => {
+    loadDoctors()
+  }, [])
+
+  const loadDoctors = async () => {
+    try {
+      setLoadingDoctors(true)
+      const data = await doctorsApi.getAll()
+      setDoctors(data)
+    } catch (err: any) {
+      console.error('Error loading doctors:', err)
+    } finally {
+      setLoadingDoctors(false)
+    }
+  }
+
   const filteredOrders = radiologyOrders.filter((order) => {
+    // Search filter
     if (search) {
       const searchLower = search.toLowerCase()
-      return (
+      const matchesSearch = (
         order.orderNumber.toLowerCase().includes(searchLower) ||
         `${order.firstName || ''} ${order.lastName || ''}`.toLowerCase().includes(searchLower) ||
         order.patientNumber?.toLowerCase().includes(searchLower) ||
         order.clinicalIndication?.toLowerCase().includes(searchLower) ||
         order.examName?.toLowerCase().includes(searchLower)
       )
+      if (!matchesSearch) return false
     }
+
+    // Date range filter
+    if (dateFrom || dateTo) {
+      const orderDate = new Date(order.orderDate)
+      orderDate.setHours(0, 0, 0, 0)
+
+      if (dateFrom) {
+        const fromDate = new Date(dateFrom)
+        fromDate.setHours(0, 0, 0, 0)
+        if (orderDate < fromDate) return false
+      }
+
+      if (dateTo) {
+        const toDate = new Date(dateTo)
+        toDate.setHours(23, 59, 59, 999)
+        if (orderDate > toDate) return false
+      }
+    }
+
+    // Doctor filter
+    if (doctorFilter) {
+      if (order.orderedBy.toString() !== doctorFilter) return false
+    }
+
     return true
   })
 
@@ -305,6 +355,238 @@ export default function RadiologyPage() {
     }
   }
 
+  const handlePrintOrder = async (order: RadiologyOrder) => {
+    try {
+      // Load full order details
+      const orderDetails = await radiologyApi.getOrder(order.orderId.toString())
+      const orderData = {
+        orderNumber: orderDetails.orderNumber,
+        orderDate: orderDetails.orderDate,
+        patientName: getPatientName(orderDetails),
+        patientNumber: orderDetails.patientNumber,
+        doctorName: getDoctorName(orderDetails),
+        priority: orderDetails.priority,
+        status: orderDetails.status,
+        clinicalIndication: orderDetails.clinicalIndication,
+        examName: orderDetails.examName,
+        examCode: orderDetails.examCode,
+        category: orderDetails.category,
+        bodyPart: orderDetails.bodyPart,
+        scheduledDate: orderDetails.scheduledDate,
+        notes: orderDetails.notes,
+      }
+      printRadiologyOrder(orderData)
+    } catch (err: any) {
+      toast({
+        title: "Error",
+        description: err.message || "Failed to load order details for printing",
+        variant: "destructive",
+      })
+      console.error('Error printing order:', err)
+    }
+  }
+
+  const handleDownloadOrderPDF = async (order: RadiologyOrder) => {
+    try {
+      // Load full order details
+      const orderDetails = await radiologyApi.getOrder(order.orderId.toString())
+      const orderData = {
+        orderNumber: orderDetails.orderNumber,
+        orderDate: orderDetails.orderDate,
+        patientName: getPatientName(orderDetails),
+        patientNumber: orderDetails.patientNumber,
+        doctorName: getDoctorName(orderDetails),
+        priority: orderDetails.priority,
+        status: orderDetails.status,
+        clinicalIndication: orderDetails.clinicalIndication,
+        examName: orderDetails.examName,
+        examCode: orderDetails.examCode,
+        category: orderDetails.category,
+        bodyPart: orderDetails.bodyPart,
+        scheduledDate: orderDetails.scheduledDate,
+        notes: orderDetails.notes,
+      }
+      downloadRadiologyOrderPDF(orderData)
+    } catch (err: any) {
+      toast({
+        title: "Error",
+        description: err.message || "Failed to load order details for PDF",
+        variant: "destructive",
+      })
+      console.error('Error downloading PDF:', err)
+    }
+  }
+
+  const handlePrintFiltered = async () => {
+    if (filteredOrders.length === 0) {
+      toast({
+        title: "No orders to print",
+        description: "Please adjust your filters to include at least one order.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    setPrintingReport(true)
+    try {
+      // Load full details for all filtered orders
+      const ordersWithDetails = await Promise.all(
+        filteredOrders.map(async (order) => {
+          try {
+            const orderDetails = await radiologyApi.getOrder(order.orderId.toString())
+            return {
+              orderNumber: orderDetails.orderNumber,
+              orderDate: orderDetails.orderDate,
+              patientName: getPatientName(orderDetails),
+              patientNumber: orderDetails.patientNumber,
+              doctorName: getDoctorName(orderDetails),
+              priority: orderDetails.priority,
+              status: orderDetails.status,
+              clinicalIndication: orderDetails.clinicalIndication,
+              examName: orderDetails.examName,
+              examCode: orderDetails.examCode,
+              category: orderDetails.category,
+              bodyPart: orderDetails.bodyPart,
+              scheduledDate: orderDetails.scheduledDate,
+              notes: orderDetails.notes,
+            }
+          } catch (err) {
+            console.error('Error loading order details:', order.orderId, err)
+            // Return basic order info if details can't be loaded
+            return {
+              orderNumber: order.orderNumber,
+              orderDate: order.orderDate,
+              patientName: getPatientName(order),
+              patientNumber: order.patientNumber,
+              doctorName: getDoctorName(order),
+              priority: order.priority,
+              status: order.status,
+              clinicalIndication: order.clinicalIndication,
+              examName: order.examName,
+              examCode: order.examCode,
+              category: order.category,
+              bodyPart: order.bodyPart,
+              scheduledDate: undefined,
+              notes: undefined,
+            }
+          }
+        })
+      )
+
+      const selectedDoctor = doctorFilter
+        ? doctors.find(d => d.userId.toString() === doctorFilter)
+        : null
+      const doctorName = selectedDoctor
+        ? `${selectedDoctor.firstName} ${selectedDoctor.lastName}`.trim()
+        : undefined
+
+      printCombinedRadiologyReport(ordersWithDetails, {
+        dateFrom: dateFrom || undefined,
+        dateTo: dateTo || undefined,
+        doctorName: doctorName,
+      })
+
+      toast({
+        title: "Report generated",
+        description: `Printing ${ordersWithDetails.length} order(s) with results.`,
+      })
+    } catch (err: any) {
+      toast({
+        title: "Error generating report",
+        description: err.message || "Failed to generate the report. Please try again.",
+        variant: "destructive",
+      })
+      console.error('Error generating report:', err)
+    } finally {
+      setPrintingReport(false)
+    }
+  }
+
+  const handleDownloadFilteredPDF = async () => {
+    if (filteredOrders.length === 0) {
+      toast({
+        title: "No orders to download",
+        description: "Please adjust your filters to include at least one order.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    setPrintingReport(true)
+    try {
+      // Load full details for all filtered orders
+      const ordersWithDetails = await Promise.all(
+        filteredOrders.map(async (order) => {
+          try {
+            const orderDetails = await radiologyApi.getOrder(order.orderId.toString())
+            return {
+              orderNumber: orderDetails.orderNumber,
+              orderDate: orderDetails.orderDate,
+              patientName: getPatientName(orderDetails),
+              patientNumber: orderDetails.patientNumber,
+              doctorName: getDoctorName(orderDetails),
+              priority: orderDetails.priority,
+              status: orderDetails.status,
+              clinicalIndication: orderDetails.clinicalIndication,
+              examName: orderDetails.examName,
+              examCode: orderDetails.examCode,
+              category: orderDetails.category,
+              bodyPart: orderDetails.bodyPart,
+              scheduledDate: orderDetails.scheduledDate,
+              notes: orderDetails.notes,
+            }
+          } catch (err) {
+            console.error('Error loading order details:', order.orderId, err)
+            // Return basic order info if details can't be loaded
+            return {
+              orderNumber: order.orderNumber,
+              orderDate: order.orderDate,
+              patientName: getPatientName(order),
+              patientNumber: order.patientNumber,
+              doctorName: getDoctorName(order),
+              priority: order.priority,
+              status: order.status,
+              clinicalIndication: order.clinicalIndication,
+              examName: order.examName,
+              examCode: order.examCode,
+              category: order.category,
+              bodyPart: order.bodyPart,
+              scheduledDate: undefined,
+              notes: undefined,
+            }
+          }
+        })
+      )
+
+      const selectedDoctor = doctorFilter
+        ? doctors.find(d => d.userId.toString() === doctorFilter)
+        : null
+      const doctorName = selectedDoctor
+        ? `${selectedDoctor.firstName} ${selectedDoctor.lastName}`.trim()
+        : undefined
+
+      downloadCombinedRadiologyReportPDF(ordersWithDetails, {
+        dateFrom: dateFrom || undefined,
+        dateTo: dateTo || undefined,
+        doctorName: doctorName,
+      })
+
+      toast({
+        title: "Report generated",
+        description: `Downloading PDF for ${ordersWithDetails.length} order(s) with results.`,
+      })
+    } catch (err: any) {
+      toast({
+        title: "Error generating report",
+        description: err.message || "Failed to generate the report. Please try again.",
+        variant: "destructive",
+      })
+      console.error('Error generating report:', err)
+    } finally {
+      setPrintingReport(false)
+    }
+  }
+
   const getStatusActionLabel = (status: string) => {
     switch (status) {
       case 'scheduled':
@@ -407,9 +689,39 @@ export default function RadiologyPage() {
           <p className="text-muted-foreground">Manage radiology examinations and results</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline">
-            <Download className="mr-2 h-4 w-4" />
-            Export Results
+          <Button
+            variant="outline"
+            onClick={handlePrintFiltered}
+            disabled={printingReport || filteredOrders.length === 0}
+          >
+            {printingReport ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Generating...
+              </>
+            ) : (
+              <>
+                <Printer className="mr-2 h-4 w-4" />
+                Print Filtered ({filteredOrders.length})
+              </>
+            )}
+          </Button>
+          <Button
+            variant="outline"
+            onClick={handleDownloadFilteredPDF}
+            disabled={printingReport || filteredOrders.length === 0}
+          >
+            {printingReport ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Generating...
+              </>
+            ) : (
+              <>
+                <Download className="mr-2 h-4 w-4" />
+                Download PDF ({filteredOrders.length})
+              </>
+            )}
           </Button>
           <Button onClick={() => setAddExaminationOpen(true)}>
             <Plus className="mr-2 h-4 w-4" />
@@ -439,49 +751,109 @@ export default function RadiologyPage() {
                   </Button>
                 </div>
               )}
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex gap-2 flex-wrap">
-                  <Button 
-                    variant={statusFilter === "" ? "default" : "outline"} 
-                    size="sm"
-                    onClick={() => setStatusFilter("")}
-                  >
-                    All
-                  </Button>
-                  <Button 
-                    variant={statusFilter === "pending" ? "default" : "outline"} 
-                    size="sm"
-                    onClick={() => setStatusFilter("pending")}
-                  >
-                    Pending
-                  </Button>
-                  <Button 
-                    variant={statusFilter === "scheduled" ? "default" : "outline"} 
-                    size="sm"
-                    onClick={() => setStatusFilter("scheduled")}
-                  >
-                    Scheduled
-                  </Button>
-                  <Button 
-                    variant={statusFilter === "in_progress" ? "default" : "outline"} 
-                    size="sm"
-                    onClick={() => setStatusFilter("in_progress")}
-                  >
-                    In Progress
-                  </Button>
-                  <Button 
-                    variant={statusFilter === "completed" ? "default" : "outline"} 
-                    size="sm"
-                    onClick={() => setStatusFilter("completed")}
-                  >
-                    Completed
-                  </Button>
+              <div className="space-y-4 mb-4">
+                {/* Filters Row */}
+                <div className="flex gap-2 flex-wrap items-end">
+                  <div className="flex gap-2 flex-wrap">
+                    <Button
+                      variant={statusFilter === "" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setStatusFilter("")}
+                    >
+                      All
+                    </Button>
+                    <Button
+                      variant={statusFilter === "pending" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setStatusFilter("pending")}
+                    >
+                      Pending
+                    </Button>
+                    <Button
+                      variant={statusFilter === "scheduled" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setStatusFilter("scheduled")}
+                    >
+                      Scheduled
+                    </Button>
+                    <Button
+                      variant={statusFilter === "in_progress" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setStatusFilter("in_progress")}
+                    >
+                      In Progress
+                    </Button>
+                    <Button
+                      variant={statusFilter === "completed" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setStatusFilter("completed")}
+                    >
+                      Completed
+                    </Button>
+                  </div>
+
+                  {/* Date and Doctor Filters */}
+                  <div className="flex gap-2 flex-wrap items-end">
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs text-muted-foreground">From Date</label>
+                      <Input
+                        type="date"
+                        className="w-40"
+                        value={dateFrom}
+                        onChange={(e) => setDateFrom(e.target.value)}
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs text-muted-foreground">To Date</label>
+                      <Input
+                        type="date"
+                        className="w-40"
+                        value={dateTo}
+                        onChange={(e) => setDateTo(e.target.value)}
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs text-muted-foreground">Doctor</label>
+                      <Select value={doctorFilter || "all"} onValueChange={(value) => setDoctorFilter(value === "all" ? "" : value)}>
+                        <SelectTrigger className="w-48">
+                          <SelectValue placeholder="All Doctors" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All Doctors</SelectItem>
+                          {loadingDoctors ? (
+                            <SelectItem value="loading" disabled>Loading...</SelectItem>
+                          ) : (
+                            doctors.map((doctor) => (
+                              <SelectItem key={doctor.userId} value={doctor.userId.toString()}>
+                                {doctor.firstName} {doctor.lastName}
+                              </SelectItem>
+                            ))
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {(dateFrom || dateTo || doctorFilter) && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setDateFrom("")
+                          setDateTo("")
+                          setDoctorFilter("")
+                        }}
+                      >
+                        Clear Filters
+                      </Button>
+                    )}
+                  </div>
                 </div>
+
+                {/* Search */}
                 <div className="relative w-64">
                   <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input 
-                    type="search" 
-                    placeholder="Search examinations..." 
+                  <Input
+                    type="search"
+                    placeholder="Search examinations..."
                     className="w-full pl-8"
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
@@ -562,6 +934,14 @@ export default function RadiologyPage() {
                                     <Eye className="mr-2 h-4 w-4" />
                                     View Details
                                   </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => handlePrintOrder(order)}>
+                                    <Printer className="mr-2 h-4 w-4" />
+                                    Print
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => handleDownloadOrderPDF(order)}>
+                                    <Download className="mr-2 h-4 w-4" />
+                                    Download PDF
+                                  </DropdownMenuItem>
                                   {order.status !== 'completed' && order.status !== 'cancelled' && (
                                     <>
                                       <DropdownMenuSeparator />
@@ -571,7 +951,7 @@ export default function RadiologyPage() {
                                       </DropdownMenuItem>
                                       <DropdownMenuSeparator />
                                       {getNextStatus(order.status) && (
-                                        <DropdownMenuItem 
+                                        <DropdownMenuItem
                                           onClick={() => handleUpdateOrderStatus(order.orderId, getNextStatus(order.status)!)}
                                           disabled={updatingStatus === order.orderId.toString()}
                                         >
@@ -581,7 +961,7 @@ export default function RadiologyPage() {
                                       )}
                                       {/* Only show "Mark as Completed" if getNextStatus doesn't already provide it */}
                                       {order.status !== 'cancelled' && getNextStatus(order.status) !== 'completed' && (
-                                        <DropdownMenuItem 
+                                        <DropdownMenuItem
                                           onClick={() => handleUpdateOrderStatus(order.orderId, 'completed')}
                                           disabled={updatingStatus === order.orderId.toString()}
                                         >
@@ -589,7 +969,7 @@ export default function RadiologyPage() {
                                           {updatingStatus === order.orderId.toString() ? 'Marking...' : 'Mark as Completed'}
                                         </DropdownMenuItem>
                                       )}
-                                      <DropdownMenuItem 
+                                      <DropdownMenuItem
                                         onClick={() => handleUpdateOrderStatus(order.orderId, 'cancelled')}
                                         disabled={updatingStatus === order.orderId.toString()}
                                         className="text-destructive focus:text-destructive"
@@ -639,36 +1019,36 @@ export default function RadiologyPage() {
             <CardContent>
               <div className="flex items-center justify-between mb-4">
                 <div className="flex gap-2 flex-wrap">
-                  <Button 
-                    variant={categoryFilter === "" ? "default" : "outline"} 
+                  <Button
+                    variant={categoryFilter === "" ? "default" : "outline"}
                     size="sm"
                     onClick={() => setCategoryFilter("")}
                   >
                     All
                   </Button>
-                  <Button 
-                    variant={categoryFilter === "X-Ray" ? "default" : "outline"} 
+                  <Button
+                    variant={categoryFilter === "X-Ray" ? "default" : "outline"}
                     size="sm"
                     onClick={() => setCategoryFilter("X-Ray")}
                   >
                     X-Ray
                   </Button>
-                  <Button 
-                    variant={categoryFilter === "Ultrasound" ? "default" : "outline"} 
+                  <Button
+                    variant={categoryFilter === "Ultrasound" ? "default" : "outline"}
                     size="sm"
                     onClick={() => setCategoryFilter("Ultrasound")}
                   >
                     Ultrasound
                   </Button>
-                  <Button 
-                    variant={categoryFilter === "CT Scan" ? "default" : "outline"} 
+                  <Button
+                    variant={categoryFilter === "CT Scan" ? "default" : "outline"}
                     size="sm"
                     onClick={() => setCategoryFilter("CT Scan")}
                   >
                     CT Scan
                   </Button>
-                  <Button 
-                    variant={categoryFilter === "MRI" ? "default" : "outline"} 
+                  <Button
+                    variant={categoryFilter === "MRI" ? "default" : "outline"}
                     size="sm"
                     onClick={() => setCategoryFilter("MRI")}
                   >
@@ -677,9 +1057,9 @@ export default function RadiologyPage() {
                 </div>
                 <div className="relative w-64">
                   <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input 
-                    type="search" 
-                    placeholder="Search catalog..." 
+                  <Input
+                    type="search"
+                    placeholder="Search catalog..."
                     className="w-full pl-8"
                     value={catalogSearch}
                     onChange={(e) => setCatalogSearch(e.target.value)}
@@ -759,8 +1139,8 @@ export default function RadiologyPage() {
             <DialogTitle>New Radiology Examination</DialogTitle>
             <DialogDescription>Create a new radiology examination request for a patient.</DialogDescription>
           </DialogHeader>
-          <AddExaminationForm 
-            open={addExaminationOpen} 
+          <AddExaminationForm
+            open={addExaminationOpen}
             onOpenChange={setAddExaminationOpen}
             onSuccess={() => {
               loadOrders()
@@ -860,6 +1240,63 @@ export default function RadiologyPage() {
                   <p className="text-sm">{selectedOrder.notes}</p>
                 </div>
               )}
+
+              <div className="flex justify-end gap-2 pt-4 border-t">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    if (selectedOrder) {
+                      const orderData = {
+                        orderNumber: selectedOrder.orderNumber,
+                        orderDate: selectedOrder.orderDate,
+                        patientName: `${selectedOrder.firstName || ''} ${selectedOrder.lastName || ''}`.trim() || `Patient ${selectedOrder.patientId}`,
+                        patientNumber: selectedOrder.patientNumber,
+                        doctorName: `${selectedOrder.doctorFirstName || ''} ${selectedOrder.doctorLastName || ''}`.trim() || `Doctor ${selectedOrder.orderedBy}`,
+                        priority: selectedOrder.priority,
+                        status: selectedOrder.status,
+                        clinicalIndication: selectedOrder.clinicalIndication,
+                        examName: selectedOrder.examName,
+                        examCode: selectedOrder.examCode,
+                        category: selectedOrder.category,
+                        bodyPart: selectedOrder.bodyPart,
+                        scheduledDate: selectedOrder.scheduledDate,
+                        notes: selectedOrder.notes,
+                      }
+                      printRadiologyOrder(orderData)
+                    }
+                  }}
+                >
+                  <Printer className="mr-2 h-4 w-4" />
+                  Print
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    if (selectedOrder) {
+                      const orderData = {
+                        orderNumber: selectedOrder.orderNumber,
+                        orderDate: selectedOrder.orderDate,
+                        patientName: `${selectedOrder.firstName || ''} ${selectedOrder.lastName || ''}`.trim() || `Patient ${selectedOrder.patientId}`,
+                        patientNumber: selectedOrder.patientNumber,
+                        doctorName: `${selectedOrder.doctorFirstName || ''} ${selectedOrder.doctorLastName || ''}`.trim() || `Doctor ${selectedOrder.orderedBy}`,
+                        priority: selectedOrder.priority,
+                        status: selectedOrder.status,
+                        clinicalIndication: selectedOrder.clinicalIndication,
+                        examName: selectedOrder.examName,
+                        examCode: selectedOrder.examCode,
+                        category: selectedOrder.category,
+                        bodyPart: selectedOrder.bodyPart,
+                        scheduledDate: selectedOrder.scheduledDate,
+                        notes: selectedOrder.notes,
+                      }
+                      downloadRadiologyOrderPDF(orderData)
+                    }
+                  }}
+                >
+                  <Download className="mr-2 h-4 w-4" />
+                  Download PDF
+                </Button>
+              </div>
             </div>
           ) : null}
         </DialogContent>
@@ -894,7 +1331,7 @@ export default function RadiologyPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Exam Type</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete the exam type "{deletingExamType?.examName}"? 
+              Are you sure you want to delete the exam type "{deletingExamType?.examName}"?
               This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -913,11 +1350,11 @@ export default function RadiologyPage() {
 
       {/* Add Results/Notes Dialog */}
       <Dialog open={resultsFormOpen} onOpenChange={setResultsFormOpen}>
-        <DialogContent className="sm:max-w-[600px]">
+        <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Add Examination Results/Notes</DialogTitle>
             <DialogDescription>
-              Add findings, notes, or results for order {orderForResults?.orderNumber || ''}
+              Record findings, impressions, and results for this radiology examination order
             </DialogDescription>
           </DialogHeader>
           <ExaminationResultsForm
@@ -1085,12 +1522,12 @@ function ExamTypeForm({ examType, onSave, onCancel }: { examType: ExamType | nul
 }
 
 // Examination Results Form Component
-function ExaminationResultsForm({ 
-  order, 
-  onSave, 
+function ExaminationResultsForm({
+  order,
+  onSave,
   onCancel,
-  saving 
-}: { 
+  saving
+}: {
   order: RadiologyOrder | null
   onSave: (notes: string) => void
   onCancel: () => void
@@ -1109,8 +1546,80 @@ function ExaminationResultsForm({
 
   if (!order) return null
 
+  const getPatientName = () => {
+    if (order.firstName && order.lastName) {
+      return `${order.firstName} ${order.lastName}`
+    }
+    return order.patientNumber || `Patient #${order.patientId}`
+  }
+
+  const getDoctorName = () => {
+    if (order.doctorFirstName && order.doctorLastName) {
+      return `Dr. ${order.doctorFirstName} ${order.doctorLastName}`
+    }
+    return 'Unknown Doctor'
+  }
+
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
+      {/* Order Details Summary */}
+      <Card className="bg-muted/50">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Examination Order Details</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="grid grid-cols-2 gap-4 text-sm">
+            <div>
+              <span className="text-muted-foreground font-medium">Order Number:</span>
+              <p className="font-mono font-semibold">{order.orderNumber}</p>
+            </div>
+            <div>
+              <span className="text-muted-foreground font-medium">Order Date:</span>
+              <p>{format(new Date(order.orderDate), "PPP")}</p>
+            </div>
+            <div>
+              <span className="text-muted-foreground font-medium">Examination:</span>
+              <p className="font-semibold">
+                {order.examName || 'Unknown Examination'}
+                {order.examCode && <span className="text-muted-foreground ml-2">({order.examCode})</span>}
+              </p>
+            </div>
+            <div>
+              <span className="text-muted-foreground font-medium">Category:</span>
+              <p>{order.category || 'N/A'}</p>
+            </div>
+            {order.bodyPart && (
+              <div>
+                <span className="text-muted-foreground font-medium">Body Part:</span>
+                <p>{order.bodyPart}</p>
+              </div>
+            )}
+            <div>
+              <span className="text-muted-foreground font-medium">Priority:</span>
+              <div className="mt-1">
+                <Badge variant={order.priority === 'stat' || order.priority === 'urgent' ? 'destructive' : 'outline'}>
+                  {order.priority?.toUpperCase() || 'ROUTINE'}
+                </Badge>
+              </div>
+            </div>
+            <div>
+              <span className="text-muted-foreground font-medium">Patient:</span>
+              <p>{getPatientName()}</p>
+            </div>
+            <div>
+              <span className="text-muted-foreground font-medium">Ordered By:</span>
+              <p>{getDoctorName()}</p>
+            </div>
+          </div>
+          {order.clinicalIndication && (
+            <div className="pt-2 border-t">
+              <span className="text-muted-foreground font-medium text-sm block mb-1">Clinical Indication:</span>
+              <p className="text-sm">{order.clinicalIndication}</p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       <div>
         <label className="text-sm font-medium mb-2 block">Examination Results/Notes</label>
         <Textarea
@@ -1144,12 +1653,12 @@ function ExaminationResultsForm({
 }
 
 // Edit Order Form Component
-function EditOrderForm({ 
-  order, 
-  onSave, 
+function EditOrderForm({
+  order,
+  onSave,
   onCancel,
-  saving 
-}: { 
+  saving
+}: {
   order: any
   onSave: (data: any) => void
   onCancel: () => void

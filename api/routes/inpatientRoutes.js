@@ -910,15 +910,21 @@ router.get('/admissions/:id/overview', async (req, res) => {
             };
         }));
 
-        // Get radiology orders
+        // Get radiology orders with exam type names for this patient during admission period
+        // Note: radiology_exam_orders doesn't have admissionId, so we filter by patientId and date range
+        const admissionDate = admission?.admissionDate;
+        const dischargeDate = admission?.dischargeDate || new Date().toISOString().split('T')[0];
+
         const [radiologyOrders] = await pool.execute(
             `SELECT ro.*,
-                    u.firstName as orderedByFirstName, u.lastName as orderedByLastName
+                    u.firstName as orderedByFirstName, u.lastName as orderedByLastName,
+                    ret.examName, ret.examCode, ret.category
              FROM radiology_exam_orders ro
              LEFT JOIN users u ON ro.orderedBy = u.userId
-             WHERE ro.admissionId = ?
+             LEFT JOIN radiology_exam_types ret ON ro.examTypeId = ret.examTypeId
+             WHERE ro.patientId = ? AND ro.orderDate >= ? AND ro.orderDate <= ?
              ORDER BY ro.orderDate DESC`,
-            [id]
+            [admission.patientId, admissionDate, dischargeDate]
         );
 
         // Get prescriptions with medication items

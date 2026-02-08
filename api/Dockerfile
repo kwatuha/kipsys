@@ -13,8 +13,9 @@ RUN npm install
 # Copy application code
 COPY . .
 
-# Create uploads directory
-RUN mkdir -p uploads
+# Create uploads directories with proper permissions
+RUN mkdir -p uploads/patient-documents uploads/vendor-documents && \
+    chmod -R 777 uploads
 
 # Expose API port
 EXPOSE 3001

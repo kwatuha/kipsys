@@ -28,6 +28,7 @@ import { PatientMedicalOverview } from "@/components/patient-medical-overview"
 import { PatientLabResults } from "@/components/patient-lab-results"
 import { PatientMedications } from "@/components/patient-medications"
 import { PatientProcedures } from "@/components/patient-procedures"
+import { PatientRadiology } from "@/components/patient-radiology"
 import { PatientOrders } from "@/components/patient-orders"
 import { PatientAppointments } from "@/components/patient-appointments"
 import { PatientBilling } from "@/components/patient-billing"
@@ -309,6 +310,7 @@ export default function PatientProfilePage() {
                 { value: "lab-results", label: "Lab Results" },
                 { value: "medications", label: "Medications" },
                 { value: "procedures", label: "Procedures" },
+                { value: "radiology", label: "Radiology" },
                 { value: "orders", label: "Orders" },
                 { value: "appointments", label: "Appointments" },
                 { value: "billing", label: "Billing" },
@@ -338,6 +340,10 @@ export default function PatientProfilePage() {
 
               <TabsContent value="procedures" className="space-y-4">
                 <PatientProcedures patientId={patientId} />
+              </TabsContent>
+
+              <TabsContent value="radiology" className="space-y-4">
+                <PatientRadiology patientId={patientId} />
               </TabsContent>
 
               <TabsContent value="orders" className="space-y-4">

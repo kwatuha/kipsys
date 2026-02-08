@@ -117,6 +117,55 @@ export const patientApi = {
 
         deleteFamilyHistory: (patientId: string, id: string) =>
           apiRequest<any>(`/api/patients/${patientId}/family-history/${id}`, { method: 'DELETE' }),
+
+        // Patient documents
+        getDocuments: (patientId: string) =>
+          apiRequest<any[]>(`/api/patients/${patientId}/documents`),
+
+        createDocument: (patientId: string, formData: FormData) => {
+          // Use relative URL in browser, or public URL if set
+          const baseUrl = typeof window !== 'undefined'
+            ? (process.env.NEXT_PUBLIC_API_URL || '')
+            : (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001');
+
+          // Get token from localStorage
+          let token: string | null = null;
+          if (typeof window !== 'undefined') {
+            token = localStorage.getItem('token') ||
+                    localStorage.getItem('jwt_token') ||
+                    localStorage.getItem('auth_token');
+          }
+
+          return fetch(`${baseUrl}/api/patients/${patientId}/documents`, {
+            method: 'POST',
+            headers: {
+              ...(token && { 'Authorization': `Bearer ${token}` }),
+              // Don't set Content-Type - let browser set it with boundary for FormData
+            },
+            body: formData,
+          }).then(async (res) => {
+            if (!res.ok) {
+              const error = await res.json().catch(() => ({ message: 'An error occurred' }));
+              const errorMessage = error.error || error.message || error.msg || `HTTP error! status: ${res.status}`;
+              throw new Error(errorMessage);
+            }
+            return res.json();
+          });
+        },
+
+        updateDocument: (patientId: string, documentId: string, data: any) =>
+          apiRequest<any>(`/api/patients/${patientId}/documents/${documentId}`, { method: 'PUT', body: data }),
+
+        deleteDocument: (patientId: string, documentId: string) =>
+          apiRequest<any>(`/api/patients/${patientId}/documents/${documentId}`, { method: 'DELETE' }),
+
+        downloadDocument: (patientId: string, documentId: string) => {
+          // Use relative URL in browser, or public URL if set
+          const baseUrl = typeof window !== 'undefined'
+            ? (process.env.NEXT_PUBLIC_API_URL || '')
+            : (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001');
+          return `${baseUrl}/api/patients/${patientId}/documents/${documentId}/download`;
+        },
       };
 
 // Department API
@@ -595,6 +644,9 @@ export const radiologyApi = {
 
   createOrder: (data: any) =>
     apiRequest<any>('/api/radiology/orders', { method: 'POST', body: data }),
+
+  updateOrder: (id: string, data: any) =>
+    apiRequest<any>(`/api/radiology/orders/${id}`, { method: 'PUT', body: data }),
 };
 
 // Triage API

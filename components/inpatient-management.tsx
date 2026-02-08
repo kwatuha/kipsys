@@ -11,8 +11,8 @@ import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
-import { Plus, Clock, Activity, Stethoscope, Pill, FlaskConical, Calendar, User, FileText, AlertCircle, Eye, Package } from "lucide-react"
-import { inpatientApi, laboratoryApi, userApi, doctorsApi, serviceChargeApi, billingApi, proceduresApi, pharmacyApi } from "@/lib/api"
+import { Plus, Clock, Activity, Stethoscope, Pill, FlaskConical, Calendar, User, FileText, AlertCircle, Eye, Package, Scan } from "lucide-react"
+import { inpatientApi, laboratoryApi, userApi, doctorsApi, serviceChargeApi, billingApi, proceduresApi, pharmacyApi, radiologyApi } from "@/lib/api"
 import { format } from "date-fns"
 import { toast } from "@/components/ui/use-toast"
 import { useAuth } from "@/lib/auth/auth-context"
@@ -101,6 +101,19 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
   })
   const [savingProcedure, setSavingProcedure] = useState(false)
 
+  // Radiology states
+  const [radiologyOrderDialogOpen, setRadiologyOrderDialogOpen] = useState(false)
+  const [examTypes, setExamTypes] = useState<any[]>([])
+  const [radiologyOrderForm, setRadiologyOrderForm] = useState({
+    examTypeId: "",
+    bodyPart: "",
+    clinicalIndication: "",
+    priority: "routine",
+    scheduledDate: "",
+    notes: "",
+  })
+  const [savingRadiologyOrder, setSavingRadiologyOrder] = useState(false)
+
   // Medications/Prescriptions states
   const [prescriptionDialogOpen, setPrescriptionDialogOpen] = useState(false)
   const [medications, setMedications] = useState<any[]>([])
@@ -160,6 +173,21 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
     }
   }, [orderDialogOpen])
 
+  useEffect(() => {
+    if (radiologyOrderDialogOpen) {
+      loadExamTypes()
+    }
+  }, [radiologyOrderDialogOpen])
+
+  const loadExamTypes = async () => {
+    try {
+      const examTypesList = await radiologyApi.getExamTypes(undefined, undefined, 1, 1000)
+      setExamTypes(examTypesList || [])
+    } catch (error) {
+      console.error("Error loading exam types:", error)
+    }
+  }
+
   const loadConsumables = async () => {
     try {
       const consumablesList = await serviceChargeApi.getAll(undefined, undefined, undefined, undefined, 'Consumable')
@@ -173,7 +201,19 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
     try {
       const proceduresList = await proceduresApi.getAll(undefined, undefined, true)
       console.log("Loaded procedures:", proceduresList?.length || 0, proceduresList)
-      setProcedures(proceduresList || [])
+      // Filter out radiology from procedures
+      const filteredProcedures = (proceduresList || []).filter((proc: any) => {
+        const category = (proc.category || '').toLowerCase()
+        const name = (proc.procedureName || '').toLowerCase()
+        return !category.includes('radiology') &&
+               !name.includes('x-ray') &&
+               !name.includes('xray') &&
+               !name.includes('ct scan') &&
+               !name.includes('mri') &&
+               !name.includes('ultrasound') &&
+               !name.includes('radiology')
+      })
+      setProcedures(filteredProcedures)
     } catch (error) {
       console.error("Error loading procedures:", error)
       toast({
@@ -589,6 +629,63 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
     }
   }
 
+  const handleSaveRadiologyOrder = async () => {
+    if (!radiologyOrderForm.examTypeId) {
+      toast({
+        title: "Error",
+        description: "Please select an examination type",
+        variant: "destructive",
+      })
+      return
+    }
+
+    try {
+      setSavingRadiologyOrder(true)
+      const patientId = overview?.admission?.patientId
+      if (!patientId) {
+        throw new Error("Patient ID not found")
+      }
+
+      const orderData = {
+        patientId: parseInt(patientId.toString()),
+        orderedBy: parseInt(user?.userId?.toString() || "0"),
+        examTypeId: parseInt(radiologyOrderForm.examTypeId),
+        orderDate: new Date().toISOString().split('T')[0],
+        bodyPart: radiologyOrderForm.bodyPart || null,
+        clinicalIndication: radiologyOrderForm.clinicalIndication || null,
+        priority: radiologyOrderForm.priority || 'routine',
+        status: 'pending',
+        scheduledDate: radiologyOrderForm.scheduledDate || null,
+        notes: radiologyOrderForm.notes || null,
+      }
+
+      await radiologyApi.createOrder(orderData)
+
+      toast({
+        title: "Success",
+        description: "Radiology order created successfully",
+      })
+      setRadiologyOrderDialogOpen(false)
+      setRadiologyOrderForm({
+        examTypeId: "",
+        bodyPart: "",
+        clinicalIndication: "",
+        priority: "routine",
+        scheduledDate: "",
+        notes: "",
+      })
+      loadOverview()
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to create radiology order",
+        variant: "destructive",
+      })
+    } finally {
+      setSavingRadiologyOrder(false)
+    }
+  }
+
   const handleSavePrescription = async () => {
     if (!prescriptionForm.medicationId || !prescriptionForm.dosage || !prescriptionForm.frequency || !prescriptionForm.duration) {
       toast({
@@ -686,12 +783,13 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
         </DialogHeader>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-8">
+          <TabsList className="grid w-full grid-cols-9">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="reviews">Reviews</TabsTrigger>
             <TabsTrigger value="nursing">Nursing</TabsTrigger>
             <TabsTrigger value="vitals">Vitals</TabsTrigger>
             <TabsTrigger value="procedures">Procedures</TabsTrigger>
+            <TabsTrigger value="radiology">Radiology</TabsTrigger>
             <TabsTrigger value="labs">Labs</TabsTrigger>
             <TabsTrigger value="orders">Orders</TabsTrigger>
             <TabsTrigger value="medications">Medications</TabsTrigger>
@@ -1503,6 +1601,146 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                       <TableRow>
                         <TableCell colSpan={4} className="text-center text-muted-foreground">
                           No procedures recorded yet
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Radiology Tab */}
+          <TabsContent value="radiology" className="space-y-4">
+            <div className="flex justify-between items-center">
+              <h3 className="text-lg font-semibold">Radiology Orders</h3>
+              <Dialog open={radiologyOrderDialogOpen} onOpenChange={setRadiologyOrderDialogOpen}>
+                <DialogTrigger asChild>
+                  <Button><Plus className="mr-2 h-4 w-4" />Order Radiology</Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Order Radiology Examination</DialogTitle>
+                    <DialogDescription>Create a new radiology order for this patient</DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-4">
+                    <div>
+                      <Label>Examination Type *</Label>
+                      <Select value={radiologyOrderForm.examTypeId} onValueChange={(v) => setRadiologyOrderForm({ ...radiologyOrderForm, examTypeId: v })}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select examination type" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {examTypes.length > 0 ? (
+                            examTypes.map((exam: any) => (
+                              <SelectItem key={exam.examTypeId} value={exam.examTypeId.toString()}>
+                                {exam.examName}
+                                {exam.category && ` (${exam.category})`}
+                                {exam.cost && ` - KES ${parseFloat(exam.cost).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                              </SelectItem>
+                            ))
+                          ) : (
+                            <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                              No examination types available
+                            </div>
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label>Body Part</Label>
+                      <Input
+                        placeholder="e.g., Chest, Abdomen, Head"
+                        value={radiologyOrderForm.bodyPart}
+                        onChange={(e) => setRadiologyOrderForm({ ...radiologyOrderForm, bodyPart: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <Label>Clinical Indication</Label>
+                      <Textarea
+                        placeholder="Reason for ordering this examination..."
+                        value={radiologyOrderForm.clinicalIndication}
+                        onChange={(e) => setRadiologyOrderForm({ ...radiologyOrderForm, clinicalIndication: e.target.value })}
+                        rows={3}
+                      />
+                    </div>
+                    <div>
+                      <Label>Priority</Label>
+                      <Select value={radiologyOrderForm.priority} onValueChange={(v) => setRadiologyOrderForm({ ...radiologyOrderForm, priority: v })}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="routine">Routine</SelectItem>
+                          <SelectItem value="urgent">Urgent</SelectItem>
+                          <SelectItem value="stat">STAT</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label>Scheduled Date</Label>
+                      <Input
+                        type="datetime-local"
+                        value={radiologyOrderForm.scheduledDate}
+                        onChange={(e) => setRadiologyOrderForm({ ...radiologyOrderForm, scheduledDate: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <Label>Notes</Label>
+                      <Textarea
+                        placeholder="Additional notes..."
+                        value={radiologyOrderForm.notes}
+                        onChange={(e) => setRadiologyOrderForm({ ...radiologyOrderForm, notes: e.target.value })}
+                        rows={2}
+                      />
+                    </div>
+                    <div className="flex justify-end gap-2">
+                      <Button variant="outline" onClick={() => setRadiologyOrderDialogOpen(false)}>Cancel</Button>
+                      <Button onClick={handleSaveRadiologyOrder} disabled={savingRadiologyOrder}>
+                        {savingRadiologyOrder ? "Creating..." : "Create Order"}
+                      </Button>
+                    </div>
+                  </div>
+                </DialogContent>
+              </Dialog>
+            </div>
+            <Card>
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Order Date</TableHead>
+                      <TableHead>Order Number</TableHead>
+                      <TableHead>Examination</TableHead>
+                      <TableHead>Body Part</TableHead>
+                      <TableHead>Priority</TableHead>
+                      <TableHead>Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {overview.radiologyOrders?.length > 0 ? (
+                      overview.radiologyOrders.map((order: any) => (
+                        <TableRow key={order.orderId}>
+                          <TableCell>{format(new Date(order.orderDate), "PP")}</TableCell>
+                          <TableCell className="font-mono text-sm">{order.orderNumber}</TableCell>
+                          <TableCell>{order.examName || "Unknown"}</TableCell>
+                          <TableCell>{order.bodyPart || "N/A"}</TableCell>
+                          <TableCell>
+                            <Badge variant={order.priority === 'stat' || order.priority === 'urgent' ? 'destructive' : 'outline'}>
+                              {order.priority?.toUpperCase() || 'ROUTINE'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={order.status === 'completed' ? 'default' : order.status === 'in_progress' ? 'secondary' : 'outline'}>
+                              {order.status?.split('_').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') || 'PENDING'}
+                            </Badge>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    ) : (
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-center text-muted-foreground">
+                          No radiology orders recorded yet
                         </TableCell>
                       </TableRow>
                     )}

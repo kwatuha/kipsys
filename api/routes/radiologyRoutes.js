@@ -46,7 +46,7 @@ router.get('/exam-types/:id', async (req, res) => {
             'SELECT * FROM radiology_exam_types WHERE examTypeId = ?',
             [req.params.id]
         );
-        
+
         if (rows.length > 0) {
             res.status(200).json(rows[0]);
         } else {
@@ -98,7 +98,7 @@ router.put('/exam-types/:id', async (req, res) => {
     try {
         const { id } = req.params;
         const examData = req.body;
-        
+
         // Check if exam type exists
         const [existing] = await pool.execute(
             'SELECT examTypeId FROM radiology_exam_types WHERE examTypeId = ?',
@@ -167,7 +167,7 @@ router.delete('/exam-types/:id', async (req, res) => {
             [id]
         );
 
-        res.status(200).json({ 
+        res.status(200).json({
             message: 'Radiology exam type deleted successfully',
             examTypeId: id
         });
@@ -187,12 +187,14 @@ router.get('/orders', async (req, res) => {
         const offset = (page - 1) * limit;
 
         let query = `
-            SELECT ro.*, 
+            SELECT ro.*,
                    pt.firstName, pt.lastName, pt.patientNumber,
-                   u.firstName as doctorFirstName, u.lastName as doctorLastName
+                   u.firstName as doctorFirstName, u.lastName as doctorLastName,
+                   ret.examName, ret.examCode, ret.category
             FROM radiology_exam_orders ro
             LEFT JOIN patients pt ON ro.patientId = pt.patientId
             LEFT JOIN users u ON ro.orderedBy = u.userId
+            LEFT JOIN radiology_exam_types ret ON ro.examTypeId = ret.examTypeId
             WHERE 1=1
         `;
         const params = [];
@@ -222,35 +224,136 @@ router.get('/orders', async (req, res) => {
  * @description Create a new radiology exam order
  */
 router.post('/orders', async (req, res) => {
+    const connection = await pool.getConnection();
     try {
-        const { orderNumber, patientId, orderedBy, examTypeId, orderDate, bodyPart, clinicalIndication, priority, status, scheduledDate, notes } = req.body;
+        await connection.beginTransaction();
+
+        const { orderNumber, patientId, orderedBy, examTypeId, orderDate, bodyPart, clinicalIndication, priority, status, scheduledDate, notes, admissionId } = req.body;
+
+        // Get exam type details to include in clinical indication
+        let examName = null;
+        if (examTypeId) {
+            const [examType] = await connection.execute(
+                'SELECT examName, examCode FROM radiology_exam_types WHERE examTypeId = ?',
+                [examTypeId]
+            );
+            if (examType.length > 0) {
+                examName = examType[0].examName;
+            }
+        }
+
+        // Build clinical indication: include exam name if provided, then append user's clinical indication
+        let finalClinicalIndication = clinicalIndication || null;
+        if (examName) {
+            if (finalClinicalIndication && finalClinicalIndication.trim()) {
+                // If clinical indication is provided, prepend exam name
+                finalClinicalIndication = `${examName}: ${finalClinicalIndication.trim()}`;
+            } else {
+                // If no clinical indication, use exam name as default
+                finalClinicalIndication = examName;
+            }
+        }
 
         // Generate order number if not provided
         let orderNum = orderNumber;
         if (!orderNum) {
-            const [count] = await pool.execute('SELECT COUNT(*) as count FROM radiology_exam_orders');
-            orderNum = `RAD-${String(count[0].count + 1).padStart(6, '0')}`;
+            // Get the maximum order number to avoid duplicates
+            const [maxResult] = await connection.execute(
+                `SELECT MAX(CAST(SUBSTRING(orderNumber, 5) AS UNSIGNED)) as maxNum
+                 FROM radiology_exam_orders
+                 WHERE orderNumber LIKE 'RAD-%'`
+            );
+
+            let nextNum = (maxResult[0]?.maxNum || 0) + 1;
+            orderNum = `RAD-${String(nextNum).padStart(6, '0')}`;
         }
 
-        const [result] = await pool.execute(
-            `INSERT INTO radiology_exam_orders (orderNumber, patientId, orderedBy, examTypeId, orderDate, bodyPart, clinicalIndication, priority, status, scheduledDate, notes)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [orderNum, patientId, orderedBy, examTypeId, orderDate || new Date(), bodyPart || null, clinicalIndication || null, priority || 'routine', status || 'pending', scheduledDate || null, notes || null]
-        );
+        let result;
+        let insertAttempts = 0;
+        let finalOrderNum = orderNum;
 
-        const [newOrder] = await pool.execute(
-            `SELECT ro.*, 
+        // Try to insert with retry logic for duplicate key errors
+        while (insertAttempts < 100) {
+            // First check if the number exists before trying to insert
+            const [existing] = await connection.execute(
+                'SELECT orderId FROM radiology_exam_orders WHERE orderNumber = ?',
+                [finalOrderNum]
+            );
+
+            if (existing.length > 0) {
+                // Number exists, extract current number and increment
+                const currentNum = parseInt(finalOrderNum.substring(4)) || 0;
+                const nextNum = currentNum + 1;
+                finalOrderNum = `RAD-${String(nextNum).padStart(6, '0')}`;
+                insertAttempts++;
+
+                if (insertAttempts >= 100) {
+                    await connection.rollback();
+                    connection.release();
+                    return res.status(500).json({
+                        message: 'Failed to generate unique radiology order number',
+                        error: 'Please try again.'
+                    });
+                }
+                // Continue to check next number
+                continue;
+            }
+
+            // Number doesn't exist, try to insert
+            try {
+                [result] = await connection.execute(
+                    `INSERT INTO radiology_exam_orders (orderNumber, patientId, orderedBy, examTypeId, orderDate, bodyPart, clinicalIndication, priority, status, scheduledDate, notes)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [finalOrderNum, patientId, orderedBy, examTypeId, orderDate || new Date(), bodyPart || null, finalClinicalIndication, priority || 'routine', status || 'pending', scheduledDate || null, notes || null]
+                );
+                // Success - break out of retry loop
+                break;
+            } catch (insertError) {
+                // Check if it's a duplicate key error (race condition - another request inserted it)
+                if (insertError.code === 'ER_DUP_ENTRY' || insertError.errno === 1062) {
+                    // Extract current number and increment
+                    const currentNum = parseInt(finalOrderNum.substring(4)) || 0;
+                    const nextNum = currentNum + 1;
+                    finalOrderNum = `RAD-${String(nextNum).padStart(6, '0')}`;
+                    insertAttempts++;
+
+                    if (insertAttempts >= 100) {
+                        await connection.rollback();
+                        connection.release();
+                        return res.status(500).json({
+                            message: 'Failed to generate unique radiology order number',
+                            error: 'Please try again.'
+                        });
+                    }
+                    // Continue to retry with new number
+                } else {
+                    // Not a duplicate key error - rethrow
+                    await connection.rollback();
+                    connection.release();
+                    throw insertError;
+                }
+            }
+        }
+
+        const [newOrder] = await connection.execute(
+            `SELECT ro.*,
                     pt.firstName, pt.lastName, pt.patientNumber,
-                    u.firstName as doctorFirstName, u.lastName as doctorLastName
+                    u.firstName as doctorFirstName, u.lastName as doctorLastName,
+                    ret.examName, ret.examCode, ret.category
              FROM radiology_exam_orders ro
              LEFT JOIN patients pt ON ro.patientId = pt.patientId
              LEFT JOIN users u ON ro.orderedBy = u.userId
+             LEFT JOIN radiology_exam_types ret ON ro.examTypeId = ret.examTypeId
              WHERE ro.orderId = ?`,
             [result.insertId]
         );
 
+        await connection.commit();
+        connection.release();
         res.status(201).json(newOrder[0]);
     } catch (error) {
+        await connection.rollback();
+        connection.release();
         console.error('Error creating radiology order:', error);
         res.status(500).json({ message: 'Error creating radiology order', error: error.message });
     }
@@ -266,7 +369,7 @@ router.get('/orders/:id', async (req, res) => {
 
         // Get order with patient and doctor info
         const [orders] = await pool.execute(
-            `SELECT ro.*, 
+            `SELECT ro.*,
                     pt.firstName, pt.lastName, pt.patientNumber,
                     u.firstName as doctorFirstName, u.lastName as doctorLastName,
                     ret.examCode, ret.examName, ret.category
@@ -298,9 +401,9 @@ router.put('/orders/:id', async (req, res) => {
         const { id } = req.params;
         const { status, scheduledDate, notes, priority, clinicalIndication, bodyPart, examTypeId } = req.body;
 
-        // Check if order exists
+        // Check if order exists and get current exam type
         const [existing] = await pool.execute(
-            'SELECT orderId FROM radiology_exam_orders WHERE orderId = ?',
+            'SELECT examTypeId, clinicalIndication FROM radiology_exam_orders WHERE orderId = ?',
             [id]
         );
 
@@ -322,9 +425,59 @@ router.put('/orders/:id', async (req, res) => {
             values.push(priority);
         }
 
+        // Handle clinical indication: ensure it includes exam name
+        let finalClinicalIndication = clinicalIndication;
         if (clinicalIndication !== undefined) {
+            // Determine which exam type to use (new one if being updated, otherwise current one)
+            const targetExamTypeId = examTypeId !== undefined ? examTypeId : existing[0].examTypeId;
+
+            // Get exam name
+            const [examType] = await pool.execute(
+                'SELECT examName FROM radiology_exam_types WHERE examTypeId = ?',
+                [targetExamTypeId]
+            );
+
+            if (examType.length > 0 && examType[0].examName) {
+                const examName = examType[0].examName;
+                if (clinicalIndication && clinicalIndication.trim()) {
+                    // Check if clinical indication already starts with exam name
+                    if (clinicalIndication.trim().startsWith(examName + ':')) {
+                        // Already has exam name, use as-is
+                        finalClinicalIndication = clinicalIndication.trim();
+                    } else {
+                        // Prepend exam name
+                        finalClinicalIndication = `${examName}: ${clinicalIndication.trim()}`;
+                    }
+                } else {
+                    // No clinical indication provided, use exam name
+                    finalClinicalIndication = examName;
+                }
+            } else {
+                finalClinicalIndication = clinicalIndication || null;
+            }
+
             updates.push('clinicalIndication = ?');
-            values.push(clinicalIndication || null);
+            values.push(finalClinicalIndication);
+        } else if (examTypeId !== undefined && examTypeId !== existing[0].examTypeId) {
+            // Exam type is being changed but clinical indication not provided
+            // Update clinical indication to include new exam name
+            const [examType] = await pool.execute(
+                'SELECT examName FROM radiology_exam_types WHERE examTypeId = ?',
+                [examTypeId]
+            );
+            if (examType.length > 0 && examType[0].examName) {
+                const examName = examType[0].examName;
+                const currentIndication = existing[0].clinicalIndication;
+                // Extract the part after the colon if it exists
+                if (currentIndication && currentIndication.includes(':')) {
+                    const parts = currentIndication.split(':');
+                    finalClinicalIndication = `${examName}: ${parts.slice(1).join(':').trim()}`;
+                } else {
+                    finalClinicalIndication = examName;
+                }
+                updates.push('clinicalIndication = ?');
+                values.push(finalClinicalIndication);
+            }
         }
 
         if (bodyPart !== undefined) {
@@ -361,7 +514,7 @@ router.put('/orders/:id', async (req, res) => {
 
         // Fetch updated order
         const [updated] = await pool.execute(
-            `SELECT ro.*, 
+            `SELECT ro.*,
                     pt.firstName, pt.lastName, pt.patientNumber,
                     u.firstName as doctorFirstName, u.lastName as doctorLastName,
                     ret.examCode, ret.examName, ret.category
