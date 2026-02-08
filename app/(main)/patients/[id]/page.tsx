@@ -18,6 +18,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { RoleFilteredTabs } from "@/components/role-filtered-tabs"
 import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { PatientTimeline } from "@/components/patient-timeline"
@@ -299,51 +300,26 @@ export default function PatientProfilePage() {
             <CardDescription>Comprehensive medical history and current health status</CardDescription>
           </CardHeader>
           <CardContent>
-            <Tabs defaultValue="overview" className="space-y-6">
-              {/* Improved tab spacing and responsiveness */}
-              <TabsList className="flex flex-wrap w-full h-auto p-1 gap-1">
-                <TabsTrigger value="overview" className="flex-grow py-2 px-3">
-                  <Activity className="h-4 w-4 mr-2" />
-                  <span>Overview</span>
-                </TabsTrigger>
-                <TabsTrigger value="vitals" className="flex-grow py-2 px-3">
-                  <HeartPulse className="h-4 w-4 mr-2" />
-                  <span>Vitals</span>
-                </TabsTrigger>
-                <TabsTrigger value="lab" className="flex-grow py-2 px-3">
-                  <Flask className="h-4 w-4 mr-2" />
-                  <span>Lab Results</span>
-                </TabsTrigger>
-                <TabsTrigger value="medications" className="flex-grow py-2 px-3">
-                  <Pills className="h-4 w-4 mr-2" />
-                  <span>Medications</span>
-                </TabsTrigger>
-                <TabsTrigger value="procedures" className="flex-grow py-2 px-3">
-                  <Stethoscope className="h-4 w-4 mr-2" />
-                  <span>Procedures</span>
-                </TabsTrigger>
-                <TabsTrigger value="orders" className="flex-grow py-2 px-3">
-                  <Package className="h-4 w-4 mr-2" />
-                  <span>Orders</span>
-                </TabsTrigger>
-                <TabsTrigger value="appointments" className="flex-grow py-2 px-3">
-                  <Calendar className="h-4 w-4 mr-2" />
-                  <span>Appointments</span>
-                </TabsTrigger>
-                <TabsTrigger value="billing" className="flex-grow py-2 px-3">
-                  <CreditCard className="h-4 w-4 mr-2" />
-                  <span>Billing</span>
-                </TabsTrigger>
-                <TabsTrigger value="admissions" className="flex-grow py-2 px-3">
-                  <Home className="h-4 w-4 mr-2" />
-                  <span>Admissions</span>
-                </TabsTrigger>
-                <TabsTrigger value="more" className="flex-grow py-2 px-3">
-                  <History className="h-4 w-4 mr-2" />
-                  <span>More</span>
-                </TabsTrigger>
-              </TabsList>
-
+            <RoleFilteredTabs
+              pagePath="/patients/[id]"
+              defaultValue="overview"
+              tabs={[
+                { value: "overview", label: "Overview" },
+                { value: "vitals", label: "Vitals" },
+                { value: "lab-results", label: "Lab Results" },
+                { value: "medications", label: "Medications" },
+                { value: "procedures", label: "Procedures" },
+                { value: "orders", label: "Orders" },
+                { value: "appointments", label: "Appointments" },
+                { value: "billing", label: "Billing" },
+                { value: "admissions", label: "Admissions" },
+                { value: "documents", label: "Documents" },
+                { value: "allergies", label: "Allergies" },
+                { value: "insurance", label: "Insurance" },
+                { value: "family-history", label: "Family History" },
+              ]}
+              className="space-y-6"
+            >
               <TabsContent value="overview" className="space-y-4">
                 <PatientMedicalOverview patientId={patientId} />
               </TabsContent>
@@ -352,7 +328,7 @@ export default function PatientProfilePage() {
                 <PatientVitals patientId={patientId} />
               </TabsContent>
 
-              <TabsContent value="lab" className="space-y-4">
+              <TabsContent value="lab-results" className="space-y-4">
                 <PatientLabResults patientId={patientId} />
               </TabsContent>
 
@@ -380,42 +356,22 @@ export default function PatientProfilePage() {
                 <PatientAdmissions patientId={patientId} />
               </TabsContent>
 
-              <TabsContent value="more" className="space-y-4">
-                <Tabs defaultValue="documents" className="space-y-4">
-                  {/* Improved secondary tabs spacing */}
-                  <TabsList className="flex w-full h-auto p-1 gap-2">
-                    <TabsTrigger value="documents" className="flex-1">
-                      Documents
-                    </TabsTrigger>
-                    <TabsTrigger value="allergies" className="flex-1">
-                      Allergies
-                    </TabsTrigger>
-                    <TabsTrigger value="insurance" className="flex-1">
-                      Insurance
-                    </TabsTrigger>
-                    <TabsTrigger value="family" className="flex-1">
-                      Family History
-                    </TabsTrigger>
-                  </TabsList>
-
-                  <TabsContent value="documents" className="space-y-4">
-                    <PatientDocuments patientId={patientId} />
-                  </TabsContent>
-
-                  <TabsContent value="allergies" className="space-y-4">
-                    <PatientAllergies patientId={patientId} />
-                  </TabsContent>
-
-                  <TabsContent value="insurance" className="space-y-4">
-                    <PatientInsurance patientId={patientId} />
-                  </TabsContent>
-
-                  <TabsContent value="family" className="space-y-4">
-                    <PatientFamilyHistory patientId={patientId} />
-                  </TabsContent>
-                </Tabs>
+              <TabsContent value="documents" className="space-y-4">
+                <PatientDocuments patientId={patientId} />
               </TabsContent>
-            </Tabs>
+
+              <TabsContent value="allergies" className="space-y-4">
+                <PatientAllergies patientId={patientId} />
+              </TabsContent>
+
+              <TabsContent value="insurance" className="space-y-4">
+                <PatientInsurance patientId={patientId} />
+              </TabsContent>
+
+              <TabsContent value="family-history" className="space-y-4">
+                <PatientFamilyHistory patientId={patientId} />
+              </TabsContent>
+            </RoleFilteredTabs>
           </CardContent>
         </Card>
       </div>

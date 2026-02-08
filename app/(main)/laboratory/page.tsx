@@ -3,15 +3,17 @@ import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
-import { Search, Plus, Download, Loader2, MoreVertical, Eye, CheckCircle, XCircle, FlaskConical, Edit, FileText, AlertTriangle, Trash2, Settings } from "lucide-react"
+import { Search, Plus, Download, Loader2, MoreVertical, Eye, CheckCircle, XCircle, FlaskConical, Edit, FileText, AlertTriangle, Trash2, Settings, Printer } from "lucide-react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { AddTestRequestForm } from "@/components/add-test-request-form"
-import { laboratoryApi } from "@/lib/api"
+import { laboratoryApi, doctorsApi } from "@/lib/api"
 import { format } from "date-fns"
 import { toast } from "@/components/ui/use-toast"
+import { printLabOrder, downloadLabOrderPDF, printCombinedLabReport, downloadCombinedLabReportPDF } from "@/lib/lab-results-pdf"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -36,6 +38,7 @@ interface LabOrder {
   priority: string
   status: string
   clinicalIndication?: string
+  testNames?: string
   firstName?: string
   lastName?: string
   patientNumber?: string
@@ -50,9 +53,15 @@ export default function LaboratoryPage() {
   const [error, setError] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState<string>("")
   const [search, setSearch] = useState("")
+  const [dateFrom, setDateFrom] = useState<string>("")
+  const [dateTo, setDateTo] = useState<string>("")
+  const [doctorFilter, setDoctorFilter] = useState<string>("")
+  const [doctors, setDoctors] = useState<any[]>([])
+  const [loadingDoctors, setLoadingDoctors] = useState(false)
+  const [printingReport, setPrintingReport] = useState(false)
   const [criticalResults, setCriticalResults] = useState<any[]>([])
   const [criticalPatientIds, setCriticalPatientIds] = useState<Set<number>>(new Set())
-  
+
   // Order actions state
   const [viewOrderOpen, setViewOrderOpen] = useState(false)
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null)
@@ -98,18 +107,58 @@ export default function LaboratoryPage() {
   useEffect(() => {
     loadOrders()
     loadCriticalResults()
+    loadDoctors()
   }, [statusFilter])
 
+  const loadDoctors = async () => {
+    try {
+      setLoadingDoctors(true)
+      const data = await doctorsApi.getAll()
+      setDoctors(data)
+    } catch (err: any) {
+      console.error('Error loading doctors:', err)
+    } finally {
+      setLoadingDoctors(false)
+    }
+  }
+
   const filteredOrders = labOrders.filter((order) => {
+    // Search filter
     if (search) {
       const searchLower = search.toLowerCase()
-      return (
+      const matchesSearch = (
         order.orderNumber.toLowerCase().includes(searchLower) ||
         `${order.firstName || ''} ${order.lastName || ''}`.toLowerCase().includes(searchLower) ||
         order.patientNumber?.toLowerCase().includes(searchLower) ||
-        order.clinicalIndication?.toLowerCase().includes(searchLower)
+        order.clinicalIndication?.toLowerCase().includes(searchLower) ||
+        order.testNames?.toLowerCase().includes(searchLower)
       )
+      if (!matchesSearch) return false
     }
+
+    // Date filter
+    if (dateFrom || dateTo) {
+      const orderDate = new Date(order.orderDate)
+      orderDate.setHours(0, 0, 0, 0)
+
+      if (dateFrom) {
+        const fromDate = new Date(dateFrom)
+        fromDate.setHours(0, 0, 0, 0)
+        if (orderDate < fromDate) return false
+      }
+
+      if (dateTo) {
+        const toDate = new Date(dateTo)
+        toDate.setHours(23, 59, 59, 999)
+        if (orderDate > toDate) return false
+      }
+    }
+
+    // Doctor filter
+    if (doctorFilter) {
+      if (order.orderedBy.toString() !== doctorFilter) return false
+    }
+
     return true
   })
 
@@ -148,7 +197,7 @@ export default function LaboratoryPage() {
     setLoadingOrderDetails(true)
     try {
       const details = await laboratoryApi.getOrder(order.orderId.toString())
-      
+
       // Load results for this order
       try {
         const itemsWithResults = await laboratoryApi.getOrderResults(order.orderId.toString())
@@ -163,7 +212,7 @@ export default function LaboratoryPage() {
         console.error('Error loading results:', resultsErr)
         // Continue without results if there's an error
       }
-      
+
       setSelectedOrder(details)
     } catch (err: any) {
       setError(err.message || 'Failed to load order details')
@@ -249,11 +298,11 @@ export default function LaboratoryPage() {
       setLoadingOrderDetails(true)
       const fullOrder = await laboratoryApi.getOrder(order.orderId.toString())
       setOrderForResults(fullOrder)
-      
+
       // Load order items with existing results
       const items = await laboratoryApi.getOrderResults(order.orderId.toString())
       setOrderItems(items)
-      
+
       setResultsFormOpen(true)
     } catch (err: any) {
       toast({
@@ -372,6 +421,334 @@ export default function LaboratoryPage() {
     return new Intl.NumberFormat("en-KE", { style: "currency", currency: "KES" }).format(amount)
   }
 
+  const handlePrintFiltered = async () => {
+    if (filteredOrders.length === 0) {
+      toast({
+        title: "No orders to print",
+        description: "Please adjust your filters to include at least one order.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    setPrintingReport(true)
+    try {
+      // Fetch full order details with results for all filtered orders
+      const ordersWithDetails = await Promise.all(
+        filteredOrders.map(async (order) => {
+          try {
+            const orderDetails = await laboratoryApi.getOrder(order.orderId.toString())
+
+            // Load results for this order
+            // The getOrderResults API returns items with results already attached
+            let itemsWithResults = orderDetails.items || []
+            try {
+              const resultsWithData = await laboratoryApi.getOrderResults(order.orderId.toString())
+              console.log(`[Print] Order ${order.orderId} - Results data:`, resultsWithData)
+
+              if (resultsWithData && resultsWithData.length > 0) {
+                // The API returns items with result already attached
+                // Merge with order items to ensure we have all item details
+                itemsWithResults = (orderDetails.items || []).map((item: any) => {
+                  // Try to find matching result by itemId or orderItemId
+                  const itemWithResult = resultsWithData.find((r: any) => {
+                    const match1 = r.itemId && item.itemId && r.itemId === item.itemId
+                    const match2 = r.orderItemId && item.itemId && r.orderItemId === item.itemId
+                    return match1 || match2
+                  })
+
+                  if (itemWithResult && itemWithResult.result) {
+                    console.log(`[Print] Order ${order.orderId} - Item ${item.itemId} has result with ${itemWithResult.result.values?.length || 0} values`)
+                    // Use the item from results (which has result attached) but keep order item details
+                    return {
+                      ...item,
+                      // Preserve test name and other details from order item
+                      testTypeName: item.testTypeName || itemWithResult.testTypeName,
+                      testName: item.testName || itemWithResult.testName,
+                      testCode: item.testCode || itemWithResult.testCode,
+                      category: item.testCategory || item.category || itemWithResult.category,
+                      // Ensure result is properly structured with values
+                      result: {
+                        testDate: itemWithResult.result.testDate || order.orderDate,
+                        status: itemWithResult.result.status,
+                        performedByFirstName: itemWithResult.result.performedByFirstName,
+                        performedByLastName: itemWithResult.result.performedByLastName,
+                        verifiedByFirstName: itemWithResult.result.verifiedByFirstName,
+                        verifiedByLastName: itemWithResult.result.verifiedByLastName,
+                        verifiedAt: itemWithResult.result.verifiedAt,
+                        values: Array.isArray(itemWithResult.result.values)
+                          ? itemWithResult.result.values.map((v: any) => ({
+                              parameterName: v.parameterName || v.parameter,
+                              value: v.value || '',
+                              unit: v.unit || '',
+                              normalRange: v.normalRange || v.referenceRange || '',
+                              flag: v.flag || 'normal',
+                              notes: v.notes,
+                            }))
+                          : [],
+                        notes: itemWithResult.result.notes,
+                      },
+                    }
+                  }
+                  return item
+                })
+              }
+            } catch (resultsErr) {
+              console.error('Error loading results for order:', order.orderId, resultsErr)
+              // Continue with items without results
+            }
+
+            const selectedDoctor = doctorFilter
+              ? doctors.find(d => d.userId.toString() === doctorFilter)
+              : null
+            const doctorName = selectedDoctor
+              ? `${selectedDoctor.firstName} ${selectedDoctor.lastName}`.trim()
+              : getDoctorName(order)
+
+            return {
+              orderNumber: order.orderNumber,
+              orderDate: order.orderDate,
+              patientName: getPatientName(order),
+              patientNumber: order.patientNumber,
+              doctorName: doctorName,
+              priority: order.priority,
+              status: order.status,
+              clinicalIndication: order.clinicalIndication,
+              testNames: order.testNames,
+              items: itemsWithResults.map((item: any) => ({
+                testName: item.testTypeName || item.testName || 'Unknown Test',
+                testCode: item.testCode,
+                category: item.testCategory || item.category,
+                status: item.status || 'pending',
+                notes: item.notes,
+                result: item.result ? {
+                  testDate: item.result.testDate || order.orderDate,
+                  status: item.result.status,
+                  performedByFirstName: item.result.performedByFirstName,
+                  performedByLastName: item.result.performedByLastName,
+                  verifiedByFirstName: item.result.verifiedByFirstName,
+                  verifiedByLastName: item.result.verifiedByLastName,
+                  verifiedAt: item.result.verifiedAt,
+                  values: Array.isArray(item.result.values) ? item.result.values : [],
+                  notes: item.result.notes,
+                } : undefined,
+              })),
+            }
+          } catch (err) {
+            console.error('Error loading order details:', order.orderId, err)
+            // Return basic order info if details can't be loaded
+            return {
+              orderNumber: order.orderNumber,
+              orderDate: order.orderDate,
+              patientName: getPatientName(order),
+              patientNumber: order.patientNumber,
+              doctorName: getDoctorName(order),
+              priority: order.priority,
+              status: order.status,
+              clinicalIndication: order.clinicalIndication,
+              testNames: order.testNames,
+              items: [],
+            }
+          }
+        })
+      )
+
+      const selectedDoctor = doctorFilter
+        ? doctors.find(d => d.userId.toString() === doctorFilter)
+        : null
+      const doctorName = selectedDoctor
+        ? `${selectedDoctor.firstName} ${selectedDoctor.lastName}`.trim()
+        : undefined
+
+      console.log('[Print] Final orders with details:', ordersWithDetails.map(o => ({
+        orderNumber: o.orderNumber,
+        itemsCount: o.items.length,
+        itemsWithResults: o.items.filter(i => i.result).length
+      })))
+
+      // Generate and print the combined report
+      printCombinedLabReport(ordersWithDetails, {
+        dateFrom: dateFrom || undefined,
+        dateTo: dateTo || undefined,
+        doctorName: doctorName,
+      })
+
+      toast({
+        title: "Report generated",
+        description: `Printing ${ordersWithDetails.length} order(s) with results.`,
+      })
+    } catch (err: any) {
+      console.error('Error generating report:', err)
+      toast({
+        title: "Error generating report",
+        description: err.message || "Failed to generate the report. Please try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setPrintingReport(false)
+    }
+  }
+
+  const handleDownloadFilteredPDF = async () => {
+    if (filteredOrders.length === 0) {
+      toast({
+        title: "No orders to download",
+        description: "Please adjust your filters to include at least one order.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    setPrintingReport(true)
+    try {
+      // Same logic as handlePrintFiltered but uses download function
+      const ordersWithDetails = await Promise.all(
+        filteredOrders.map(async (order) => {
+          try {
+            const orderDetails = await laboratoryApi.getOrder(order.orderId.toString())
+
+            // Load results for this order
+            // The getOrderResults API returns items with results already attached
+            let itemsWithResults = orderDetails.items || []
+            try {
+              const resultsWithData = await laboratoryApi.getOrderResults(order.orderId.toString())
+              console.log(`[Download] Order ${order.orderId} - Results data:`, resultsWithData)
+
+              if (resultsWithData && resultsWithData.length > 0) {
+                // The API returns items with result already attached
+                // Merge with order items to ensure we have all item details
+                itemsWithResults = (orderDetails.items || []).map((item: any) => {
+                  // Try to find matching result by itemId or orderItemId
+                  const itemWithResult = resultsWithData.find((r: any) => {
+                    const match1 = r.itemId && item.itemId && r.itemId === item.itemId
+                    const match2 = r.orderItemId && item.itemId && r.orderItemId === item.itemId
+                    return match1 || match2
+                  })
+
+                  if (itemWithResult && itemWithResult.result) {
+                    console.log(`[Download] Order ${order.orderId} - Item ${item.itemId} has result with ${itemWithResult.result.values?.length || 0} values`)
+                    // Use the item from results (which has result attached) but keep order item details
+                    return {
+                      ...item,
+                      // Preserve test name and other details from order item
+                      testTypeName: item.testTypeName || itemWithResult.testTypeName,
+                      testName: item.testName || itemWithResult.testName,
+                      testCode: item.testCode || itemWithResult.testCode,
+                      category: item.testCategory || item.category || itemWithResult.category,
+                      // Ensure result is properly structured with values
+                      result: {
+                        testDate: itemWithResult.result.testDate || order.orderDate,
+                        status: itemWithResult.result.status,
+                        performedByFirstName: itemWithResult.result.performedByFirstName,
+                        performedByLastName: itemWithResult.result.performedByLastName,
+                        verifiedByFirstName: itemWithResult.result.verifiedByFirstName,
+                        verifiedByLastName: itemWithResult.result.verifiedByLastName,
+                        verifiedAt: itemWithResult.result.verifiedAt,
+                        values: Array.isArray(itemWithResult.result.values)
+                          ? itemWithResult.result.values.map((v: any) => ({
+                              parameterName: v.parameterName || v.parameter,
+                              value: v.value || '',
+                              unit: v.unit || '',
+                              normalRange: v.normalRange || v.referenceRange || '',
+                              flag: v.flag || 'normal',
+                              notes: v.notes,
+                            }))
+                          : [],
+                        notes: itemWithResult.result.notes,
+                      },
+                    }
+                  }
+                  return item
+                })
+              }
+            } catch (resultsErr) {
+              console.error('Error loading results for order:', order.orderId, resultsErr)
+              // Continue with items without results
+            }
+
+            const selectedDoctor = doctorFilter
+              ? doctors.find(d => d.userId.toString() === doctorFilter)
+              : null
+            const doctorName = selectedDoctor
+              ? `${selectedDoctor.firstName} ${selectedDoctor.lastName}`.trim()
+              : getDoctorName(order)
+
+            return {
+              orderNumber: order.orderNumber,
+              orderDate: order.orderDate,
+              patientName: getPatientName(order),
+              patientNumber: order.patientNumber,
+              doctorName: doctorName,
+              priority: order.priority,
+              status: order.status,
+              clinicalIndication: order.clinicalIndication,
+              testNames: order.testNames,
+              items: itemsWithResults.map((item: any) => ({
+                testName: item.testTypeName || item.testName || 'Unknown Test',
+                testCode: item.testCode,
+                category: item.testCategory || item.category,
+                status: item.status || 'pending',
+                notes: item.notes,
+                result: item.result ? {
+                  testDate: item.result.testDate || order.orderDate,
+                  status: item.result.status,
+                  performedByFirstName: item.result.performedByFirstName,
+                  performedByLastName: item.result.performedByLastName,
+                  verifiedByFirstName: item.result.verifiedByFirstName,
+                  verifiedByLastName: item.result.verifiedByLastName,
+                  verifiedAt: item.result.verifiedAt,
+                  values: Array.isArray(item.result.values) ? item.result.values : [],
+                  notes: item.result.notes,
+                } : undefined,
+              })),
+            }
+          } catch (err) {
+            console.error('Error loading order details:', order.orderId, err)
+            return {
+              orderNumber: order.orderNumber,
+              orderDate: order.orderDate,
+              patientName: getPatientName(order),
+              patientNumber: order.patientNumber,
+              doctorName: getDoctorName(order),
+              priority: order.priority,
+              status: order.status,
+              clinicalIndication: order.clinicalIndication,
+              testNames: order.testNames,
+              items: [],
+            }
+          }
+        })
+      )
+
+      const selectedDoctor = doctorFilter
+        ? doctors.find(d => d.userId.toString() === doctorFilter)
+        : null
+      const doctorName = selectedDoctor
+        ? `${selectedDoctor.firstName} ${selectedDoctor.lastName}`.trim()
+        : undefined
+
+      downloadCombinedLabReportPDF(ordersWithDetails, {
+        dateFrom: dateFrom || undefined,
+        dateTo: dateTo || undefined,
+        doctorName: doctorName,
+      })
+
+      toast({
+        title: "Report generated",
+        description: `Downloading ${ordersWithDetails.length} order(s) with results.`,
+      })
+    } catch (err: any) {
+      console.error('Error generating report:', err)
+      toast({
+        title: "Error generating report",
+        description: err.message || "Failed to generate the report. Please try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setPrintingReport(false)
+    }
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
@@ -380,9 +757,39 @@ export default function LaboratoryPage() {
           <p className="text-muted-foreground">Manage laboratory tests and results</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline">
-            <Download className="mr-2 h-4 w-4" />
-            Export Results
+          <Button
+            variant="outline"
+            onClick={handlePrintFiltered}
+            disabled={printingReport || filteredOrders.length === 0}
+          >
+            {printingReport ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Generating...
+              </>
+            ) : (
+              <>
+                <Printer className="mr-2 h-4 w-4" />
+                Print Filtered ({filteredOrders.length})
+              </>
+            )}
+          </Button>
+          <Button
+            variant="outline"
+            onClick={handleDownloadFilteredPDF}
+            disabled={printingReport || filteredOrders.length === 0}
+          >
+            {printingReport ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Generating...
+              </>
+            ) : (
+              <>
+                <Download className="mr-2 h-4 w-4" />
+                Download PDF ({filteredOrders.length})
+              </>
+            )}
           </Button>
           <Button onClick={() => setAddTestRequestOpen(true)}>
             <Plus className="mr-2 h-4 w-4" />
@@ -412,53 +819,115 @@ export default function LaboratoryPage() {
                   </Button>
                 </div>
               )}
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex gap-2 flex-wrap">
-                  <Button 
-                    variant={statusFilter === "" ? "default" : "outline"} 
-                    size="sm"
-                    onClick={() => setStatusFilter("")}
-                  >
-                    All
-                  </Button>
-                  <Button 
-                    variant={statusFilter === "pending" ? "default" : "outline"} 
+              <div className="space-y-4 mb-4">
+                {/* Filters Row */}
+                <div className="flex gap-2 flex-wrap items-end">
+                  <div className="flex gap-2 flex-wrap">
+                    <Button
+                      variant={statusFilter === "" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setStatusFilter("")}
+                    >
+                      All
+                    </Button>
+                  <Button
+                    variant={statusFilter === "pending" ? "default" : "outline"}
                     size="sm"
                     onClick={() => setStatusFilter("pending")}
                   >
                     Pending
                   </Button>
-                  <Button 
-                    variant={statusFilter === "sample_collected" ? "default" : "outline"} 
+                  <Button
+                    variant={statusFilter === "sample_collected" ? "default" : "outline"}
                     size="sm"
                     onClick={() => setStatusFilter("sample_collected")}
                   >
                     Sample Collected
                   </Button>
-                  <Button 
-                    variant={statusFilter === "in_progress" ? "default" : "outline"} 
+                  <Button
+                    variant={statusFilter === "in_progress" ? "default" : "outline"}
                     size="sm"
                     onClick={() => setStatusFilter("in_progress")}
                   >
                     In Progress
                   </Button>
-                  <Button 
-                    variant={statusFilter === "completed" ? "default" : "outline"} 
+                  <Button
+                    variant={statusFilter === "completed" ? "default" : "outline"}
                     size="sm"
                     onClick={() => setStatusFilter("completed")}
                   >
                     Completed
                   </Button>
+                  </div>
+
+                  {/* Date and Doctor Filters */}
+                  <div className="flex gap-2 flex-wrap items-end">
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs text-muted-foreground">From Date</label>
+                      <Input
+                        type="date"
+                        className="w-40"
+                        value={dateFrom}
+                        onChange={(e) => setDateFrom(e.target.value)}
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs text-muted-foreground">To Date</label>
+                      <Input
+                        type="date"
+                        className="w-40"
+                        value={dateTo}
+                        onChange={(e) => setDateTo(e.target.value)}
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs text-muted-foreground">Doctor</label>
+                      <Select value={doctorFilter || "all"} onValueChange={(value) => setDoctorFilter(value === "all" ? "" : value)}>
+                        <SelectTrigger className="w-48">
+                          <SelectValue placeholder="All Doctors" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All Doctors</SelectItem>
+                          {loadingDoctors ? (
+                            <SelectItem value="loading" disabled>Loading...</SelectItem>
+                          ) : (
+                            doctors.map((doctor) => (
+                              <SelectItem key={doctor.userId} value={doctor.userId.toString()}>
+                                {doctor.firstName} {doctor.lastName}
+                              </SelectItem>
+                            ))
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {(dateFrom || dateTo || doctorFilter) && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setDateFrom("")
+                          setDateTo("")
+                          setDoctorFilter("")
+                        }}
+                      >
+                        Clear Filters
+                      </Button>
+                    )}
+                  </div>
                 </div>
-                <div className="relative w-64">
-                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input 
-                    type="search" 
-                    placeholder="Search tests..." 
-                    className="w-full pl-8"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                  />
+
+                {/* Search Bar */}
+                <div className="flex items-center gap-2">
+                  <div className="relative w-64">
+                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      type="search"
+                      placeholder="Search tests..."
+                      className="w-full pl-8"
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -474,7 +943,7 @@ export default function LaboratoryPage() {
                       <TableRow>
                         <TableHead>ID</TableHead>
                         <TableHead>Patient</TableHead>
-                        <TableHead>Clinical Indication</TableHead>
+                        <TableHead>Tests / Clinical Indication</TableHead>
                         <TableHead>Request Date</TableHead>
                         <TableHead>Doctor</TableHead>
                         <TableHead>Priority</TableHead>
@@ -493,7 +962,7 @@ export default function LaboratoryPage() {
                         filteredOrders.map((order) => {
                           const hasCriticalResults = criticalPatientIds.has(order.patientId)
                           return (
-                          <TableRow 
+                          <TableRow
                             key={order.orderId}
                             className={hasCriticalResults ? "bg-red-50 hover:bg-red-100 border-l-4 border-l-red-600" : ""}
                           >
@@ -513,8 +982,17 @@ export default function LaboratoryPage() {
                                 </div>
                               </div>
                             </TableCell>
-                            <TableCell className="max-w-xs truncate">
-                              {order.clinicalIndication || "-"}
+                            <TableCell className="max-w-xs">
+                              <div className="truncate" title={order.clinicalIndication || order.testNames || ""}>
+                                {order.clinicalIndication ? (
+                                  <div>
+                                    <div className="font-medium text-xs text-muted-foreground mb-0.5">Tests: {order.testNames || "N/A"}</div>
+                                    <div>{order.clinicalIndication}</div>
+                                  </div>
+                                ) : (
+                                  <div className="font-medium">{order.testNames || "-"}</div>
+                                )}
+                              </div>
                             </TableCell>
                             <TableCell>{formatDate(order.orderDate)}</TableCell>
                             <TableCell className="text-sm">{getDoctorName(order)}</TableCell>
@@ -557,7 +1035,7 @@ export default function LaboratoryPage() {
                                       </DropdownMenuItem>
                                       <DropdownMenuSeparator />
                                       {getNextStatus(order.status) && (
-                                        <DropdownMenuItem 
+                                        <DropdownMenuItem
                                           onClick={() => handleUpdateOrderStatus(order.orderId, getNextStatus(order.status)!)}
                                           disabled={updatingStatus === order.orderId.toString()}
                                         >
@@ -566,7 +1044,7 @@ export default function LaboratoryPage() {
                                         </DropdownMenuItem>
                                       )}
                                       {order.status !== 'cancelled' && (
-                                        <DropdownMenuItem 
+                                        <DropdownMenuItem
                                           onClick={() => handleUpdateOrderStatus(order.orderId, 'completed')}
                                           disabled={updatingStatus === order.orderId.toString()}
                                         >
@@ -574,7 +1052,7 @@ export default function LaboratoryPage() {
                                           {updatingStatus === order.orderId.toString() ? 'Marking...' : 'Mark as Completed'}
                                         </DropdownMenuItem>
                                       )}
-                                      <DropdownMenuItem 
+                                      <DropdownMenuItem
                                         onClick={() => handleUpdateOrderStatus(order.orderId, 'cancelled')}
                                         disabled={updatingStatus === order.orderId.toString()}
                                         className="text-destructive focus:text-destructive"
@@ -669,8 +1147,8 @@ export default function LaboratoryPage() {
         </Tabs>
 
 
-      <AddTestRequestForm 
-        open={addTestRequestOpen} 
+      <AddTestRequestForm
+        open={addTestRequestOpen}
         onOpenChange={setAddTestRequestOpen}
         onSuccess={loadOrders}
       />
@@ -773,7 +1251,7 @@ export default function LaboratoryPage() {
                         {item.notes && (
                           <p className="text-sm text-muted-foreground mt-2">{item.notes}</p>
                         )}
-                        
+
                         {/* Display Results if available */}
                         {item.result && (
                           <div className="mt-4 pt-4 border-t">
@@ -783,14 +1261,14 @@ export default function LaboratoryPage() {
                                 {formatStatus(item.result.status)}
                               </Badge>
                             </div>
-                            
+
                             <div className="text-xs text-muted-foreground mb-3">
                               <p>Test Date: {formatDate(item.result.testDate)}</p>
                               {item.result.performedByFirstName && (
                                 <p>Performed by: {item.result.performedByFirstName} {item.result.performedByLastName}</p>
                               )}
                               {item.result.verifiedByFirstName && (
-                                <p>Verified by: {item.result.verifiedByFirstName} {item.result.verifiedByLastName} 
+                                <p>Verified by: {item.result.verifiedByFirstName} {item.result.verifiedByLastName}
                                   {item.result.verifiedAt && ` on ${formatDate(item.result.verifiedAt)}`}
                                 </p>
                               )}
@@ -818,7 +1296,7 @@ export default function LaboratoryPage() {
                                           <td className="px-3 py-2 text-muted-foreground">{value.unit || '-'}</td>
                                           <td className="px-3 py-2 text-muted-foreground">{value.normalRange || '-'}</td>
                                           <td className="px-3 py-2">
-                                            <Badge 
+                                            <Badge
                                               variant={
                                                 value.flag === "critical" ? "destructive" :
                                                 value.flag === "high" || value.flag === "low" ? "secondary" :
@@ -861,6 +1339,54 @@ export default function LaboratoryPage() {
                   </div>
                 </div>
               )}
+
+              <div className="flex justify-end gap-2 pt-4 border-t">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    if (selectedOrder) {
+                      const orderData = {
+                        orderNumber: selectedOrder.orderNumber,
+                        orderDate: selectedOrder.orderDate,
+                        patientName: `${selectedOrder.firstName || ''} ${selectedOrder.lastName || ''}`.trim(),
+                        patientNumber: selectedOrder.patientNumber,
+                        doctorName: `${selectedOrder.doctorFirstName || ''} ${selectedOrder.doctorLastName || ''}`.trim(),
+                        priority: selectedOrder.priority,
+                        status: selectedOrder.status,
+                        clinicalIndication: selectedOrder.clinicalIndication,
+                        testNames: selectedOrder.testNames,
+                        items: selectedOrder.items || []
+                      }
+                      printLabOrder(orderData)
+                    }
+                  }}
+                >
+                  <Printer className="h-4 w-4 mr-2" />
+                  Print
+                </Button>
+                <Button
+                  onClick={() => {
+                    if (selectedOrder) {
+                      const orderData = {
+                        orderNumber: selectedOrder.orderNumber,
+                        orderDate: selectedOrder.orderDate,
+                        patientName: `${selectedOrder.firstName || ''} ${selectedOrder.lastName || ''}`.trim(),
+                        patientNumber: selectedOrder.patientNumber,
+                        doctorName: `${selectedOrder.doctorFirstName || ''} ${selectedOrder.doctorLastName || ''}`.trim(),
+                        priority: selectedOrder.priority,
+                        status: selectedOrder.status,
+                        clinicalIndication: selectedOrder.clinicalIndication,
+                        testNames: selectedOrder.testNames,
+                        items: selectedOrder.items || []
+                      }
+                      downloadLabOrderPDF(orderData)
+                    }
+                  }}
+                >
+                  <Download className="h-4 w-4 mr-2" />
+                  Download PDF
+                </Button>
+              </div>
             </div>
           ) : null}
         </DialogContent>
@@ -937,12 +1463,12 @@ export default function LaboratoryPage() {
 }
 
 // Edit Order Form Component
-function EditOrderForm({ 
-  order, 
-  onSave, 
+function EditOrderForm({
+  order,
+  onSave,
   onCancel,
-  saving 
-}: { 
+  saving
+}: {
   order: any
   onSave: (data: any) => void
   onCancel: () => void
@@ -1031,13 +1557,13 @@ function EditOrderForm({
 }
 
 // Laboratory Results Form Component
-function LaboratoryResultsForm({ 
-  order, 
+function LaboratoryResultsForm({
+  order,
   orderItems,
-  onSave, 
+  onSave,
   onCancel,
-  saving 
-}: { 
+  saving
+}: {
   order: any
   orderItems: any[]
   onSave: (data: { orderItemId: number, testDate: string, notes?: string, values: any[] }) => void

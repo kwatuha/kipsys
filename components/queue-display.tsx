@@ -22,13 +22,15 @@ import { PatientEncounterForm } from "@/components/patient-encounter-form"
 import { DispenseMedicationDialog } from "@/components/dispense-medication-dialog"
 import { useAuth } from "@/lib/auth/auth-context"
 import { format } from "date-fns"
+import { useRoleMenuAccess } from "@/lib/hooks/use-role-menu-access"
+import { filterQueueServicePoints } from "@/lib/role-menu-filter"
 
 interface QueueDisplayProps {
   initialServicePoint?: ServicePoint
 }
 
 export function QueueDisplay({ initialServicePoint = "triage" }: QueueDisplayProps) {
-  // Define service points with triage first
+  // Define all service points
   const allServicePoints: ServicePoint[] = [
     "triage",
     "registration",
@@ -40,8 +42,31 @@ export function QueueDisplay({ initialServicePoint = "triage" }: QueueDisplayPro
     "cashier",
   ]
 
-  const [selectedTab, setSelectedTab] = useState<ServicePoint>(initialServicePoint)
+  const { user } = useAuth()
+  const { menuAccess, loading: menuLoading } = useRoleMenuAccess(user?.id)
+
+  // Filter service points based on role access
+  const allowedServicePoints = menuLoading || !menuAccess
+    ? allServicePoints // Show all while loading or if no access data
+    : filterQueueServicePoints(allServicePoints, menuAccess)
+
+  // Ensure initial service point is allowed, otherwise use first allowed
+  const validInitialServicePoint = useMemo(() => {
+    if (allowedServicePoints.includes(initialServicePoint as ServicePoint)) {
+      return initialServicePoint
+    }
+    return allowedServicePoints[0] || "triage"
+  }, [initialServicePoint, allowedServicePoints])
+
+  const [selectedTab, setSelectedTab] = useState<ServicePoint>(validInitialServicePoint as ServicePoint)
   const screenSize = useScreenSize()
+
+  // Update selected tab if it becomes invalid
+  useEffect(() => {
+    if (!allowedServicePoints.includes(selectedTab)) {
+      setSelectedTab((allowedServicePoints[0] || "triage") as ServicePoint)
+    }
+  }, [selectedTab, allowedServicePoints])
 
   // Determine how many tabs to show based on screen size
   const visibleTabCount = useMemo(() => {
@@ -84,8 +109,8 @@ export function QueueDisplay({ initialServicePoint = "triage" }: QueueDisplayPro
       }
     }
 
-    // Fill remaining slots with other tabs
-    for (const tab of allServicePoints) {
+    // Fill remaining slots with other allowed tabs
+    for (const tab of allowedServicePoints) {
       if (result.length < visibleTabCount) {
         if (!result.includes(tab)) {
           result.push(tab)
@@ -94,12 +119,12 @@ export function QueueDisplay({ initialServicePoint = "triage" }: QueueDisplayPro
     }
 
     return result
-  }, [selectedTab, visibleTabCount, allServicePoints])
+  }, [selectedTab, visibleTabCount, allowedServicePoints])
 
   // Determine which tabs to show in the "More" dropdown
   const dropdownTabs = useMemo(() => {
-    return allServicePoints.filter((tab) => !visibleTabs.includes(tab))
-  }, [allServicePoints, visibleTabs])
+    return allowedServicePoints.filter((tab) => !visibleTabs.includes(tab))
+  }, [allowedServicePoints, visibleTabs])
 
   // Check if we need to show the "More" dropdown
   const showMoreDropdown = dropdownTabs.length > 0
@@ -222,7 +247,7 @@ function QueueContent({ servicePoint }: { servicePoint: ServicePoint }) {
       try {
         setLoading(true)
         const data = await queueApi.getAll(servicePoint, undefined)
-        
+
         // Map API response to display format
         const mappedData = data.map((entry: any) => ({
           id: entry.queueId?.toString() || entry.id?.toString() || "",
@@ -237,14 +262,14 @@ function QueueContent({ servicePoint }: { servicePoint: ServicePoint }) {
           estimatedWaitTime: entry.estimatedWaitTime,
           arrivalTime: entry.arrivalTime || new Date().toISOString(),
         }))
-        
+
         setQueueData(mappedData)
 
         // Check for encounters today for each patient
         if (servicePoint === "consultation") {
           const today = format(new Date(), 'yyyy-MM-dd')
           const encounterChecks: Record<string, boolean> = {}
-          
+
           await Promise.all(
             mappedData.map(async (entry: any) => {
               try {
@@ -268,7 +293,7 @@ function QueueContent({ servicePoint }: { servicePoint: ServicePoint }) {
               }
             })
           )
-          
+
           setEncountersToday(encounterChecks)
         }
       } catch (error) {

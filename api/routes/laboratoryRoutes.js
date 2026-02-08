@@ -196,10 +196,13 @@ router.get('/orders', async (req, res) => {
         let query = `
             SELECT lo.*,
                    pt.firstName, pt.lastName, pt.patientNumber,
-                   u.firstName as doctorFirstName, u.lastName as doctorLastName
+                   u.firstName as doctorFirstName, u.lastName as doctorLastName,
+                   GROUP_CONCAT(DISTINCT ltt.testName ORDER BY loi.itemId SEPARATOR ', ') as testNames
             FROM lab_test_orders lo
             LEFT JOIN patients pt ON lo.patientId = pt.patientId
             LEFT JOIN users u ON lo.orderedBy = u.userId
+            LEFT JOIN lab_test_order_items loi ON lo.orderId = loi.orderId
+            LEFT JOIN lab_test_types ltt ON loi.testTypeId = ltt.testTypeId
             WHERE 1=1
         `;
         const params = [];
@@ -214,7 +217,7 @@ router.get('/orders', async (req, res) => {
             params.push(status);
         }
 
-        query += ` ORDER BY lo.orderDate DESC LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset)}`;
+        query += ` GROUP BY lo.orderId ORDER BY lo.orderDate DESC LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset)}`;
 
         const [rows] = await pool.execute(query, params);
         res.status(200).json(rows);

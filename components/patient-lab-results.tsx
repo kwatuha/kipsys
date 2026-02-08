@@ -7,10 +7,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { FileText, Download, Eye, AlertCircle } from "lucide-react"
+import { FileText, Download, Eye, AlertCircle, Printer } from "lucide-react"
 import { laboratoryApi } from "@/lib/api"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Skeleton } from "@/components/ui/skeleton"
+import { printLabResult, downloadLabResultPDF } from "@/lib/lab-results-pdf"
 
 type LabTest = {
   id: string
@@ -24,6 +25,7 @@ type LabTest = {
   performedBy: string
   reportUrl: string
   orderId: string
+  clinicalIndication?: string
 }
 
 type LabResult = {
@@ -61,7 +63,7 @@ export function PatientLabResults({ patientId }: { patientId: string }) {
       for (const order of orders) {
         // Get order items (test types)
         const orderDetails = await laboratoryApi.getOrder(order.orderId.toString()).catch(() => null)
-        
+
         if (!orderDetails || !orderDetails.items) continue
 
         for (const item of orderDetails.items) {
@@ -92,7 +94,8 @@ export function PatientLabResults({ patientId }: { patientId: string }) {
                 orderedBy: order.doctorName || order.orderedBy || 'Unknown',
                 performedBy: result.performedByName || result.performedBy || 'Unknown',
                 reportUrl: '#',
-                orderId: order.orderId.toString()
+                orderId: order.orderId.toString(),
+                clinicalIndication: order.clinicalIndication || orderDetails.clinicalIndication || undefined
               })
             } else {
               // Pending test
@@ -103,7 +106,8 @@ export function PatientLabResults({ patientId }: { patientId: string }) {
                 testName: item.testTypeName || item.testName || 'Unknown Test',
                 category: item.testCategory || 'General',
                 status: result?.status || 'Pending',
-                orderedBy: order.doctorName || order.orderedBy || 'Unknown'
+                orderedBy: order.doctorName || order.orderedBy || 'Unknown',
+                clinicalIndication: order.clinicalIndication || orderDetails.clinicalIndication || undefined
               })
             }
           } catch {
@@ -115,7 +119,8 @@ export function PatientLabResults({ patientId }: { patientId: string }) {
               testName: item.testTypeName || item.testName || 'Unknown Test',
               category: item.testCategory || 'General',
               status: 'Pending',
-              orderedBy: order.doctorName || order.orderedBy || 'Unknown'
+              orderedBy: order.doctorName || order.orderedBy || 'Unknown',
+              clinicalIndication: order.clinicalIndication || orderDetails?.clinicalIndication || undefined
             })
           }
         }
@@ -188,6 +193,7 @@ export function PatientLabResults({ patientId }: { patientId: string }) {
                         <TableHead>Date</TableHead>
                         <TableHead>Test Name</TableHead>
                         <TableHead>Category</TableHead>
+                        <TableHead>Clinical Indication</TableHead>
                         <TableHead>Status</TableHead>
                         <TableHead>Ordered By</TableHead>
                         <TableHead className="text-right">Actions</TableHead>
@@ -202,6 +208,11 @@ export function PatientLabResults({ patientId }: { patientId: string }) {
                           </TableCell>
                           <TableCell>{test.testName}</TableCell>
                           <TableCell>{test.category}</TableCell>
+                          <TableCell className="max-w-xs">
+                            <div className="truncate" title={test.clinicalIndication || ""}>
+                              {test.clinicalIndication || <span className="text-muted-foreground">-</span>}
+                            </div>
+                          </TableCell>
                           <TableCell>
                             <Badge variant="outline">{test.status}</Badge>
                           </TableCell>
@@ -219,9 +230,21 @@ export function PatientLabResults({ patientId }: { patientId: string }) {
                                 <Eye className="h-4 w-4 mr-1" />
                                 View
                               </Button>
-                              <Button variant="outline" size="sm">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => downloadLabResultPDF(test)}
+                              >
                                 <Download className="h-4 w-4 mr-1" />
                                 PDF
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => printLabResult(test)}
+                              >
+                                <Printer className="h-4 w-4 mr-1" />
+                                Print
                               </Button>
                             </div>
                           </TableCell>
@@ -244,6 +267,7 @@ export function PatientLabResults({ patientId }: { patientId: string }) {
                         <TableHead>Date Ordered</TableHead>
                         <TableHead>Test Name</TableHead>
                         <TableHead>Category</TableHead>
+                        <TableHead>Clinical Indication</TableHead>
                         <TableHead>Status</TableHead>
                         <TableHead>Ordered By</TableHead>
                       </TableRow>
@@ -257,6 +281,11 @@ export function PatientLabResults({ patientId }: { patientId: string }) {
                           </TableCell>
                           <TableCell>{test.testName}</TableCell>
                           <TableCell>{test.category}</TableCell>
+                          <TableCell className="max-w-xs">
+                            <div className="truncate" title={test.clinicalIndication || ""}>
+                              {test.clinicalIndication || <span className="text-muted-foreground">-</span>}
+                            </div>
+                          </TableCell>
                           <TableCell>
                             <Badge variant={test.status === "Pending" ? "outline" : "secondary"}>{test.status}</Badge>
                           </TableCell>
@@ -294,6 +323,13 @@ export function PatientLabResults({ patientId }: { patientId: string }) {
                   <p className="font-medium">{selectedTest.performedBy}</p>
                 </div>
               </div>
+
+              {selectedTest.clinicalIndication && (
+                <div className="text-sm">
+                  <p className="text-muted-foreground mb-1">Clinical Indication</p>
+                  <p className="font-medium">{selectedTest.clinicalIndication}</p>
+                </div>
+              )}
 
               {selectedTest.results.length > 0 ? (
                 <div className="rounded-md border">
@@ -336,10 +372,14 @@ export function PatientLabResults({ patientId }: { patientId: string }) {
                 <div className="text-center py-4 text-muted-foreground">No result values available</div>
               )}
 
-              <div className="flex justify-end">
-                <Button>
-                  <FileText className="h-4 w-4 mr-2" />
-                  Download Full Report
+              <div className="flex justify-end gap-2">
+                <Button onClick={() => downloadLabResultPDF(selectedTest)}>
+                  <Download className="h-4 w-4 mr-2" />
+                  Download PDF
+                </Button>
+                <Button variant="outline" onClick={() => printLabResult(selectedTest)}>
+                  <Printer className="h-4 w-4 mr-2" />
+                  Print
                 </Button>
               </div>
             </div>

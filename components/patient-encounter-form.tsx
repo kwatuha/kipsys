@@ -2048,6 +2048,7 @@ const clearDraftFromStorage = (patientId:any) => {
     <>
       <Dialog open={open} onOpenChange={handleDialogClose}>
         <DialogContent className="sm:max-w-[95vw] max-w-[95vw] h-[95vh] max-h-[95vh] overflow-hidden flex flex-col p-0">
+          <DialogTitle className="sr-only">Patient Encounter</DialogTitle>
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="flex-1 flex flex-col overflow-hidden min-h-0">
               {/* Combined Compact Header - Title, Patient Info, Visit Type/Dept, Date, Doctor */}

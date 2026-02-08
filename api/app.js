@@ -41,6 +41,7 @@ const dashboardRoutes = require('./routes/dashboardRoutes');
 const analyticsRoutes = require('./routes/analyticsRoutes');
 const roleRoutes = require('./routes/roleRoutes');
 const privilegeRoutes = require('./routes/privilegeRoutes');
+const roleMenuRoutes = require('./routes/roleMenuRoutes');
 const payableRoutes = require('./routes/payableRoutes');
 const receivableRoutes = require('./routes/receivableRoutes');
 const budgetRoutes = require('./routes/budgetRoutes');
@@ -146,6 +147,7 @@ app.use('/api/workflow', workflowRoutes);
 app.use('/api/departments', departmentRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/roles', roleRoutes);
+app.use('/api/roles', roleMenuRoutes); // Role menu/tab configuration routes
 app.use('/api/privileges', privilegeRoutes);
 // Employee sub-routes must come before main employee routes
 app.use('/api/employees', employeeLeaveRoutes);

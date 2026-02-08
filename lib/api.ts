@@ -1342,6 +1342,25 @@ export const payableApi = {
 };
 
 // Role API
+// Role Menu Access API
+export const roleMenuApi = {
+  getMenuConfig: (roleId: string) =>
+    apiRequest<any>(`/api/roles/${roleId}/menu-config`),
+
+  updateMenuConfig: (roleId: string, config: {
+    categories?: Array<{ categoryId: string; isAllowed: boolean }>;
+    menuItems?: Array<{ categoryId: string; menuItemPath: string; isAllowed: boolean }>;
+    tabs?: Array<{ pagePath: string; tabId: string; isAllowed: boolean }>;
+    queues?: Array<{ servicePoint: string; isAllowed: boolean }>;
+  }) =>
+    apiRequest<any>(`/api/roles/${roleId}/menu-config`, { method: 'POST', body: config }),
+
+  getUserMenuAccess: (userId?: string) => {
+    const params = userId ? `?userId=${userId}` : '';
+    return apiRequest<any>(`/api/roles/users/me/menu-access${params}`);
+  },
+};
+
 export const roleApi = {
   getAll: () =>
     apiRequest<any[]>('/api/roles'),

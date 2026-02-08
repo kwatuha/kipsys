@@ -7,6 +7,7 @@ import { Header } from "@/components/header"
 import { TopNavigation } from "@/components/top-navigation"
 import { CriticalNotificationsProvider } from "@/lib/critical-notifications-context"
 import { FloatingCriticalNotifications } from "@/components/floating-critical-notifications"
+import { Toaster } from "@/components/ui/toaster"
 
 interface MainLayoutContentProps {
   children: React.ReactNode
@@ -22,7 +23,7 @@ export function MainLayoutContent({ children }: MainLayoutContentProps) {
           <AppSidebar activeCategory={activeCategory} />
           <div className="flex flex-col flex-1 overflow-hidden ml-64">
             <Header />
-            <TopNavigation 
+            <TopNavigation
               activeCategory={activeCategory}
               onCategoryChange={setActiveCategory}
             />
@@ -31,7 +32,8 @@ export function MainLayoutContent({ children }: MainLayoutContentProps) {
             </main>
           </div>
         </div>
+        <Toaster />
       </SidebarProvider>
     </CriticalNotificationsProvider>
   )
-} 
+}

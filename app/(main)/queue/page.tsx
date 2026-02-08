@@ -44,8 +44,10 @@ import { PatientEncounterForm } from "@/components/patient-encounter-form"
 import { useAuth } from "@/lib/auth/auth-context"
 import { format } from "date-fns"
 import { Pill } from "lucide-react"
+import { useRoleMenuAccess } from "@/lib/hooks/use-role-menu-access"
+import { filterQueueServicePoints } from "@/lib/role-menu-filter"
 
-const servicePoints = [
+const ALL_SERVICE_POINTS = [
   { value: "triage", label: "Triage" },
   { value: "registration", label: "Registration" },
   { value: "consultation", label: "Consultation" },
@@ -93,6 +95,16 @@ export default function QueueManagement() {
   const [dispenseDialogOpen, setDispenseDialogOpen] = useState(false)
   const [selectedPatientForDispense, setSelectedPatientForDispense] = useState<{ patientId: number; patientName: string } | null>(null)
   const { user } = useAuth()
+  const { menuAccess, loading: menuLoading } = useRoleMenuAccess(user?.id)
+
+  // Filter service points based on role access
+  const allowedServicePoints = menuLoading || !menuAccess
+    ? ALL_SERVICE_POINTS // Show all while loading or if no access data
+    : ALL_SERVICE_POINTS.filter(sp =>
+        menuAccess.queues.length === 0 || menuAccess.queues.includes(sp.value)
+      )
+
+  const servicePoints = allowedServicePoints
 
   useEffect(() => {
     setIsMounted(true)
@@ -136,7 +148,7 @@ export default function QueueManagement() {
 
       const today = format(new Date(), 'yyyy-MM-dd')
       const encounterChecks: Record<string, boolean> = {}
-      
+
       await Promise.all(
         consultationQueues.map(async (queue: any) => {
           if (!queue.patientId) return
@@ -162,7 +174,7 @@ export default function QueueManagement() {
           }
         })
       )
-      
+
       setEncountersToday(encounterChecks)
     }
 
@@ -270,7 +282,7 @@ export default function QueueManagement() {
     const patientName = queue.patientFirstName && queue.patientLastName
       ? `${queue.patientFirstName} ${queue.patientLastName}`
       : "Unknown Patient"
-    
+
     console.log('Starting consultation for:', { patientId, patientName })
     setSelectedPatientForEncounter({ patientId, patientName })
     setEncounterFormOpen(true)
@@ -298,37 +310,37 @@ export default function QueueManagement() {
         if (fullName.includes(query)) return true
         if (queue.patientFirstName?.toLowerCase().includes(query)) return true
         if (queue.patientLastName?.toLowerCase().includes(query)) return true
-        
+
         // Search in patient number
         if (queue.patientNumber?.toLowerCase().includes(query)) return true
-        
+
         // Search in patient phone
         if (queue.patientPhone?.toLowerCase().includes(query)) return true
-        
+
         // Search in ticket number
         if (queue.ticketNumber?.toLowerCase().includes(query)) return true
-        
+
         // Search in service point (both value and label)
         const servicePointLabel = servicePoints.find((sp) => sp.value === queue.servicePoint)?.label.toLowerCase() || ''
         if (queue.servicePoint?.toLowerCase().includes(query)) return true
         if (servicePointLabel.includes(query)) return true
-        
+
         // Search in status (both value and formatted label)
         const statusLabel = queue.status ? queue.status.charAt(0).toUpperCase() + queue.status.slice(1).toLowerCase() : ''
         if (queue.status?.toLowerCase().includes(query)) return true
         if (statusLabel.includes(query)) return true
-        
+
         // Search in priority (both value and formatted label)
         const priorityLabel = queue.priority ? queue.priority.charAt(0).toUpperCase() + queue.priority.slice(1).toLowerCase() : ''
         if (queue.priority?.toLowerCase().includes(query)) return true
         if (priorityLabel.includes(query)) return true
-        
+
         // Search in notes
         if (queue.notes?.toLowerCase().includes(query)) return true
-        
+
         // Search in queue ID
         if (queue.queueId?.toString().includes(query)) return true
-        
+
         return false
       })()
 
