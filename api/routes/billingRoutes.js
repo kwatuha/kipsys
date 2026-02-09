@@ -838,63 +838,107 @@ router.post('/invoices/:id/payment', async (req, res) => {
             // Check if it's a prescription invoice - create pharmacy queue entry
             if (invoice.notes && invoice.notes.includes('Drug payment - Prescription:')) {
                 try {
-                    // Extract prescription number from notes (format: "Drug payment - Prescription: PRESC-XXXXX")
-                    const prescMatch = invoice.notes.match(/Prescription:\s*([A-Z0-9-]+)/);
-                    if (prescMatch && prescMatch[1]) {
-                        const prescriptionNumber = prescMatch[1].trim();
+                    // Extract prescription number from notes (format: "Drug payment - Prescription: PRES-XXXXX" or "PRESC-XXXXX")
+                    const prescMatch = invoice.notes.match(/Prescription:\s*([A-Z0-9-]+)/i);
+                    let prescriptionNumber = null;
+                    let prescription = null;
 
-                        // Find the prescription
+                    if (prescMatch && prescMatch[1]) {
+                        prescriptionNumber = prescMatch[1].trim();
+                        console.log(`[PHARMACY QUEUE] Extracted prescription number from invoice notes: ${prescriptionNumber}`);
+
+                        // Find the prescription by prescription number
                         const [prescriptions] = await connection.execute(
-                            'SELECT prescriptionId, patientId FROM prescriptions WHERE prescriptionNumber = ?',
+                            'SELECT prescriptionId, patientId, status FROM prescriptions WHERE prescriptionNumber = ?',
                             [prescriptionNumber]
                         );
 
                         if (prescriptions.length > 0) {
-                            const prescription = prescriptions[0];
+                            prescription = prescriptions[0];
+                            console.log(`[PHARMACY QUEUE] Found prescription ${prescriptionNumber} for patient ${prescription.patientId}, status: ${prescription.status}`);
+                        } else {
+                            console.log(`[PHARMACY QUEUE] Prescription ${prescriptionNumber} not found by number, trying to find by patient and invoice`);
+                        }
+                    }
 
-                            // Validate that prescription is still pending (not already dispensed)
-                            const [prescriptionStatus] = await connection.execute(
-                                'SELECT status FROM prescriptions WHERE prescriptionId = ?',
-                                [prescription.prescriptionId]
+                    // Fallback: If prescription not found by number, try to find pending prescriptions for this patient
+                    if (!prescription) {
+                        console.log(`[PHARMACY QUEUE] Attempting fallback: Finding pending prescriptions for patient ${invoice.patientId}`);
+                        const [pendingPrescriptions] = await connection.execute(
+                            `SELECT p.prescriptionId, p.prescriptionNumber, p.patientId, p.status
+                             FROM prescriptions p
+                             INNER JOIN invoice_items ii ON ii.description LIKE CONCAT('%Prescription Item:%')
+                             INNER JOIN invoices i ON i.invoiceId = ii.invoiceId
+                             WHERE i.invoiceId = ? AND p.patientId = ? AND p.status = 'pending'
+                             ORDER BY p.prescriptionDate DESC
+                             LIMIT 1`,
+                            [id, invoice.patientId]
+                        );
+
+                        if (pendingPrescriptions.length > 0) {
+                            prescription = pendingPrescriptions[0];
+                            prescriptionNumber = prescription.prescriptionNumber;
+                            console.log(`[PHARMACY QUEUE] Found prescription via fallback: ${prescriptionNumber} for patient ${prescription.patientId}`);
+                        } else {
+                            // Last resort: Find any pending prescription for this patient
+                            const [anyPending] = await connection.execute(
+                                `SELECT prescriptionId, prescriptionNumber, patientId, status
+                                 FROM prescriptions
+                                 WHERE patientId = ? AND status = 'pending'
+                                 ORDER BY prescriptionDate DESC
+                                 LIMIT 1`,
+                                [invoice.patientId]
                             );
 
-                            if (prescriptionStatus.length > 0 && prescriptionStatus[0].status === 'pending') {
-                                // Check if pharmacy queue entry already exists for this prescription
-                                const [existingQueue] = await connection.execute(
-                                    `SELECT queueId FROM queue_entries
-                                     WHERE patientId = ? AND servicePoint = 'pharmacy'
-                                     AND notes LIKE ? AND status NOT IN ('completed', 'cancelled')`,
-                                    [prescription.patientId, `%Prescription: ${prescriptionNumber}%`]
-                                );
-
-                                if (existingQueue.length === 0) {
-                                    // Generate ticket number for pharmacy queue
-                                    const [pharmacyCount] = await connection.execute(
-                                        'SELECT COUNT(*) as count FROM queue_entries WHERE DATE(arrivalTime) = CURDATE() AND servicePoint = "pharmacy"'
-                                    );
-                                    const pharmacyTicketNum = pharmacyCount[0].count + 1;
-                                    const pharmacyTicketNumber = `P-${String(pharmacyTicketNum).padStart(3, '0')}`;
-
-                                    // Create pharmacy queue entry
-                                    await connection.execute(
-                                        `INSERT INTO queue_entries
-                                        (patientId, ticketNumber, servicePoint, priority, status, notes, createdBy)
-                                        VALUES (?, ?, 'pharmacy', 'normal', 'waiting', ?, ?)`,
-                                        [
-                                            prescription.patientId,
-                                            pharmacyTicketNumber,
-                                            `Prescription: ${prescriptionNumber}`,
-                                            userId || null
-                                        ]
-                                    );
-                                }
-                            } else {
-                                console.log(`Prescription ${prescriptionNumber} is not pending (status: ${prescriptionStatus[0]?.status || 'unknown'}) - skipping pharmacy queue addition`);
+                            if (anyPending.length > 0) {
+                                prescription = anyPending[0];
+                                prescriptionNumber = prescription.prescriptionNumber;
+                                console.log(`[PHARMACY QUEUE] Found pending prescription via last resort: ${prescriptionNumber} for patient ${prescription.patientId}`);
                             }
                         }
                     }
+
+                    if (prescription && prescription.status === 'pending') {
+                        // Check if pharmacy queue entry already exists for this patient
+                        const [existingQueue] = await connection.execute(
+                            `SELECT queueId FROM queue_entries
+                             WHERE patientId = ? AND servicePoint = 'pharmacy'
+                             AND status NOT IN ('completed', 'cancelled')`,
+                            [prescription.patientId]
+                        );
+
+                        if (existingQueue.length === 0) {
+                            // Generate ticket number for pharmacy queue
+                            const [pharmacyCount] = await connection.execute(
+                                'SELECT COUNT(*) as count FROM queue_entries WHERE DATE(arrivalTime) = CURDATE() AND servicePoint = "pharmacy"'
+                            );
+                            const pharmacyTicketNum = pharmacyCount[0].count + 1;
+                            const pharmacyTicketNumber = `P-${String(pharmacyTicketNum).padStart(3, '0')}`;
+
+                            // Create pharmacy queue entry
+                            await connection.execute(
+                                `INSERT INTO queue_entries
+                                (patientId, ticketNumber, servicePoint, priority, status, notes, createdBy)
+                                VALUES (?, ?, 'pharmacy', 'normal', 'waiting', ?, ?)`,
+                                [
+                                    prescription.patientId,
+                                    pharmacyTicketNumber,
+                                    prescriptionNumber ? `Prescription: ${prescriptionNumber}` : `Invoice: ${invoice.invoiceNumber}`,
+                                    userId || null
+                                ]
+                            );
+                            console.log(`[PHARMACY QUEUE] Successfully created pharmacy queue entry for patient ${prescription.patientId} with ticket ${pharmacyTicketNumber}`);
+                        } else {
+                            console.log(`[PHARMACY QUEUE] Patient ${prescription.patientId} already exists in pharmacy queue (queueId: ${existingQueue[0].queueId})`);
+                        }
+                    } else if (prescription) {
+                        console.log(`[PHARMACY QUEUE] Prescription ${prescriptionNumber || prescription.prescriptionId} is not pending (status: ${prescription.status}) - skipping pharmacy queue addition`);
+                    } else {
+                        console.log(`[PHARMACY QUEUE] No pending prescription found for patient ${invoice.patientId} - cannot create pharmacy queue entry`);
+                    }
                 } catch (pharmacyQueueError) {
-                    console.error('Error creating pharmacy queue entry:', pharmacyQueueError);
+                    console.error('[PHARMACY QUEUE] Error creating pharmacy queue entry:', pharmacyQueueError);
+                    console.error('[PHARMACY QUEUE] Error stack:', pharmacyQueueError.stack);
                     // Don't fail the payment if pharmacy queue creation fails
                 }
             }
@@ -2459,6 +2503,132 @@ router.post('/invoices/:id/create-claim', async (req, res) => {
         res.status(500).json({ message: 'Error creating claim from invoice', error: error.message });
     } finally {
         connection.release();
+    }
+});
+
+/**
+ * @route POST /api/billing/invoices/:id/create-pharmacy-queue
+ * @description Manually create pharmacy queue entry for a paid prescription invoice
+ */
+router.post('/invoices/:id/create-pharmacy-queue', async (req, res) => {
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
+
+        const { id } = req.params;
+        const userId = req.user?.id;
+
+        // Get the invoice
+        const [invoices] = await connection.execute('SELECT * FROM invoices WHERE invoiceId = ?', [id]);
+        if (invoices.length === 0) {
+            return res.status(404).json({ message: 'Invoice not found' });
+        }
+
+        const invoice = invoices[0];
+
+        // Check if invoice is paid
+        if (invoice.status !== 'paid') {
+            return res.status(400).json({
+                message: 'Invoice must be paid before creating pharmacy queue entry',
+                invoiceStatus: invoice.status
+            });
+        }
+
+        // Check if it's a prescription invoice
+        if (!invoice.notes || !invoice.notes.includes('Drug payment - Prescription:')) {
+            return res.status(400).json({
+                message: 'This invoice is not a prescription invoice',
+                invoiceNotes: invoice.notes
+            });
+        }
+
+        // Find pending prescriptions for this patient
+        const [pendingPrescriptions] = await connection.execute(
+            `SELECT prescriptionId, prescriptionNumber, patientId, status
+             FROM prescriptions
+             WHERE patientId = ? AND status = 'pending'
+             ORDER BY prescriptionDate DESC
+             LIMIT 1`,
+            [invoice.patientId]
+        );
+
+        if (pendingPrescriptions.length === 0) {
+            return res.status(400).json({
+                message: 'Patient has no pending prescriptions',
+                patientId: invoice.patientId
+            });
+        }
+
+        const prescription = pendingPrescriptions[0];
+
+        // Check if pharmacy queue entry already exists
+        const [existingQueue] = await connection.execute(
+            `SELECT queueId FROM queue_entries
+             WHERE patientId = ? AND servicePoint = 'pharmacy'
+             AND status NOT IN ('completed', 'cancelled')`,
+            [prescription.patientId]
+        );
+
+        if (existingQueue.length > 0) {
+            await connection.commit();
+            connection.release();
+            return res.status(200).json({
+                message: 'Patient already exists in pharmacy queue',
+                queueId: existingQueue[0].queueId,
+                patientId: prescription.patientId
+            });
+        }
+
+        // Generate ticket number for pharmacy queue
+        const [pharmacyCount] = await connection.execute(
+            'SELECT COUNT(*) as count FROM queue_entries WHERE DATE(arrivalTime) = CURDATE() AND servicePoint = "pharmacy"'
+        );
+        const pharmacyTicketNum = pharmacyCount[0].count + 1;
+        const pharmacyTicketNumber = `P-${String(pharmacyTicketNum).padStart(3, '0')}`;
+
+        // Create pharmacy queue entry
+        await connection.execute(
+            `INSERT INTO queue_entries
+            (patientId, ticketNumber, servicePoint, priority, status, notes, createdBy)
+            VALUES (?, ?, 'pharmacy', 'normal', 'waiting', ?, ?)`,
+            [
+                prescription.patientId,
+                pharmacyTicketNumber,
+                `Prescription: ${prescription.prescriptionNumber}`,
+                userId || null
+            ]
+        );
+
+        await connection.commit();
+
+        // Get the created queue entry
+        const [queueEntry] = await connection.execute(
+            `SELECT q.*,
+                    p.firstName as patientFirstName, p.lastName as patientLastName,
+                    p.patientNumber
+             FROM queue_entries q
+             LEFT JOIN patients p ON q.patientId = p.patientId
+             WHERE q.patientId = ? AND q.servicePoint = 'pharmacy'
+             AND q.ticketNumber = ?
+             ORDER BY q.queueId DESC
+             LIMIT 1`,
+            [prescription.patientId, pharmacyTicketNumber]
+        );
+
+        connection.release();
+        res.status(201).json({
+            message: 'Pharmacy queue entry created successfully',
+            queueEntry: queueEntry[0],
+            prescription: {
+                prescriptionId: prescription.prescriptionId,
+                prescriptionNumber: prescription.prescriptionNumber
+            }
+        });
+    } catch (error) {
+        await connection.rollback();
+        connection.release();
+        console.error('Error creating pharmacy queue entry:', error);
+        res.status(500).json({ message: 'Error creating pharmacy queue entry', error: error.message });
     }
 });
 

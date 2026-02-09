@@ -1242,7 +1242,7 @@ router.get('/prescriptions/paid/ready-for-dispensing', async (req, res) => {
                 pi.itemId,
                 pi.prescriptionId,
                 pi.medicationId,
-                pi.medicationName,
+                COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, 'Unknown Medication') as medicationName,
                 pi.dosage,
                 pi.frequency,
                 pi.duration,
@@ -1260,24 +1260,137 @@ router.get('/prescriptions/paid/ready-for-dispensing', async (req, res) => {
                 i.invoiceId,
                 i.invoiceNumber,
                 i.status as invoiceStatus,
-                ii.drugInventoryId,
-                ii.unitPrice,
-                ii.totalPrice,
-                di.batchNumber,
-                di.expiryDate,
-                di.quantity as availableQuantity
+                COALESCE(
+                    (SELECT di_sel.drugInventoryId FROM invoice_items ii_sel
+                     INNER JOIN drug_inventory di_sel ON di_sel.drugInventoryId = ii_sel.drugInventoryId
+                     WHERE ii_sel.invoiceId = i.invoiceId
+                     AND (
+                         ii_sel.description LIKE CONCAT('%Prescription Item: ', COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, ''), '%')
+                         OR ii_sel.description LIKE CONCAT('%', COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, ''), '%')
+                         OR (ii_sel.drugInventoryId IS NOT NULL AND di_sel.medicationId = pi.medicationId)
+                     )
+                     AND di_sel.quantity > 0
+                     LIMIT 1),
+                    (SELECT di_fallback.drugInventoryId FROM drug_inventory di_fallback
+                     WHERE di_fallback.medicationId = pi.medicationId
+                     AND di_fallback.quantity > 0
+                     AND di_fallback.status = 'active'
+                     AND (di_fallback.expiryDate IS NULL OR di_fallback.expiryDate >= CURDATE())
+                     ORDER BY di_fallback.expiryDate ASC, di_fallback.createdAt ASC
+                     LIMIT 1)
+                ) as drugInventoryId,
+                COALESCE(
+                    (SELECT di_sel.sellPrice FROM invoice_items ii_sel
+                     INNER JOIN drug_inventory di_sel ON di_sel.drugInventoryId = ii_sel.drugInventoryId
+                     WHERE ii_sel.invoiceId = i.invoiceId
+                     AND (
+                         ii_sel.description LIKE CONCAT('%Prescription Item: ', COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, ''), '%')
+                         OR ii_sel.description LIKE CONCAT('%', COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, ''), '%')
+                         OR (ii_sel.drugInventoryId IS NOT NULL AND di_sel.medicationId = pi.medicationId)
+                     )
+                     LIMIT 1),
+                    (SELECT di_fallback.sellPrice FROM drug_inventory di_fallback
+                     WHERE di_fallback.medicationId = pi.medicationId
+                     AND di_fallback.quantity > 0
+                     AND di_fallback.status = 'active'
+                     AND (di_fallback.expiryDate IS NULL OR di_fallback.expiryDate >= CURDATE())
+                     ORDER BY di_fallback.expiryDate ASC, di_fallback.createdAt ASC
+                     LIMIT 1)
+                ) as unitPrice,
+                COALESCE(
+                    (SELECT ii_sel.totalPrice FROM invoice_items ii_sel
+                     WHERE ii_sel.invoiceId = i.invoiceId
+                     AND (
+                         ii_sel.description LIKE CONCAT('%Prescription Item: ', COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, ''), '%')
+                         OR ii_sel.description LIKE CONCAT('%', COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, ''), '%')
+                         OR (ii_sel.drugInventoryId IS NOT NULL AND EXISTS (
+                             SELECT 1 FROM drug_inventory di2 WHERE di2.drugInventoryId = ii_sel.drugInventoryId AND di2.medicationId = pi.medicationId
+                         ))
+                     )
+                     LIMIT 1),
+                    (SELECT di_fallback.sellPrice * pi.quantity FROM drug_inventory di_fallback
+                     WHERE di_fallback.medicationId = pi.medicationId
+                     AND di_fallback.quantity > 0
+                     AND di_fallback.status = 'active'
+                     AND (di_fallback.expiryDate IS NULL OR di_fallback.expiryDate >= CURDATE())
+                     ORDER BY di_fallback.expiryDate ASC, di_fallback.createdAt ASC
+                     LIMIT 1)
+                ) as totalPrice,
+                COALESCE(
+                    (SELECT di_sel.batchNumber FROM invoice_items ii_sel
+                     INNER JOIN drug_inventory di_sel ON di_sel.drugInventoryId = ii_sel.drugInventoryId
+                     WHERE ii_sel.invoiceId = i.invoiceId
+                     AND (
+                         ii_sel.description LIKE CONCAT('%Prescription Item: ', COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, ''), '%')
+                         OR ii_sel.description LIKE CONCAT('%', COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, ''), '%')
+                         OR (ii_sel.drugInventoryId IS NOT NULL AND di_sel.medicationId = pi.medicationId)
+                     )
+                     LIMIT 1),
+                    (SELECT di_fallback.batchNumber FROM drug_inventory di_fallback
+                     WHERE di_fallback.medicationId = pi.medicationId
+                     AND di_fallback.quantity > 0
+                     AND di_fallback.status = 'active'
+                     AND (di_fallback.expiryDate IS NULL OR di_fallback.expiryDate >= CURDATE())
+                     ORDER BY di_fallback.expiryDate ASC, di_fallback.createdAt ASC
+                     LIMIT 1)
+                ) as batchNumber,
+                COALESCE(
+                    (SELECT di_sel.expiryDate FROM invoice_items ii_sel
+                     INNER JOIN drug_inventory di_sel ON di_sel.drugInventoryId = ii_sel.drugInventoryId
+                     WHERE ii_sel.invoiceId = i.invoiceId
+                     AND (
+                         ii_sel.description LIKE CONCAT('%Prescription Item: ', COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, ''), '%')
+                         OR ii_sel.description LIKE CONCAT('%', COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, ''), '%')
+                         OR (ii_sel.drugInventoryId IS NOT NULL AND di_sel.medicationId = pi.medicationId)
+                     )
+                     LIMIT 1),
+                    (SELECT di_fallback.expiryDate FROM drug_inventory di_fallback
+                     WHERE di_fallback.medicationId = pi.medicationId
+                     AND di_fallback.quantity > 0
+                     AND di_fallback.status = 'active'
+                     AND (di_fallback.expiryDate IS NULL OR di_fallback.expiryDate >= CURDATE())
+                     ORDER BY di_fallback.expiryDate ASC, di_fallback.createdAt ASC
+                     LIMIT 1)
+                ) as expiryDate,
+                COALESCE(
+                    (SELECT di_sel.quantity FROM invoice_items ii_sel
+                     INNER JOIN drug_inventory di_sel ON di_sel.drugInventoryId = ii_sel.drugInventoryId
+                     WHERE ii_sel.invoiceId = i.invoiceId
+                     AND (
+                         ii_sel.description LIKE CONCAT('%Prescription Item: ', COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, ''), '%')
+                         OR ii_sel.description LIKE CONCAT('%', COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, ''), '%')
+                         OR (ii_sel.drugInventoryId IS NOT NULL AND di_sel.medicationId = pi.medicationId)
+                     )
+                     AND di_sel.quantity > 0
+                     LIMIT 1),
+                    (SELECT di_fallback.quantity FROM drug_inventory di_fallback
+                     WHERE di_fallback.medicationId = pi.medicationId
+                     AND di_fallback.quantity > 0
+                     AND di_fallback.status = 'active'
+                     AND (di_fallback.expiryDate IS NULL OR di_fallback.expiryDate >= CURDATE())
+                     ORDER BY di_fallback.expiryDate ASC, di_fallback.createdAt ASC
+                     LIMIT 1)
+                ) as availableQuantity
             FROM prescription_items pi
             INNER JOIN prescriptions p ON pi.prescriptionId = p.prescriptionId
             INNER JOIN patients pt ON p.patientId = pt.patientId
             INNER JOIN users u ON p.doctorId = u.userId
-            INNER JOIN invoices i ON i.notes LIKE CONCAT('%Prescription: ', p.prescriptionNumber, '%')
-            INNER JOIN invoice_items ii ON ii.invoiceId = i.invoiceId
-                AND ii.description LIKE CONCAT('%Prescription Item: ', pi.medicationName, '%')
-            INNER JOIN drug_inventory di ON ii.drugInventoryId = di.drugInventoryId
+            LEFT JOIN medications m ON pi.medicationId = m.medicationId
+            INNER JOIN invoices i ON (
+                i.notes LIKE CONCAT('%Prescription: ', p.prescriptionNumber, '%')
+                OR i.notes LIKE CONCAT('%Drug payment - Prescription: ', p.prescriptionNumber, '%')
+            )
             WHERE pi.status = 'pending'
             AND i.status = 'paid'
             AND pi.medicationId IS NOT NULL
-            AND di.quantity > 0
+            AND EXISTS (
+                SELECT 1 FROM drug_inventory di_check
+                WHERE di_check.medicationId = pi.medicationId
+                AND di_check.quantity > 0
+                AND di_check.status = 'active'
+                AND (di_check.expiryDate IS NULL OR di_check.expiryDate >= CURDATE())
+            )
+            GROUP BY pi.itemId
         `;
         const params = [];
 
@@ -1289,10 +1402,437 @@ router.get('/prescriptions/paid/ready-for-dispensing', async (req, res) => {
         query += ' ORDER BY p.prescriptionDate DESC, pi.itemId ASC';
 
         const [rows] = await pool.execute(query, params);
+
+        // If no results with invoice_items match, try a fallback query
+        if (rows.length === 0 && patientId) {
+            console.log(`[PHARMACY DISPENSE] No results with invoice_items match for patient ${patientId}, trying fallback query`);
+
+            // First, try to find prescriptions with paid invoices (more flexible matching)
+            const fallbackQuery = `
+                SELECT
+                    pi.itemId,
+                    pi.prescriptionId,
+                    pi.medicationId,
+                    COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, 'Unknown Medication') as medicationName,
+                    pi.dosage,
+                    pi.frequency,
+                    pi.duration,
+                    pi.quantity as prescribedQuantity,
+                    pi.instructions,
+                    pi.status,
+                    p.prescriptionNumber,
+                    p.prescriptionDate,
+                    p.patientId,
+                    pt.firstName as patientFirstName,
+                    pt.lastName as patientLastName,
+                    pt.patientNumber,
+                    u.firstName as doctorFirstName,
+                    u.lastName as doctorLastName,
+                    i.invoiceId,
+                    i.invoiceNumber,
+                    i.status as invoiceStatus,
+                    (SELECT di2.drugInventoryId
+                     FROM drug_inventory di2
+                     WHERE di2.medicationId = pi.medicationId
+                     AND di2.quantity > 0
+                     AND di2.status = 'active'
+                     AND (di2.expiryDate IS NULL OR di2.expiryDate >= CURDATE())
+                     ORDER BY di2.expiryDate ASC, di2.createdAt ASC
+                     LIMIT 1) as drugInventoryId,
+                    (SELECT di2.sellPrice
+                     FROM drug_inventory di2
+                     WHERE di2.medicationId = pi.medicationId
+                     AND di2.quantity > 0
+                     AND di2.status = 'active'
+                     AND (di2.expiryDate IS NULL OR di2.expiryDate >= CURDATE())
+                     ORDER BY di2.expiryDate ASC, di2.createdAt ASC
+                     LIMIT 1) as unitPrice,
+                    (SELECT di2.sellPrice * pi.quantity
+                     FROM drug_inventory di2
+                     WHERE di2.medicationId = pi.medicationId
+                     AND di2.quantity > 0
+                     AND di2.status = 'active'
+                     AND (di2.expiryDate IS NULL OR di2.expiryDate >= CURDATE())
+                     ORDER BY di2.expiryDate ASC, di2.createdAt ASC
+                     LIMIT 1) as totalPrice,
+                    (SELECT di2.batchNumber
+                     FROM drug_inventory di2
+                     WHERE di2.medicationId = pi.medicationId
+                     AND di2.quantity > 0
+                     AND di2.status = 'active'
+                     AND (di2.expiryDate IS NULL OR di2.expiryDate >= CURDATE())
+                     ORDER BY di2.expiryDate ASC, di2.createdAt ASC
+                     LIMIT 1) as batchNumber,
+                    (SELECT di2.expiryDate
+                     FROM drug_inventory di2
+                     WHERE di2.medicationId = pi.medicationId
+                     AND di2.quantity > 0
+                     AND di2.status = 'active'
+                     AND (di2.expiryDate IS NULL OR di2.expiryDate >= CURDATE())
+                     ORDER BY di2.expiryDate ASC, di2.createdAt ASC
+                     LIMIT 1) as expiryDate,
+                    (SELECT di2.quantity
+                     FROM drug_inventory di2
+                     WHERE di2.medicationId = pi.medicationId
+                     AND di2.quantity > 0
+                     AND di2.status = 'active'
+                     AND (di2.expiryDate IS NULL OR di2.expiryDate >= CURDATE())
+                     ORDER BY di2.expiryDate ASC, di2.createdAt ASC
+                     LIMIT 1) as availableQuantity
+                FROM prescription_items pi
+                INNER JOIN prescriptions p ON pi.prescriptionId = p.prescriptionId
+                INNER JOIN patients pt ON p.patientId = pt.patientId
+                INNER JOIN users u ON p.doctorId = u.userId
+                LEFT JOIN medications m ON pi.medicationId = m.medicationId
+                INNER JOIN invoices i ON i.patientId = p.patientId
+                WHERE pi.status = 'pending'
+                AND i.status = 'paid'
+                AND pi.medicationId IS NOT NULL
+                AND p.patientId = ?
+                AND (
+                    i.notes LIKE CONCAT('%Prescription: ', p.prescriptionNumber, '%')
+                    OR i.notes LIKE CONCAT('%Drug payment - Prescription: ', p.prescriptionNumber, '%')
+                    OR i.notes LIKE CONCAT('%', p.prescriptionNumber, '%')
+                    OR EXISTS (
+                        SELECT 1 FROM invoice_items ii2
+                        WHERE ii2.invoiceId = i.invoiceId
+                        AND (
+                            ii2.description LIKE CONCAT('%', COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, ''), '%')
+                            OR (ii2.drugInventoryId IS NOT NULL AND EXISTS (
+                                SELECT 1 FROM drug_inventory di_check
+                                WHERE di_check.drugInventoryId = ii2.drugInventoryId
+                                AND di_check.medicationId = pi.medicationId
+                            ))
+                        )
+                    )
+                )
+                AND EXISTS (
+                    SELECT 1 FROM drug_inventory di_check
+                    WHERE di_check.medicationId = pi.medicationId
+                    AND di_check.quantity > 0
+                    AND di_check.status = 'active'
+                    AND (di_check.expiryDate IS NULL OR di_check.expiryDate >= CURDATE())
+                )
+                GROUP BY pi.itemId
+                ORDER BY p.prescriptionDate DESC, pi.itemId ASC
+            `;
+
+            const [fallbackRows] = await pool.execute(fallbackQuery, [patientId]);
+            console.log(`[PHARMACY DISPENSE] Fallback query returned ${fallbackRows.length} items`);
+
+            if (fallbackRows.length > 0) {
+                return res.status(200).json(fallbackRows);
+            }
+
+            // Last resort: Just find pending prescriptions with available inventory
+            // Match by invoice items (medication name or drugInventoryId) instead of invoice notes
+            console.log(`[PHARMACY DISPENSE] Fallback query also returned 0 items, trying last resort query`);
+            const lastResortQuery = `
+                SELECT DISTINCT
+                    pi.itemId,
+                    pi.prescriptionId,
+                    pi.medicationId,
+                    COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, 'Unknown Medication') as medicationName,
+                    pi.dosage,
+                    pi.frequency,
+                    pi.duration,
+                    pi.quantity as prescribedQuantity,
+                    pi.instructions,
+                    pi.status,
+                    p.prescriptionNumber,
+                    p.prescriptionDate,
+                    p.patientId,
+                    pt.firstName as patientFirstName,
+                    pt.lastName as patientLastName,
+                    pt.patientNumber,
+                    u.firstName as doctorFirstName,
+                    u.lastName as doctorLastName,
+                    COALESCE(
+                        (SELECT i.invoiceId FROM invoices i
+                         INNER JOIN invoice_items ii ON i.invoiceId = ii.invoiceId
+                         WHERE i.patientId = p.patientId
+                         AND i.status = 'paid'
+                         AND (
+                             ii.description LIKE CONCAT('%', COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, ''), '%')
+                             OR (ii.drugInventoryId IS NOT NULL AND EXISTS (
+                                 SELECT 1 FROM drug_inventory di_check
+                                 WHERE di_check.drugInventoryId = ii.drugInventoryId
+                                 AND di_check.medicationId = pi.medicationId
+                             ))
+                         )
+                         ORDER BY i.invoiceDate DESC
+                         LIMIT 1),
+                        (SELECT invoiceId FROM invoices WHERE patientId = p.patientId AND status = 'paid' ORDER BY invoiceDate DESC LIMIT 1)
+                    ) as invoiceId,
+                    COALESCE(
+                        (SELECT i.invoiceNumber FROM invoices i
+                         INNER JOIN invoice_items ii ON i.invoiceId = ii.invoiceId
+                         WHERE i.patientId = p.patientId
+                         AND i.status = 'paid'
+                         AND (
+                             ii.description LIKE CONCAT('%', COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, ''), '%')
+                             OR (ii.drugInventoryId IS NOT NULL AND EXISTS (
+                                 SELECT 1 FROM drug_inventory di_check
+                                 WHERE di_check.drugInventoryId = ii.drugInventoryId
+                                 AND di_check.medicationId = pi.medicationId
+                             ))
+                         )
+                         ORDER BY i.invoiceDate DESC
+                         LIMIT 1),
+                        (SELECT invoiceNumber FROM invoices WHERE patientId = p.patientId AND status = 'paid' ORDER BY invoiceDate DESC LIMIT 1)
+                    ) as invoiceNumber,
+                    'paid' as invoiceStatus,
+                    di.drugInventoryId,
+                    di.sellPrice as unitPrice,
+                    di.sellPrice * pi.quantity as totalPrice,
+                    di.batchNumber,
+                    di.expiryDate,
+                    di.quantity as availableQuantity
+                FROM prescription_items pi
+                INNER JOIN prescriptions p ON pi.prescriptionId = p.prescriptionId
+                INNER JOIN patients pt ON p.patientId = pt.patientId
+                INNER JOIN users u ON p.doctorId = u.userId
+                LEFT JOIN medications m ON pi.medicationId = m.medicationId
+                INNER JOIN drug_inventory di ON (
+                    di.medicationId = pi.medicationId
+                    AND di.quantity > 0
+                    AND di.status = 'active'
+                    AND (di.expiryDate IS NULL OR di.expiryDate >= CURDATE())
+                )
+                WHERE pi.status = 'pending'
+                AND pi.medicationId IS NOT NULL
+                AND p.patientId = ?
+                AND EXISTS (
+                    SELECT 1 FROM invoices i2
+                    INNER JOIN invoice_items ii2 ON i2.invoiceId = ii2.invoiceId
+                    WHERE i2.patientId = p.patientId
+                    AND i2.status = 'paid'
+                    AND (
+                        ii2.description LIKE CONCAT('%', COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, ''), '%')
+                        OR (ii2.drugInventoryId IS NOT NULL AND EXISTS (
+                            SELECT 1 FROM drug_inventory di_check2
+                            WHERE di_check2.drugInventoryId = ii2.drugInventoryId
+                            AND di_check2.medicationId = pi.medicationId
+                        ))
+                        OR i2.notes LIKE CONCAT('%Prescription%')
+                        OR i2.notes LIKE CONCAT('%Drug payment%')
+                    )
+                )
+                AND di.drugInventoryId = (
+                    SELECT di2.drugInventoryId
+                    FROM drug_inventory di2
+                    WHERE di2.medicationId = pi.medicationId
+                    AND di2.quantity > 0
+                    AND di2.status = 'active'
+                    AND (di2.expiryDate IS NULL OR di2.expiryDate >= CURDATE())
+                    ORDER BY di2.expiryDate ASC, di2.createdAt ASC
+                    LIMIT 1
+                )
+                ORDER BY p.prescriptionDate DESC, pi.itemId ASC
+            `;
+
+            const [lastResortRows] = await pool.execute(lastResortQuery, [patientId]);
+            console.log(`[PHARMACY DISPENSE] Last resort query returned ${lastResortRows.length} items`);
+            return res.status(200).json(lastResortRows);
+        }
+
+        console.log(`[PHARMACY DISPENSE] Query returned ${rows.length} items for patient ${patientId || 'all'}`);
         res.status(200).json(rows);
     } catch (error) {
         console.error('Error fetching prescription items ready for dispensing:', error);
         res.status(500).json({ message: 'Error fetching prescription items ready for dispensing', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/pharmacy/prescriptions/paid/ready-for-dispensing/debug
+ * @description Debug endpoint to check why prescription items are not showing for a patient
+ */
+router.get('/prescriptions/paid/ready-for-dispensing/debug', async (req, res) => {
+    try {
+        const { patientId } = req.query;
+
+        if (!patientId) {
+            return res.status(400).json({ error: 'patientId is required' });
+        }
+
+        const debugInfo = {
+            patientId,
+            prescriptions: [],
+            invoices: [],
+            prescriptionItems: [],
+            invoiceItems: [],
+            drugInventory: [],
+            issues: []
+        };
+
+        // 1. Get all prescriptions for this patient
+        const [prescriptions] = await pool.execute(
+            `SELECT prescriptionId, prescriptionNumber, patientId, doctorId, prescriptionDate, status, notes
+             FROM prescriptions
+             WHERE patientId = ?
+             ORDER BY prescriptionDate DESC`,
+            [patientId]
+        );
+        debugInfo.prescriptions = prescriptions;
+
+        // 2. Get all prescription items
+        if (prescriptions.length > 0) {
+            const prescriptionIds = prescriptions.map(p => p.prescriptionId);
+            const placeholders = prescriptionIds.map(() => '?').join(',');
+            const [items] = await pool.execute(
+                `SELECT itemId, prescriptionId, medicationId, medicationName, dosage, frequency, duration, quantity, instructions, status
+                 FROM prescription_items
+                 WHERE prescriptionId IN (${placeholders})`,
+                prescriptionIds
+            );
+            debugInfo.prescriptionItems = items;
+
+            // Check for issues
+            const pendingItems = items.filter(i => i.status === 'pending');
+            if (pendingItems.length === 0) {
+                debugInfo.issues.push('No prescription items with status="pending"');
+            }
+
+            const itemsWithMedicationId = items.filter(i => i.medicationId !== null);
+            if (itemsWithMedicationId.length === 0) {
+                debugInfo.issues.push('No prescription items have medicationId (all are null)');
+            }
+        } else {
+            debugInfo.issues.push('No prescriptions found for this patient');
+        }
+
+        // 3. Get all invoices for this patient
+        const [invoices] = await pool.execute(
+            `SELECT invoiceId, invoiceNumber, patientId, invoiceDate, totalAmount, paidAmount, balance, status, notes
+             FROM invoices
+             WHERE patientId = ?
+             ORDER BY invoiceDate DESC`,
+            [patientId]
+        );
+        debugInfo.invoices = invoices;
+
+        // 4. Check for prescription-related invoices
+        const prescriptionInvoices = invoices.filter(inv =>
+            inv.notes && (
+                inv.notes.includes('Prescription:') ||
+                inv.notes.includes('Drug payment')
+            )
+        );
+
+        if (prescriptionInvoices.length === 0) {
+            debugInfo.issues.push('No invoices found with prescription-related notes');
+        }
+
+        const paidPrescriptionInvoices = prescriptionInvoices.filter(inv => inv.status === 'paid');
+        if (paidPrescriptionInvoices.length === 0) {
+            debugInfo.issues.push('No paid invoices found for prescriptions');
+        }
+
+        // 5. Get invoice items for prescription invoices
+        if (paidPrescriptionInvoices.length > 0) {
+            const invoiceIds = paidPrescriptionInvoices.map(inv => inv.invoiceId);
+            const placeholders = invoiceIds.map(() => '?').join(',');
+            const [invoiceItems] = await pool.execute(
+                `SELECT invoiceItemId, invoiceId, description, quantity, unitPrice, totalPrice, drugInventoryId
+                 FROM invoice_items
+                 WHERE invoiceId IN (${placeholders})`,
+                invoiceIds
+            );
+            debugInfo.invoiceItems = invoiceItems;
+
+            const itemsWithDrugInventory = invoiceItems.filter(ii => ii.drugInventoryId !== null);
+            if (itemsWithDrugInventory.length === 0) {
+                debugInfo.issues.push('No invoice items have drugInventoryId linked');
+            }
+        }
+
+        // 6. Get drug inventory for prescribed medications
+        if (debugInfo.prescriptionItems.length > 0) {
+            const medicationIds = debugInfo.prescriptionItems
+                .filter(pi => pi.medicationId !== null)
+                .map(pi => pi.medicationId);
+
+            if (medicationIds.length > 0) {
+                const uniqueMedicationIds = [...new Set(medicationIds)];
+                const placeholders = uniqueMedicationIds.map(() => '?').join(',');
+                const [drugInventory] = await pool.execute(
+                    `SELECT drugInventoryId, medicationId, batchNumber, expiryDate, quantity, status, sellPrice
+                     FROM drug_inventory
+                     WHERE medicationId IN (${placeholders})
+                     AND quantity > 0
+                     AND status = 'active'
+                     AND (expiryDate IS NULL OR expiryDate >= CURDATE())
+                     ORDER BY expiryDate ASC, createdAt ASC`,
+                    uniqueMedicationIds
+                );
+                debugInfo.drugInventory = drugInventory;
+
+                if (drugInventory.length === 0) {
+                    debugInfo.issues.push('No available drug inventory found for prescribed medications');
+                }
+            }
+        }
+
+        // 7. Try to match prescriptions with invoices
+        const matches = [];
+        for (const prescription of prescriptions) {
+            const matchingInvoices = invoices.filter(inv =>
+                inv.notes && (
+                    inv.notes.includes(`Prescription: ${prescription.prescriptionNumber}`) ||
+                    inv.notes.includes(`Drug payment - Prescription: ${prescription.prescriptionNumber}`)
+                )
+            );
+
+            if (matchingInvoices.length > 0) {
+                matches.push({
+                    prescription: prescription.prescriptionNumber,
+                    prescriptionStatus: prescription.status,
+                    invoices: matchingInvoices.map(inv => ({
+                        invoiceNumber: inv.invoiceNumber,
+                        status: inv.status,
+                        notes: inv.notes
+                    }))
+                });
+            } else {
+                debugInfo.issues.push(`Prescription ${prescription.prescriptionNumber} has no matching invoice`);
+            }
+        }
+        debugInfo.matches = matches;
+
+        // 8. Run the actual query to see what it returns
+        const [actualResults] = await pool.execute(`
+            SELECT
+                pi.itemId,
+                pi.prescriptionId,
+                pi.medicationId,
+                pi.medicationName,
+                pi.status as itemStatus,
+                p.prescriptionNumber,
+                p.status as prescriptionStatus,
+                i.invoiceId,
+                i.invoiceNumber,
+                i.status as invoiceStatus,
+                i.notes as invoiceNotes,
+                ii.drugInventoryId,
+                di.quantity as availableQuantity
+            FROM prescription_items pi
+            INNER JOIN prescriptions p ON pi.prescriptionId = p.prescriptionId
+            LEFT JOIN invoices i ON (
+                i.notes LIKE CONCAT('%Prescription: ', p.prescriptionNumber, '%')
+                OR i.notes LIKE CONCAT('%Drug payment - Prescription: ', p.prescriptionNumber, '%')
+            )
+            LEFT JOIN invoice_items ii ON ii.invoiceId = i.invoiceId
+            LEFT JOIN drug_inventory di ON ii.drugInventoryId = di.drugInventoryId
+            WHERE p.patientId = ?
+            ORDER BY p.prescriptionDate DESC
+        `, [patientId]);
+        debugInfo.actualQueryResults = actualResults;
+
+        res.status(200).json(debugInfo);
+    } catch (error) {
+        console.error('Error in debug endpoint:', error);
+        res.status(500).json({ message: 'Error in debug endpoint', error: error.message });
     }
 });
 
@@ -1564,6 +2104,41 @@ router.post('/dispensations', async (req, res) => {
         const [pendingItems] = await connection.execute('SELECT COUNT(*) as count FROM prescription_items WHERE prescriptionId = ? AND status = "pending"', [prescriptionItem.prescriptionId]);
         if (pendingItems[0].count === 0) {
             await connection.execute('UPDATE prescriptions SET status = "dispensed", updatedAt = NOW() WHERE prescriptionId = ?', [prescriptionItem.prescriptionId]);
+        }
+
+        // 9. Check if patient should be removed from pharmacy queue
+        // Check if patient has any remaining pending prescription items
+        if (patientId) {
+            const [remainingPendingItems] = await connection.execute(
+                `SELECT COUNT(*) as count
+                 FROM prescription_items pi
+                 INNER JOIN prescriptions p ON pi.prescriptionId = p.prescriptionId
+                 WHERE p.patientId = ? AND pi.status = 'pending'`,
+                [patientId]
+            );
+
+            // If no pending items remain, complete the pharmacy queue entry
+            if (remainingPendingItems[0].count === 0) {
+                const [pharmacyQueues] = await connection.execute(
+                    `SELECT queueId FROM queue_entries
+                     WHERE patientId = ? AND servicePoint = 'pharmacy'
+                     AND status NOT IN ('completed', 'cancelled')
+                     ORDER BY queueId DESC
+                     LIMIT 1`,
+                    [patientId]
+                );
+
+                if (pharmacyQueues.length > 0) {
+                    await connection.execute(
+                        `UPDATE queue_entries
+                         SET status = 'completed', endTime = NOW(), updatedAt = NOW(),
+                             notes = CONCAT(COALESCE(notes, ''), ' - All medications dispensed')
+                         WHERE queueId = ?`,
+                        [pharmacyQueues[0].queueId]
+                    );
+                    console.log(`[PHARMACY DISPENSE] Completed pharmacy queue entry ${pharmacyQueues[0].queueId} for patient ${patientId} - all medications dispensed`);
+                }
+            }
         }
 
         await connection.commit();

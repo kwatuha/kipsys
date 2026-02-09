@@ -95,6 +95,40 @@ router.get('/', async (req, res) => {
             params.push(status);
         }
 
+        // For pharmacy queue, only show patients who have paid pending prescription items ready for dispensing
+        if (servicePoint === 'pharmacy') {
+            query += ` AND EXISTS (
+                SELECT 1 FROM prescription_items pi
+                INNER JOIN prescriptions p ON pi.prescriptionId = p.prescriptionId
+                WHERE p.patientId = q.patientId
+                AND pi.status = 'pending'
+                AND pi.medicationId IS NOT NULL
+                AND EXISTS (
+                    SELECT 1 FROM invoices i
+                    INNER JOIN invoice_items ii ON i.invoiceId = ii.invoiceId
+                    WHERE i.patientId = p.patientId
+                    AND i.status = 'paid'
+                    AND (
+                        ii.description LIKE CONCAT('%', pi.medicationName, '%')
+                        OR (ii.drugInventoryId IS NOT NULL AND EXISTS (
+                            SELECT 1 FROM drug_inventory di_check
+                            WHERE di_check.drugInventoryId = ii.drugInventoryId
+                            AND di_check.medicationId = pi.medicationId
+                        ))
+                        OR i.notes LIKE CONCAT('%Prescription%')
+                        OR i.notes LIKE CONCAT('%Drug payment%')
+                    )
+                )
+                AND EXISTS (
+                    SELECT 1 FROM drug_inventory di
+                    WHERE di.medicationId = pi.medicationId
+                    AND di.quantity > 0
+                    AND di.status = 'active'
+                    AND (di.expiryDate IS NULL OR di.expiryDate >= CURDATE())
+                )
+            )`;
+        }
+
         query += ` ORDER BY q.arrivalTime ASC`;
 
         const [rows] = await pool.execute(query, params);

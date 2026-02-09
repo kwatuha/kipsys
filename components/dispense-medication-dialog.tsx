@@ -15,10 +15,11 @@ import { Badge } from "@/components/ui/badge"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { Loader2, Pill, AlertCircle, CheckCircle } from "lucide-react"
-import { pharmacyApi } from "@/lib/api"
+import { Loader2, Pill, AlertCircle, CheckCircle, User } from "lucide-react"
+import { pharmacyApi, patientApi } from "@/lib/api"
 import { toast } from "@/components/ui/use-toast"
 import { useAuth } from "@/lib/auth/auth-context"
+import { Card, CardContent } from "@/components/ui/card"
 
 interface DispenseMedicationDialogProps {
   open: boolean
@@ -61,6 +62,8 @@ export function DispenseMedicationDialog({
   onDispensed,
 }: DispenseMedicationDialogProps) {
   const [loading, setLoading] = useState(false)
+  const [loadingPatient, setLoadingPatient] = useState(false)
+  const [patient, setPatient] = useState<any>(null)
   const [prescriptionItems, setPrescriptionItems] = useState<PrescriptionItem[]>([])
   const [dispensingItems, setDispensingItems] = useState<Map<number, DispensingItem>>(new Map())
   const [dispensing, setDispensing] = useState(false)
@@ -68,16 +71,30 @@ export function DispenseMedicationDialog({
 
   useEffect(() => {
     if (open && patientId) {
+      loadPatient()
       loadPrescriptionItems()
     }
   }, [open, patientId])
+
+  const loadPatient = async () => {
+    try {
+      setLoadingPatient(true)
+      const data = await patientApi.getById(patientId.toString())
+      setPatient(data)
+    } catch (error: any) {
+      console.error("Error loading patient:", error)
+      // Don't show error toast for patient loading, just log it
+    } finally {
+      setLoadingPatient(false)
+    }
+  }
 
   const loadPrescriptionItems = async () => {
     try {
       setLoading(true)
       const items = await pharmacyApi.getPaidPrescriptionItemsReadyForDispensing(patientId.toString())
       setPrescriptionItems(items || [])
-      
+
       // Initialize dispensing items with pre-selected batch from invoice
       const initialDispensing = new Map<number, DispensingItem>()
       for (const item of items || []) {
@@ -121,7 +138,7 @@ export function DispenseMedicationDialog({
     // Validate all items
     for (const [itemId, dispensingItem] of dispensingItems.entries()) {
       const item = dispensingItem.prescriptionItem
-      
+
       if (!item.drugInventoryId) {
         toast({
           title: "Missing inventory batch",
@@ -148,7 +165,7 @@ export function DispenseMedicationDialog({
       const results = []
       for (const [itemId, dispensingItem] of dispensingItems.entries()) {
         const item = dispensingItem.prescriptionItem
-        
+
         if (!item.drugInventoryId) {
           console.error(`Skipping item ${itemId}: No drugInventoryId`)
           results.push({ itemId, success: false, error: "No drug inventory ID" })
@@ -221,6 +238,18 @@ export function DispenseMedicationDialog({
     return new Date(dateString).toLocaleDateString()
   }
 
+  const calculateAge = (dateOfBirth?: string): number | null => {
+    if (!dateOfBirth) return null
+    const today = new Date()
+    const birthDate = new Date(dateOfBirth)
+    let age = today.getFullYear() - birthDate.getFullYear()
+    const monthDiff = today.getMonth() - birthDate.getMonth()
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+      age--
+    }
+    return age
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
@@ -234,10 +263,52 @@ export function DispenseMedicationDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {loading ? (
+        {/* Patient Details Card */}
+        {patient && (
+          <Card className="bg-muted/50">
+            <CardContent className="p-4">
+              <div className="flex items-start gap-4">
+                <div className="flex-shrink-0">
+                  <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
+                    <User className="h-6 w-6 text-primary" />
+                  </div>
+                </div>
+                <div className="flex-1 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                  <div>
+                    <div className="text-xs text-muted-foreground mb-1">Patient Name</div>
+                    <div className="font-semibold">
+                      {patient.firstName} {patient.lastName}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground mb-1">Patient Number</div>
+                    <div className="font-medium">{patient.patientNumber || "N/A"}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground mb-1">Age / Gender</div>
+                    <div className="font-medium">
+                      {patient.dateOfBirth && calculateAge(patient.dateOfBirth)
+                        ? `${calculateAge(patient.dateOfBirth)} years`
+                        : "N/A"}{" "}
+                      {patient.gender ? ` / ${patient.gender}` : ""}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground mb-1">Phone</div>
+                    <div className="font-medium">{patient.phone || "N/A"}</div>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {loading || loadingPatient ? (
           <div className="flex items-center justify-center py-8">
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-            <span className="ml-2 text-sm text-muted-foreground">Loading prescription items...</span>
+            <span className="ml-2 text-sm text-muted-foreground">
+              {loadingPatient ? "Loading patient details..." : "Loading prescription items..."}
+            </span>
           </div>
         ) : prescriptionItems.length === 0 ? (
           <div className="py-8 text-center">
