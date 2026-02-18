@@ -16,6 +16,7 @@ import { icuApi, laboratoryApi, doctorsApi, serviceChargeApi, billingApi, proced
 import { format } from "date-fns"
 import { toast } from "@/components/ui/use-toast"
 import { useAuth } from "@/lib/auth/auth-context"
+import { ProcedureCombobox } from "@/components/procedure-combobox"
 
 interface ICUManagementProps {
   icuAdmissionId: string
@@ -887,18 +888,16 @@ export function ICUManagement({ icuAdmissionId, open, onOpenChange }: ICUManagem
                   <div className="space-y-4">
                     <div>
                       <Label>Procedure *</Label>
-                      <Select value={procedureForm.procedureId} onValueChange={(v) => setProcedureForm({ ...procedureForm, procedureId: v })}>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select procedure" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {procedures.map((proc: any) => (
-                            <SelectItem key={proc.procedureId} value={proc.procedureId.toString()}>
-                              {proc.procedureName}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <ProcedureCombobox
+                        value={procedureForm.procedureId || ""}
+                        onValueChange={(value, procedure) => {
+                          setProcedureForm({
+                            ...procedureForm,
+                            procedureId: value
+                          })
+                        }}
+                        placeholder="Search procedure by name, code, or category..."
+                      />
                     </div>
                     <div>
                       <Label>Procedure Date *</Label>

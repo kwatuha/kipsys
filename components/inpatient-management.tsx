@@ -16,6 +16,7 @@ import { inpatientApi, laboratoryApi, userApi, doctorsApi, serviceChargeApi, bil
 import { format } from "date-fns"
 import { toast } from "@/components/ui/use-toast"
 import { useAuth } from "@/lib/auth/auth-context"
+import { ProcedureCombobox } from "@/components/procedure-combobox"
 
 interface InpatientManagementProps {
   admissionId: string
@@ -1503,27 +1504,16 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                   <div className="space-y-4">
                     <div>
                       <Label>Procedure *</Label>
-                      <Select value={procedureForm.procedureId} onValueChange={(v) => setProcedureForm({ ...procedureForm, procedureId: v })}>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select procedure" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {procedures.length > 0 ? (
-                            procedures.map((proc: any) => (
-                              <SelectItem key={proc.procedureId} value={proc.procedureId.toString()}>
-                                {proc.procedureName}
-                                {proc.category && ` (${proc.category})`}
-                                {proc.cost && ` - KES ${parseFloat(proc.cost).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                                {proc.duration && ` - ${proc.duration} min`}
-                              </SelectItem>
-                            ))
-                          ) : (
-                            <div className="px-2 py-1.5 text-sm text-muted-foreground">
-                              No procedures available
-                            </div>
-                          )}
-                        </SelectContent>
-                      </Select>
+                      <ProcedureCombobox
+                        value={procedureForm.procedureId || ""}
+                        onValueChange={(value, procedure) => {
+                          setProcedureForm({
+                            ...procedureForm,
+                            procedureId: value
+                          })
+                        }}
+                        placeholder="Search procedure by name, code, or category..."
+                      />
                     </div>
                     <div>
                       <Label>Procedure Date *</Label>

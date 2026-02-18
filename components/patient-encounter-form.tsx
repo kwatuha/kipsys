@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useMemo } from "react"
+import { useState, useEffect, useMemo, useCallback } from "react"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useForm, useFieldArray, useWatch } from "react-hook-form"
 import { z } from "zod"
@@ -45,6 +45,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { PatientCombobox } from "@/components/patient-combobox"
 import { MedicationCombobox } from "@/components/medication-combobox"
 import { DiagnosisCombobox } from "@/components/diagnosis-combobox"
+import { ProcedureCombobox } from "@/components/procedure-combobox"
 import { SymptomsAutocomplete } from "@/components/symptoms-autocomplete"
 import { ChiefComplaintCombobox } from "@/components/chief-complaint-combobox"
 import { Badge } from "@/components/ui/badge"
@@ -76,6 +77,8 @@ import { patientApi, doctorsApi, pharmacyApi, laboratoryApi, medicalRecordsApi, 
 import { useCriticalNotifications } from "@/lib/critical-notifications-context"
 import { toast } from "@/components/ui/use-toast"
 import { useAuth } from "@/lib/auth/auth-context"
+import { PatientProfileDialog } from "@/components/patient-profile-dialog"
+import Link from "next/link"
 
 const DRAFT_TTL_MS = 24 * 60 * 60 * 1000 // 24 hours
 
@@ -274,6 +277,7 @@ export function PatientEncounterForm({
   const [addMedicationDialogOpen, setAddMedicationDialogOpen] = useState(false)
   const [tempMedication, setTempMedication] = useState<MedicationValues>(defaultMedication)
   const [isQuantityManuallyEdited, setIsQuantityManuallyEdited] = useState(false)
+  const [patientProfileDialogOpen, setPatientProfileDialogOpen] = useState(false)
 
   // Helper function to extract numeric value from text
   const extractNumber = (text: string): number => {
@@ -335,6 +339,8 @@ export function PatientEncounterForm({
   const [patientOrders, setPatientOrders] = useState<any[]>([]) // Invoices with consumables/orders
   const [patientHistory, setPatientHistory] = useState<any[]>([])
   const [patientVitals, setPatientVitals] = useState<any[]>([])
+  const [patientAppointments, setPatientAppointments] = useState<any[]>([])
+  const [followUpAppointmentForEncounter, setFollowUpAppointmentForEncounter] = useState<any | null>(null)
   const [todayVitals, setTodayVitals] = useState<any | null>(null)
   const [loadingPatientData, setLoadingPatientData] = useState(false)
   const [isLoadingPatientData, setIsLoadingPatientData] = useState(false) // Prevent multiple simultaneous loads
@@ -374,6 +380,7 @@ export function PatientEncounterForm({
 
   // Watch outcome to conditionally show appointment fields (prevents flickering)
   const outcome = useWatch({ control: form.control, name: "outcome" })
+  const encounterDate = useWatch({ control: form.control, name: "encounterDate" })
 
   const { fields: medicationFields, append: appendMedication, remove: removeMedication } = useFieldArray({
     control: form.control,
@@ -401,6 +408,59 @@ export function PatientEncounterForm({
   })
 
   const patientId = form.watch("patientId")
+
+  const normalizeTimeForInput = (time?: string | null): string => {
+    if (!time) return ""
+    // MySQL TIME often arrives as "HH:MM:SS" but <input type="time" /> expects "HH:MM"
+    return typeof time === "string" ? time.slice(0, 5) : ""
+  }
+
+  const findFollowUpAppointmentForEncounter = useCallback((appointments: any[], encDate: Date) => {
+    const encDateIso = format(encDate, "yyyy-MM-dd")
+    const marker = `EncounterDateISO: ${encDateIso}`
+    const pretty = format(encDate, "PPP")
+
+    const candidates = (appointments || []).filter((a: any) => {
+      const notes = (a?.notes || "").toString()
+      const reason = (a?.reason || "").toString()
+      return (
+        notes.includes(marker) ||
+        notes.includes(`encounter on ${pretty}`) ||
+        reason.includes(`Follow-up from encounter on ${pretty}`)
+      )
+    })
+
+    if (candidates.length === 0) return null
+
+    const rankStatus = (s?: string) => {
+      switch ((s || "").toLowerCase()) {
+        case "scheduled":
+          return 1
+        case "confirmed":
+          return 2
+        case "in_progress":
+          return 3
+        case "completed":
+          return 4
+        case "cancelled":
+          return 5
+        case "no_show":
+          return 6
+        default:
+          return 10
+      }
+    }
+
+    return candidates
+      .slice()
+      .sort((a: any, b: any) => {
+        const rs = rankStatus(a.status) - rankStatus(b.status)
+        if (rs !== 0) return rs
+        const ad = `${a.appointmentDate || ""} ${a.appointmentTime || ""}`
+        const bd = `${b.appointmentDate || ""} ${b.appointmentTime || ""}`
+        return bd.localeCompare(ad)
+      })[0]
+  }, [])
 
   // Reset loading state when dialog closes
   useEffect(() => {
@@ -442,6 +502,9 @@ export function PatientEncounterForm({
     if (savedDraft) {
       if (savedDraft.encounterDate) {
         savedDraft.encounterDate = new Date(savedDraft.encounterDate)
+      }
+      if (savedDraft.nextAppointmentDate) {
+        savedDraft.nextAppointmentDate = new Date(savedDraft.nextAppointmentDate)
       }
       // Clean up empty medication entries
       if (savedDraft.medications) {
@@ -507,7 +570,7 @@ export function PatientEncounterForm({
       saveTimeout = setTimeout(() => {
         const hasData = value.patientId || value.doctorId || value.chiefComplaint ||
                         value.symptoms || value.historyOfPresentIllness || value.physicalExamination ||
-                        value.diagnosis || value.treatment || value.notes ||
+                        value.diagnosis || value.treatment || value.outcome || value.notes ||
                         (value.medications && value.medications.length > 0) ||
                         (value.labTests && value.labTests.length > 0) ||
                         (value.procedures && value.procedures.length > 0) ||
@@ -560,10 +623,47 @@ export function PatientEncounterForm({
       setPatientLabResults([])
       setPatientHistory([])
       setPatientVitals([])
+      setPatientAppointments([])
+      setFollowUpAppointmentForEncounter(null)
       setTodayVitals(null)
       setLastLoadedPatientId(null)
     }
   }, [patientId, open, lastLoadedPatientId, isLoadingPatientData])
+
+  // When appointments load (or encounter date changes), detect any follow-up appointment created from this encounter
+  useEffect(() => {
+    if (!open || !patientId) return
+    if (!encounterDate) return
+
+    if (!Array.isArray(patientAppointments) || patientAppointments.length === 0) {
+      setFollowUpAppointmentForEncounter(null)
+      return
+    }
+
+    const match = findFollowUpAppointmentForEncounter(patientAppointments, encounterDate)
+    setFollowUpAppointmentForEncounter(match)
+
+    // If we found a match and the follow-up fields are empty, auto-populate them so the doctor sees the details
+    if (match) {
+      const current = form.getValues()
+      const isEmpty =
+        !current.nextAppointmentDate &&
+        (!current.nextAppointmentTime || current.nextAppointmentTime.trim() === "")
+
+      if (isEmpty) {
+        try {
+          form.setValue("nextAppointmentDate", new Date(match.appointmentDate), { shouldDirty: false })
+          form.setValue("nextAppointmentTime", normalizeTimeForInput(match.appointmentTime), { shouldDirty: false })
+          if (match.doctorId) form.setValue("nextAppointmentDoctorId", match.doctorId.toString(), { shouldDirty: false })
+          if (match.department) form.setValue("nextAppointmentDepartment", match.department, { shouldDirty: false })
+          if (match.reason) form.setValue("nextAppointmentReason", match.reason, { shouldDirty: false })
+        } catch (e) {
+          console.error("Error auto-populating follow-up appointment fields:", e)
+        }
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, patientId, encounterDate, patientAppointments, findFollowUpAppointmentForEncounter])
 
 
   // Auto-fill doctor field when doctors are loaded and form is open
@@ -694,6 +794,7 @@ export function PatientEncounterForm({
           form.setValue("physicalExamination", updates.physicalExamination || currentValues.physicalExamination || "")
           form.setValue("diagnosis", updates.diagnosis || currentValues.diagnosis || "")
           form.setValue("treatment", updates.treatment || currentValues.treatment || "")
+          form.setValue("outcome", updates.outcome || currentValues.outcome || "")
           form.setValue("notes", updates.notes || currentValues.notes || "")
         }, 0)
       }
@@ -934,7 +1035,7 @@ export function PatientEncounterForm({
     try {
       setIsLoadingPatientData(true)
       setLoadingPatientData(true)
-      const [patient, allergies, prescriptions, labOrders, records, vitals, procedures, invoices] = await Promise.all([
+      const [patient, allergies, prescriptions, labOrders, records, vitals, procedures, invoices, appts] = await Promise.all([
         patientApi.getById(id).catch(() => null),
         patientApi.getAllergies(id).catch(() => []),
         pharmacyApi.getPrescriptions(id, undefined, 1, 10).catch(() => []),
@@ -943,6 +1044,7 @@ export function PatientEncounterForm({
         patientApi.getVitals(id, true).catch(() => []),
         proceduresApi.getPatientProcedures(id).catch(() => []),
         billingApi.getInvoices(id).catch(() => []), // Get all invoices for the patient
+        appointmentsApi.getAll(undefined, undefined, undefined, id, 1, 50).catch(() => []),
       ])
 
       // Only fetch full order details for pending/in-progress orders that don't have items
@@ -1035,6 +1137,7 @@ export function PatientEncounterForm({
       setPatientOrders(consumablesInvoices || [])
       setPatientHistory(records || [])
       setPatientVitals(vitals || [])
+      setPatientAppointments(appts || [])
       // Get today's most recent vitals (no need to check critical vitals here)
       // Critical vitals are already checked:
       // 1. When vitals are entered (triage form)
@@ -1159,7 +1262,17 @@ export function PatientEncounterForm({
         notes: data.notes || null,
       }
 
+      console.log('📋 Creating medical record with outcome:', {
+        outcome: data.outcome,
+        hasOutcome: !!data.outcome,
+        outcomeValue: data.outcome || 'null',
+      })
+
       const medicalRecord = await medicalRecordsApi.create(medicalRecordData)
+      console.log('✅ Medical record created:', {
+        recordId: medicalRecord?.recordId,
+        outcome: medicalRecord?.outcome,
+      })
 
       // 2. Create prescription if medications exist (only unsaved ones)
       const unsavedMedications = data.medications?.filter((med: any) => !med.alreadySaved) || []
@@ -1337,27 +1450,58 @@ export function PatientEncounterForm({
       }
 
       // 6. Create next appointment if outcome is "Follow-up Scheduled" and appointment details are provided
-      if (data.outcome === "Follow-up Scheduled" && data.nextAppointmentDate && data.nextAppointmentTime) {
-        try {
-          const appointmentData = {
-            patientId: parseInt(data.patientId),
-            doctorId: data.nextAppointmentDoctorId ? parseInt(data.nextAppointmentDoctorId) : (data.doctorId ? parseInt(data.doctorId) : null),
-            appointmentDate: format(data.nextAppointmentDate, "yyyy-MM-dd"),
-            appointmentTime: data.nextAppointmentTime,
-            department: data.nextAppointmentDepartment || data.department || null,
-            reason: data.nextAppointmentReason || `Follow-up from encounter on ${format(data.encounterDate, 'PPP')}`,
-            status: "scheduled",
-            notes: `Follow-up appointment scheduled during encounter on ${format(data.encounterDate, 'PPP')}. ${data.diagnosis ? `Diagnosis: ${data.diagnosis.substring(0, 200)}` : ''}`,
-          }
+      if (data.outcome === "Follow-up Scheduled") {
+        console.log('📅 Checking follow-up appointment creation:', {
+          hasDate: !!data.nextAppointmentDate,
+          hasTime: !!data.nextAppointmentTime,
+          date: data.nextAppointmentDate ? format(data.nextAppointmentDate, "yyyy-MM-dd") : null,
+          time: data.nextAppointmentTime,
+        })
 
-          await appointmentsApi.create(appointmentData)
-        } catch (error: any) {
-          console.error("Error creating follow-up appointment:", error)
-          // Don't fail the entire encounter save if appointment creation fails
-          // Just log the error - the encounter is already saved successfully
+        if (data.nextAppointmentDate && data.nextAppointmentTime) {
+          try {
+            const appointmentData = {
+              patientId: parseInt(data.patientId),
+              doctorId: data.nextAppointmentDoctorId ? parseInt(data.nextAppointmentDoctorId) : (data.doctorId ? parseInt(data.doctorId) : null),
+              appointmentDate: format(data.nextAppointmentDate, "yyyy-MM-dd"),
+              appointmentTime: data.nextAppointmentTime,
+              department: data.nextAppointmentDepartment || data.department || null,
+              reason: data.nextAppointmentReason || `Follow-up from encounter on ${format(data.encounterDate, 'PPP')}`,
+              status: "scheduled",
+              notes: `Follow-up appointment scheduled during encounter on ${format(data.encounterDate, 'PPP')}. ${data.diagnosis ? `Diagnosis: ${data.diagnosis.substring(0, 200)}` : ''}`,
+            }
+
+            console.log('📅 Creating follow-up appointment:', appointmentData)
+            const createdAppointment = await appointmentsApi.create(appointmentData)
+            console.log('✅ Follow-up appointment created successfully:', createdAppointment)
+
+            toast({
+              title: "Success",
+              description: `Encounter saved and follow-up appointment scheduled for ${format(data.nextAppointmentDate, 'PPP')} at ${data.nextAppointmentTime}.`,
+            })
+          } catch (error: any) {
+            console.error("❌ Error creating follow-up appointment:", error)
+            console.error("Error details:", {
+              message: error?.message,
+              response: error?.response,
+              status: error?.status,
+            })
+            // Don't fail the entire encounter save if appointment creation fails
+            // Just log the error - the encounter is already saved successfully
+            toast({
+              title: "Warning",
+              description: `Encounter saved successfully, but failed to create follow-up appointment: ${error?.message || 'Unknown error'}. You may need to create it manually.`,
+              variant: "destructive",
+            })
+          }
+        } else {
+          console.warn('⚠️ Follow-up Scheduled selected but appointment date/time missing:', {
+            hasDate: !!data.nextAppointmentDate,
+            hasTime: !!data.nextAppointmentTime,
+          })
           toast({
             title: "Warning",
-            description: "Encounter saved successfully, but failed to create follow-up appointment. You may need to create it manually.",
+            description: "Encounter saved, but follow-up appointment was not created because appointment date and time are required.",
             variant: "destructive",
           })
         }
@@ -1502,6 +1646,10 @@ export function PatientEncounterForm({
           data.encounterDate instanceof Date
             ? data.encounterDate.toISOString()
             : data.encounterDate,
+        nextAppointmentDate:
+          data.nextAppointmentDate instanceof Date
+            ? data.nextAppointmentDate.toISOString()
+            : data.nextAppointmentDate,
       },
       savedAt: Date.now(),
     }
@@ -2150,6 +2298,17 @@ const clearDraftFromStorage = (patientId:any) => {
                         </div>
                         <div className="flex items-center gap-2 flex-1 min-w-0">
                           <div className="font-semibold text-sm truncate">{getPatientName(patientData)}</div>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 px-2 text-xs"
+                            onClick={() => setPatientProfileDialogOpen(true)}
+                            title="View patient details"
+                          >
+                            <Eye className="h-3.5 w-3.5 mr-1" />
+                            View Details
+                          </Button>
                           <Separator orientation="vertical" className="h-3" />
                           <div className="text-xs text-muted-foreground flex items-center gap-1.5 flex-wrap">
                             <span className="font-mono">{patientData.patientNumber || `ID: ${patientId}`}</span>
@@ -4131,6 +4290,45 @@ const clearDraftFromStorage = (patientId:any) => {
                   setTempMedication({ ...tempMedication, medicationId: value })
                   loadInventoryData()
                 }}
+                onMedicationSelect={(medication) => {
+                  if (medication && !isMedicationAlreadyAdded(medication.medicationId.toString()) && editingMedicationIndex === null) {
+                    // Auto-fill medication details if available
+                    setTempMedication({
+                      ...tempMedication,
+                      medicationId: medication.medicationId.toString(),
+                    })
+                    loadInventoryData()
+                  }
+                }}
+                onMedicationCreated={(medication) => {
+                  // When a new medication is created, automatically open the prescription form
+                  // and pre-fill the medication
+                  if (medication && !isMedicationAlreadyAdded(medication.medicationId.toString())) {
+                    // Pre-fill the medication in the prescription form
+                    setTempMedication({
+                      ...tempMedication,
+                      medicationId: medication.medicationId.toString(),
+                    })
+                    loadInventoryData()
+
+                    // Ensure the prescription sheet is open and the add medication dialog is open
+                    // so doctor can continue with prescription details
+                    if (!prescriptionSheetOpen) {
+                      setPrescriptionSheetOpen(true)
+                    }
+                    if (!addMedicationDialogOpen) {
+                      setAddMedicationDialogOpen(true)
+                    }
+
+                    // Focus on dosage field to help doctor continue
+                    setTimeout(() => {
+                      const dosageInput = document.querySelector('input[placeholder="1 tablet"]') as HTMLInputElement
+                      if (dosageInput) {
+                        dosageInput.focus()
+                      }
+                    }, 100)
+                  }
+                }}
                 placeholder="Search medication..."
               />
               {isMedicationAlreadyAdded(tempMedication.medicationId || "") && editingMedicationIndex === null && (
@@ -4599,30 +4797,17 @@ const clearDraftFromStorage = (patientId:any) => {
               <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
                 Procedure *
               </label>
-              <Select
-                onValueChange={(value) => setTempProcedure({ ...tempProcedure, procedureId: value })}
+              <ProcedureCombobox
                 value={tempProcedure.procedureId || ""}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select procedure" />
-                </SelectTrigger>
-                <SelectContent>
-                  {procedures.length > 0 ? (
-                    procedures.map((procedure: any) => (
-                      <SelectItem key={procedure.procedureId} value={procedure.procedureId.toString()}>
-                        {procedure.procedureName}
-                        {procedure.category && ` (${procedure.category})`}
-                        {procedure.cost && ` - KES ${parseFloat(procedure.cost).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                        {procedure.duration && ` - ${procedure.duration} min`}
-                      </SelectItem>
-                    ))
-                  ) : (
-                    <div className="px-2 py-1.5 text-sm text-muted-foreground">
-                      No procedures available
-                    </div>
-                  )}
-                </SelectContent>
-              </Select>
+                onValueChange={(value, procedure) => {
+                  setTempProcedure({
+                    ...tempProcedure,
+                    procedureId: value,
+                    procedureName: procedure?.procedureName || ""
+                  })
+                }}
+                placeholder="Search procedure by name, code, or category..."
+              />
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
@@ -4803,6 +4988,15 @@ const clearDraftFromStorage = (patientId:any) => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Patient Profile Dialog */}
+      {patientId && (
+        <PatientProfileDialog
+          patientId={patientId}
+          open={patientProfileDialogOpen}
+          onOpenChange={setPatientProfileDialogOpen}
+        />
+      )}
 
       {/* Critical alerts are now shown in the floating component after form is saved */}
     </>

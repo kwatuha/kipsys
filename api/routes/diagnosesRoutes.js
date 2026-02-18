@@ -16,11 +16,12 @@ router.get('/', async (req, res) => {
         const params = [];
 
         if (search) {
+            // Case-insensitive search across multiple fields
             query += ` AND (
-                diagnosisName LIKE ? OR 
-                icd10Code LIKE ? OR 
-                category LIKE ? OR
-                description LIKE ?
+                LOWER(diagnosisName) LIKE LOWER(?) OR
+                LOWER(icd10Code) LIKE LOWER(?) OR
+                LOWER(category) LIKE LOWER(?) OR
+                LOWER(description) LIKE LOWER(?)
             )`;
             const searchTerm = `%${search}%`;
             params.push(searchTerm, searchTerm, searchTerm, searchTerm);
@@ -46,7 +47,7 @@ router.get('/:id', async (req, res) => {
             'SELECT * FROM diagnoses WHERE diagnosisId = ? AND isActive = 1',
             [req.params.id]
         );
-        
+
         if (rows.length > 0) {
             res.status(200).json(rows[0]);
         } else {

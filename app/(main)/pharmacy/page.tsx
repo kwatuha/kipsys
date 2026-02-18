@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
-import { Search, FileText, Package, Plus, Edit, Loader2, MoreVertical, Eye, CheckCircle, XCircle, Trash2, History, ArrowRight, Sliders, Download, Printer, Pill, AlertCircle } from "lucide-react"
+import { Search, FileText, Package, Plus, Edit, Loader2, MoreVertical, Eye, CheckCircle, XCircle, Trash2, History, ArrowRight, Sliders, Download, Printer, Pill, AlertCircle, Calendar } from "lucide-react"
 import Link from "next/link"
 import { AddPrescriptionForm } from "@/components/add-prescription-form"
 import { MedicationForm } from "@/components/medication-form"
@@ -98,6 +98,8 @@ export default function PharmacyPage() {
   const [prescriptionStatusFilter, setPrescriptionStatusFilter] = useState<string>("")
   const [prescriptionSearch, setPrescriptionSearch] = useState("")
   const [medicationSearch, setMedicationSearch] = useState("")
+  const [prescriptionDateFilter, setPrescriptionDateFilter] = useState<string>("")
+  const [prescriptionPatientFilter, setPrescriptionPatientFilter] = useState<string>("")
 
   // Medication form state
   const [isAddMedicationOpen, setIsAddMedicationOpen] = useState(false)
@@ -477,6 +479,31 @@ export default function PharmacyPage() {
   }
 
   const filteredPrescriptions = prescriptions.filter((prescription) => {
+    // Status filter
+    if (prescriptionStatusFilter && prescription.status !== prescriptionStatusFilter) {
+      return false
+    }
+
+    // Date filter
+    if (prescriptionDateFilter) {
+      const prescriptionDate = prescription.prescriptionDate ? new Date(prescription.prescriptionDate).toISOString().split('T')[0] : ''
+      if (prescriptionDate !== prescriptionDateFilter) {
+        return false
+      }
+    }
+
+    // Patient filter
+    if (prescriptionPatientFilter) {
+      const patientName = getPatientName(prescription).toLowerCase()
+      const patientNumber = prescription.patientNumber?.toLowerCase() || ''
+      const patientId = prescription.patientId?.toString() || ''
+      const filterLower = prescriptionPatientFilter.toLowerCase()
+      if (!patientName.includes(filterLower) && !patientNumber.includes(filterLower) && !patientId.includes(filterLower)) {
+        return false
+      }
+    }
+
+    // Search filter
     if (prescriptionSearch) {
       const searchLower = prescriptionSearch.toLowerCase()
       const patientName = getPatientName(prescription).toLowerCase()
@@ -486,6 +513,737 @@ export default function PharmacyPage() {
     }
     return true
   })
+
+  // Generate prescription HTML for printing/PDF
+  const generatePrescriptionHTML = (prescription: any): string => {
+    const patientName = getPatientName(prescription)
+    const doctorName = getDoctorName(prescription)
+    const prescriptionDate = prescription.prescriptionDate
+      ? new Date(prescription.prescriptionDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+      : 'N/A'
+
+    const items = prescription.items || []
+    const totalCost = items.reduce((sum: number, item: any) => {
+      const qty = item.quantity ? parseInt(item.quantity) : 0
+      const price = item.sellPrice ? parseFloat(item.sellPrice) : 0
+      return sum + (qty * price)
+    }, 0)
+
+    return `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Prescription ${prescription.prescriptionNumber || ''}</title>
+          <style>
+            @media print {
+              @page { margin: 15mm; }
+            }
+            body {
+              font-family: Arial, sans-serif;
+              margin: 20px;
+              font-size: 12px;
+            }
+            .header {
+              text-align: center;
+              margin-bottom: 30px;
+              border-bottom: 2px solid #000;
+              padding-bottom: 15px;
+            }
+            .header img {
+              max-width: 150px;
+              height: auto;
+              margin-bottom: 10px;
+            }
+            h1 {
+              text-align: center;
+              margin-bottom: 30px;
+              font-size: 24px;
+            }
+            .prescription-info {
+              display: grid;
+              grid-template-columns: 1fr 1fr;
+              gap: 20px;
+              margin-bottom: 30px;
+            }
+            .info-section {
+              border: 1px solid #ddd;
+              padding: 15px;
+              border-radius: 5px;
+            }
+            .info-section h3 {
+              margin: 0 0 10px 0;
+              font-size: 14px;
+              color: #666;
+              border-bottom: 1px solid #eee;
+              padding-bottom: 5px;
+            }
+            .info-section p {
+              margin: 5px 0;
+              font-size: 13px;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              margin-top: 20px;
+              font-size: 11px;
+            }
+            th, td {
+              border: 1px solid #ddd;
+              padding: 8px;
+              text-align: left;
+            }
+            th {
+              background-color: #f2f2f2;
+              font-weight: bold;
+            }
+            tr:nth-child(even) {
+              background-color: #f9f9f9;
+            }
+            .total-section {
+              margin-top: 20px;
+              text-align: right;
+              border-top: 2px solid #000;
+              padding-top: 10px;
+            }
+            .total-section p {
+              margin: 5px 0;
+            }
+            .total-amount {
+              font-size: 18px;
+              font-weight: bold;
+            }
+            .footer {
+              margin-top: 40px;
+              padding-top: 20px;
+              border-top: 1px solid #ddd;
+              text-align: center;
+              font-size: 10px;
+              color: #666;
+            }
+            .notes {
+              margin-top: 20px;
+              padding: 15px;
+              background-color: #f9f9f9;
+              border-radius: 5px;
+            }
+            .notes h3 {
+              margin: 0 0 10px 0;
+              font-size: 14px;
+            }
+            .status-badge {
+              display: inline-block;
+              padding: 4px 12px;
+              border-radius: 12px;
+              font-size: 11px;
+              font-weight: bold;
+              text-transform: uppercase;
+            }
+            .status-pending { background-color: #fef3c7; color: #92400e; }
+            .status-dispensed { background-color: #d1fae5; color: #065f46; }
+            .status-completed { background-color: #dbeafe; color: #1e40af; }
+            .status-cancelled { background-color: #fee2e2; color: #991b1b; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <img src="${window.location.origin}/logo.png" alt="Hospital Logo" style="max-width: 150px; height: auto; margin-bottom: 10px;" onerror="this.style.display='none';" />
+            <h1 style="margin: 0; font-size: 28px; font-weight: bold; letter-spacing: 2px;">PRESCRIPTION</h1>
+          </div>
+
+          <div class="prescription-info">
+            <div class="info-section">
+              <h3>Patient Information</h3>
+              <p><strong>Name:</strong> ${patientName}</p>
+              ${prescription.patientNumber ? `<p><strong>Patient ID:</strong> ${prescription.patientNumber}</p>` : ''}
+              ${prescription.patientId ? `<p><strong>Patient Number:</strong> ${prescription.patientId}</p>` : ''}
+            </div>
+            <div class="info-section">
+              <h3>Prescription Details</h3>
+              <p><strong>Prescription #:</strong> ${prescription.prescriptionNumber || 'N/A'}</p>
+              <p><strong>Date:</strong> ${prescriptionDate}</p>
+              <p><strong>Doctor:</strong> ${doctorName}</p>
+              <p><strong>Status:</strong> <span class="status-badge status-${prescription.status || 'pending'}">${(prescription.status || 'pending').charAt(0).toUpperCase() + (prescription.status || 'pending').slice(1)}</span></p>
+            </div>
+          </div>
+
+          ${items.length > 0 ? `
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Medication</th>
+                  <th>Dosage</th>
+                  <th>Frequency</th>
+                  <th>Duration</th>
+                  ${items.some((item: any) => item.quantity) ? '<th>Quantity</th>' : ''}
+                  ${items.some((item: any) => item.sellPrice) ? '<th>Unit Price</th>' : ''}
+                  ${items.some((item: any) => item.sellPrice && item.quantity) ? '<th>Total</th>' : ''}
+                  <th>Instructions</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${items.map((item: any, index: number) => {
+                  const quantity = item.quantity ? parseInt(item.quantity) : null
+                  const unitPrice = item.sellPrice ? parseFloat(item.sellPrice) : null
+                  const itemTotal = quantity && unitPrice ? quantity * unitPrice : null
+
+                  return `
+                    <tr>
+                      <td>${index + 1}</td>
+                      <td><strong>${item.medicationName || 'Unknown Medication'}</strong>${item.medicationCode ? ` (${item.medicationCode})` : ''}</td>
+                      <td>${item.dosage || '-'}</td>
+                      <td>${item.frequency || '-'}</td>
+                      <td>${item.duration || '-'}</td>
+                      ${items.some((i: any) => i.quantity) ? `<td>${quantity || '-'}</td>` : ''}
+                      ${items.some((i: any) => i.sellPrice) ? `<td>${unitPrice ? `KES ${unitPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '-'}</td>` : ''}
+                      ${items.some((i: any) => i.sellPrice && i.quantity) ? `<td>${itemTotal ? `KES ${itemTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '-'}</td>` : ''}
+                      <td>${item.instructions || '-'}</td>
+                    </tr>
+                  `
+                }).join('')}
+              </tbody>
+            </table>
+
+            ${totalCost > 0 ? `
+              <div class="total-section">
+                <p><strong>Total Cost: <span class="total-amount">KES ${totalCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></strong></p>
+              </div>
+            ` : ''}
+          ` : '<p>No medications prescribed.</p>'}
+
+          ${prescription.notes ? `
+            <div class="notes">
+              <h3>Notes</h3>
+              <p>${prescription.notes}</p>
+            </div>
+          ` : ''}
+
+          <div class="footer">
+            <p>Generated on ${new Date().toLocaleString()}</p>
+            <p>This is a computer-generated prescription. Please verify all information before dispensing.</p>
+          </div>
+        </body>
+      </html>
+    `
+  }
+
+  // Print single prescription
+  const handlePrintPrescription = async (prescription: any) => {
+    try {
+      // If prescription doesn't have items, fetch full details
+      let fullPrescription = prescription
+      if (!prescription.items || prescription.items.length === 0) {
+        const details = await pharmacyApi.getPrescription(prescription.prescriptionId.toString())
+        fullPrescription = details
+      }
+
+      const htmlContent = generatePrescriptionHTML(fullPrescription)
+      const printWindow = window.open('', '_blank')
+      if (!printWindow) return
+
+      printWindow.document.write(htmlContent)
+      printWindow.document.close()
+      printWindow.focus()
+      setTimeout(() => {
+        printWindow.print()
+      }, 250)
+    } catch (error: any) {
+      console.error('Error printing prescription:', error)
+      alert('Failed to print prescription. Please try again.')
+    }
+  }
+
+  // Download single prescription as PDF
+  const handleDownloadPrescriptionPDF = async (prescription: any) => {
+    try {
+      // If prescription doesn't have items, fetch full details
+      let fullPrescription = prescription
+      if (!prescription.items || prescription.items.length === 0) {
+        const details = await pharmacyApi.getPrescription(prescription.prescriptionId.toString())
+        fullPrescription = details
+      }
+
+      const htmlContent = generatePrescriptionHTML(fullPrescription)
+      const blob = new Blob([htmlContent], { type: 'text/html' })
+      const url = URL.createObjectURL(blob)
+      const printWindow = window.open(url, '_blank')
+
+      if (printWindow) {
+        printWindow.onload = () => {
+          setTimeout(() => {
+            printWindow.print()
+            // After printing, user can save as PDF from print dialog
+          }, 250)
+        }
+      } else {
+        // Fallback: create download link
+        const link = document.createElement('a')
+        link.href = url
+        link.download = `Prescription_${fullPrescription.prescriptionNumber || fullPrescription.prescriptionId}_${new Date().toISOString().split('T')[0]}.html`
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+        setTimeout(() => URL.revokeObjectURL(url), 100)
+      }
+    } catch (error: any) {
+      console.error('Error downloading prescription PDF:', error)
+      alert('Failed to download prescription PDF. Please try again.')
+    }
+  }
+
+  // Print all filtered prescriptions
+  const handlePrintAllPrescriptions = async () => {
+    if (filteredPrescriptions.length === 0) {
+      alert('No prescriptions to print.')
+      return
+    }
+
+    try {
+      // Fetch full details for all prescriptions
+      const prescriptionsWithDetails = await Promise.all(
+        filteredPrescriptions.map(async (prescription) => {
+          try {
+            const details = await pharmacyApi.getPrescription(prescription.prescriptionId.toString())
+            return details
+          } catch (error) {
+            console.error(`Error fetching prescription ${prescription.prescriptionId}:`, error)
+            return prescription
+          }
+        })
+      )
+
+      // Generate filter description
+      let filterDescription = 'All Prescriptions'
+      if (prescriptionDateFilter) {
+        filterDescription = `Prescriptions for ${new Date(prescriptionDateFilter).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}`
+      }
+      if (prescriptionPatientFilter) {
+        filterDescription = `Prescriptions for Patient: ${prescriptionPatientFilter}`
+      }
+      if (prescriptionStatusFilter) {
+        filterDescription += ` (Status: ${prescriptionStatusFilter})`
+      }
+
+      const htmlContent = `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <title>Prescriptions Report</title>
+            <style>
+              @media print {
+                @page { margin: 15mm; }
+              }
+              body {
+                font-family: Arial, sans-serif;
+                margin: 20px;
+                font-size: 11px;
+              }
+              .header {
+                text-align: center;
+                margin-bottom: 30px;
+                border-bottom: 2px solid #000;
+                padding-bottom: 15px;
+              }
+              .header img {
+                max-width: 150px;
+                height: auto;
+                margin-bottom: 10px;
+              }
+              h1 {
+                text-align: center;
+                margin-bottom: 10px;
+                font-size: 22px;
+              }
+              .filter-info {
+                text-align: center;
+                margin-bottom: 20px;
+                color: #666;
+                font-size: 12px;
+              }
+              .prescription-section {
+                page-break-after: always;
+                margin-bottom: 40px;
+                border: 1px solid #ddd;
+                padding: 20px;
+                border-radius: 5px;
+              }
+              .prescription-section:last-child {
+                page-break-after: auto;
+              }
+              .prescription-info {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 20px;
+                margin-bottom: 20px;
+              }
+              .info-section {
+                border: 1px solid #ddd;
+                padding: 10px;
+                border-radius: 5px;
+                font-size: 10px;
+              }
+              .info-section h3 {
+                margin: 0 0 8px 0;
+                font-size: 12px;
+                color: #666;
+                border-bottom: 1px solid #eee;
+                padding-bottom: 3px;
+              }
+              .info-section p {
+                margin: 3px 0;
+                font-size: 10px;
+              }
+              table {
+                width: 100%;
+                border-collapse: collapse;
+                margin-top: 15px;
+                font-size: 9px;
+              }
+              th, td {
+                border: 1px solid #ddd;
+                padding: 6px;
+                text-align: left;
+              }
+              th {
+                background-color: #f2f2f2;
+                font-weight: bold;
+              }
+              .footer {
+                margin-top: 20px;
+                padding-top: 10px;
+                border-top: 1px solid #ddd;
+                text-align: center;
+                font-size: 9px;
+                color: #666;
+              }
+            </style>
+          </head>
+          <body>
+            <div class="header">
+              <img src="${window.location.origin}/logo.png" alt="Hospital Logo" style="max-width: 150px; height: auto; margin-bottom: 10px;" onerror="this.style.display='none';" />
+              <h1>PRESCRIPTIONS REPORT</h1>
+              <div class="filter-info">
+                ${filterDescription} | Total: ${prescriptionsWithDetails.length} prescription(s) | Generated: ${new Date().toLocaleString()}
+              </div>
+            </div>
+
+            ${prescriptionsWithDetails.map((prescription, index) => {
+              const patientName = getPatientName(prescription)
+              const doctorName = getDoctorName(prescription)
+              const prescriptionDate = prescription.prescriptionDate
+                ? new Date(prescription.prescriptionDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+                : 'N/A'
+              const items = prescription.items || []
+
+              return `
+                <div class="prescription-section">
+                  <div class="prescription-info">
+                    <div class="info-section">
+                      <h3>Patient Information</h3>
+                      <p><strong>Name:</strong> ${patientName}</p>
+                      ${prescription.patientNumber ? `<p><strong>Patient ID:</strong> ${prescription.patientNumber}</p>` : ''}
+                    </div>
+                    <div class="info-section">
+                      <h3>Prescription Details</h3>
+                      <p><strong>Prescription #:</strong> ${prescription.prescriptionNumber || 'N/A'}</p>
+                      <p><strong>Date:</strong> ${prescriptionDate}</p>
+                      <p><strong>Doctor:</strong> ${doctorName}</p>
+                      <p><strong>Status:</strong> ${(prescription.status || 'pending').charAt(0).toUpperCase() + (prescription.status || 'pending').slice(1)}</p>
+                    </div>
+                  </div>
+
+                  ${items.length > 0 ? `
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>#</th>
+                          <th>Medication</th>
+                          <th>Dosage</th>
+                          <th>Frequency</th>
+                          <th>Duration</th>
+                          <th>Instructions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        ${items.map((item: any, itemIndex: number) => `
+                          <tr>
+                            <td>${itemIndex + 1}</td>
+                            <td><strong>${item.medicationName || 'Unknown'}</strong></td>
+                            <td>${item.dosage || '-'}</td>
+                            <td>${item.frequency || '-'}</td>
+                            <td>${item.duration || '-'}</td>
+                            <td>${item.instructions || '-'}</td>
+                          </tr>
+                        `).join('')}
+                      </tbody>
+                    </table>
+                  ` : '<p>No medications prescribed.</p>'}
+
+                  ${prescription.notes ? `
+                    <div style="margin-top: 15px; padding: 10px; background-color: #f9f9f9; border-radius: 5px;">
+                      <strong>Notes:</strong> ${prescription.notes}
+                    </div>
+                  ` : ''}
+                </div>
+              `
+            }).join('')}
+
+            <div class="footer">
+              <p>End of Report | Generated on ${new Date().toLocaleString()}</p>
+            </div>
+          </body>
+        </html>
+      `
+
+      const printWindow = window.open('', '_blank')
+      if (!printWindow) return
+
+      printWindow.document.write(htmlContent)
+      printWindow.document.close()
+      printWindow.focus()
+      setTimeout(() => {
+        printWindow.print()
+      }, 250)
+    } catch (error: any) {
+      console.error('Error printing prescriptions:', error)
+      alert('Failed to print prescriptions. Please try again.')
+    }
+  }
+
+  // Download all filtered prescriptions as PDF
+  const handleDownloadAllPrescriptionsPDF = async () => {
+    if (filteredPrescriptions.length === 0) {
+      alert('No prescriptions to download.')
+      return
+    }
+
+    try {
+      // Fetch full details for all prescriptions
+      const prescriptionsWithDetails = await Promise.all(
+        filteredPrescriptions.map(async (prescription) => {
+          try {
+            const details = await pharmacyApi.getPrescription(prescription.prescriptionId.toString())
+            return details
+          } catch (error) {
+            console.error(`Error fetching prescription ${prescription.prescriptionId}:`, error)
+            return prescription
+          }
+        })
+      )
+
+      // Generate filter description
+      let filterDescription = 'All Prescriptions'
+      let filename = 'Prescriptions'
+      if (prescriptionDateFilter) {
+        filterDescription = `Prescriptions for ${new Date(prescriptionDateFilter).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}`
+        filename = `Prescriptions_${prescriptionDateFilter}`
+      }
+      if (prescriptionPatientFilter) {
+        filterDescription = `Prescriptions for Patient: ${prescriptionPatientFilter}`
+        filename = `Prescriptions_${prescriptionPatientFilter.replace(/\s+/g, '_')}`
+      }
+      if (prescriptionStatusFilter) {
+        filterDescription += ` (Status: ${prescriptionStatusFilter})`
+        filename += `_${prescriptionStatusFilter}`
+      }
+
+      const htmlContent = `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <title>Prescriptions Report</title>
+            <style>
+              @media print {
+                @page { margin: 15mm; }
+              }
+              body {
+                font-family: Arial, sans-serif;
+                margin: 20px;
+                font-size: 11px;
+              }
+              .header {
+                text-align: center;
+                margin-bottom: 30px;
+                border-bottom: 2px solid #000;
+                padding-bottom: 15px;
+              }
+              .header img {
+                max-width: 150px;
+                height: auto;
+                margin-bottom: 10px;
+              }
+              h1 {
+                text-align: center;
+                margin-bottom: 10px;
+                font-size: 22px;
+              }
+              .filter-info {
+                text-align: center;
+                margin-bottom: 20px;
+                color: #666;
+                font-size: 12px;
+              }
+              .prescription-section {
+                page-break-after: always;
+                margin-bottom: 40px;
+                border: 1px solid #ddd;
+                padding: 20px;
+                border-radius: 5px;
+              }
+              .prescription-section:last-child {
+                page-break-after: auto;
+              }
+              .prescription-info {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 20px;
+                margin-bottom: 20px;
+              }
+              .info-section {
+                border: 1px solid #ddd;
+                padding: 10px;
+                border-radius: 5px;
+                font-size: 10px;
+              }
+              .info-section h3 {
+                margin: 0 0 8px 0;
+                font-size: 12px;
+                color: #666;
+                border-bottom: 1px solid #eee;
+                padding-bottom: 3px;
+              }
+              .info-section p {
+                margin: 3px 0;
+                font-size: 10px;
+              }
+              table {
+                width: 100%;
+                border-collapse: collapse;
+                margin-top: 15px;
+                font-size: 9px;
+              }
+              th, td {
+                border: 1px solid #ddd;
+                padding: 6px;
+                text-align: left;
+              }
+              th {
+                background-color: #f2f2f2;
+                font-weight: bold;
+              }
+              .footer {
+                margin-top: 20px;
+                padding-top: 10px;
+                border-top: 1px solid #ddd;
+                text-align: center;
+                font-size: 9px;
+                color: #666;
+              }
+            </style>
+          </head>
+          <body>
+            <div class="header">
+              <img src="${window.location.origin}/logo.png" alt="Hospital Logo" style="max-width: 150px; height: auto; margin-bottom: 10px;" onerror="this.style.display='none';" />
+              <h1>PRESCRIPTIONS REPORT</h1>
+              <div class="filter-info">
+                ${filterDescription} | Total: ${prescriptionsWithDetails.length} prescription(s) | Generated: ${new Date().toLocaleString()}
+              </div>
+            </div>
+
+            ${prescriptionsWithDetails.map((prescription) => {
+              const patientName = getPatientName(prescription)
+              const doctorName = getDoctorName(prescription)
+              const prescriptionDate = prescription.prescriptionDate
+                ? new Date(prescription.prescriptionDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+                : 'N/A'
+              const items = prescription.items || []
+
+              return `
+                <div class="prescription-section">
+                  <div class="prescription-info">
+                    <div class="info-section">
+                      <h3>Patient Information</h3>
+                      <p><strong>Name:</strong> ${patientName}</p>
+                      ${prescription.patientNumber ? `<p><strong>Patient ID:</strong> ${prescription.patientNumber}</p>` : ''}
+                    </div>
+                    <div class="info-section">
+                      <h3>Prescription Details</h3>
+                      <p><strong>Prescription #:</strong> ${prescription.prescriptionNumber || 'N/A'}</p>
+                      <p><strong>Date:</strong> ${prescriptionDate}</p>
+                      <p><strong>Doctor:</strong> ${doctorName}</p>
+                      <p><strong>Status:</strong> ${(prescription.status || 'pending').charAt(0).toUpperCase() + (prescription.status || 'pending').slice(1)}</p>
+                    </div>
+                  </div>
+
+                  ${items.length > 0 ? `
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>#</th>
+                          <th>Medication</th>
+                          <th>Dosage</th>
+                          <th>Frequency</th>
+                          <th>Duration</th>
+                          <th>Instructions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        ${items.map((item: any, itemIndex: number) => `
+                          <tr>
+                            <td>${itemIndex + 1}</td>
+                            <td><strong>${item.medicationName || 'Unknown'}</strong></td>
+                            <td>${item.dosage || '-'}</td>
+                            <td>${item.frequency || '-'}</td>
+                            <td>${item.duration || '-'}</td>
+                            <td>${item.instructions || '-'}</td>
+                          </tr>
+                        `).join('')}
+                      </tbody>
+                    </table>
+                  ` : '<p>No medications prescribed.</p>'}
+
+                  ${prescription.notes ? `
+                    <div style="margin-top: 15px; padding: 10px; background-color: #f9f9f9; border-radius: 5px;">
+                      <strong>Notes:</strong> ${prescription.notes}
+                    </div>
+                  ` : ''}
+                </div>
+              `
+            }).join('')}
+
+            <div class="footer">
+              <p>End of Report | Generated on ${new Date().toLocaleString()}</p>
+            </div>
+          </body>
+        </html>
+      `
+
+      const blob = new Blob([htmlContent], { type: 'text/html' })
+      const url = URL.createObjectURL(blob)
+      const printWindow = window.open(url, '_blank')
+
+      if (printWindow) {
+        printWindow.onload = () => {
+          setTimeout(() => {
+            printWindow.print()
+            // After printing, user can save as PDF from print dialog
+          }, 250)
+        }
+      } else {
+        // Fallback: create download link
+        const link = document.createElement('a')
+        link.href = url
+        link.download = `${filename}_${new Date().toISOString().split('T')[0]}.html`
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+        setTimeout(() => URL.revokeObjectURL(url), 100)
+      }
+    } catch (error: any) {
+      console.error('Error downloading prescriptions PDF:', error)
+      alert('Failed to download prescriptions PDF. Please try again.')
+    }
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -543,15 +1301,59 @@ export default function PharmacyPage() {
                     Dispensed
                   </Button>
                 </div>
-                <div className="relative w-64">
-                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    type="search"
-                    placeholder="Search prescriptions..."
-                    className="w-full pl-8"
-                    value={prescriptionSearch}
-                    onChange={(e) => setPrescriptionSearch(e.target.value)}
-                  />
+                <div className="flex gap-2 items-center">
+                  <div className="relative w-48">
+                    <Calendar className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      type="date"
+                      placeholder="Filter by date..."
+                      className="w-full pl-8"
+                      value={prescriptionDateFilter}
+                      onChange={(e) => setPrescriptionDateFilter(e.target.value)}
+                    />
+                  </div>
+                  <div className="relative w-48">
+                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      type="text"
+                      placeholder="Filter by patient..."
+                      className="w-full pl-8"
+                      value={prescriptionPatientFilter}
+                      onChange={(e) => setPrescriptionPatientFilter(e.target.value)}
+                    />
+                  </div>
+                  <div className="relative w-64">
+                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      type="search"
+                      placeholder="Search prescriptions..."
+                      className="w-full pl-8"
+                      value={prescriptionSearch}
+                      onChange={(e) => setPrescriptionSearch(e.target.value)}
+                    />
+                  </div>
+                  {filteredPrescriptions.length > 0 && (
+                    <>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handlePrintAllPrescriptions}
+                        title="Print all filtered prescriptions"
+                      >
+                        <Printer className="mr-2 h-4 w-4" />
+                        Print All
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleDownloadAllPrescriptionsPDF}
+                        title="Download all filtered prescriptions as PDF"
+                      >
+                        <Download className="mr-2 h-4 w-4" />
+                        Download PDF
+                      </Button>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -605,6 +1407,15 @@ export default function PharmacyPage() {
                                   <DropdownMenuItem onClick={() => handleViewPrescription(prescription)}>
                                     <Eye className="mr-2 h-4 w-4" />
                                     View Details
+                                  </DropdownMenuItem>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem onClick={() => handlePrintPrescription(prescription)}>
+                                    <Printer className="mr-2 h-4 w-4" />
+                                    Print
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => handleDownloadPrescriptionPDF(prescription)}>
+                                    <Download className="mr-2 h-4 w-4" />
+                                    Download PDF
                                   </DropdownMenuItem>
                                   {prescription.status === 'pending' && (
                                     <>
@@ -1177,49 +1988,65 @@ export default function PharmacyPage() {
                 </div>
               )}
 
-              {selectedPrescription.status === 'pending' && (
-                <div className="flex gap-2 pt-4">
-                  {selectedPrescription.invoiceStatus === 'paid' ? (
+              <div className="flex gap-2 pt-4">
+                <Button
+                  variant="outline"
+                  onClick={() => handlePrintPrescription(selectedPrescription)}
+                >
+                  <Printer className="mr-2 h-4 w-4" />
+                  Print
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => handleDownloadPrescriptionPDF(selectedPrescription)}
+                >
+                  <Download className="mr-2 h-4 w-4" />
+                  Download PDF
+                </Button>
+                {selectedPrescription.status === 'pending' && (
+                  <>
+                    {selectedPrescription.invoiceStatus === 'paid' ? (
+                      <Button
+                        onClick={() => {
+                          const patientName = selectedPrescription.firstName && selectedPrescription.lastName
+                            ? `${selectedPrescription.firstName} ${selectedPrescription.lastName}`
+                            : selectedPrescription.patientNumber || 'Unknown Patient'
+                          setSelectedPatientForDispense({
+                            patientId: selectedPrescription.patientId,
+                            patientName: patientName
+                          })
+                          setDispenseDialogOpen(true)
+                        }}
+                        className="flex-1"
+                      >
+                        <Pill className="mr-2 h-4 w-4" />
+                        Dispense Medication
+                      </Button>
+                    ) : (
+                      <Button
+                        disabled
+                        variant="outline"
+                        className="flex-1"
+                        title="Invoice must be paid before dispensing"
+                      >
+                        <AlertCircle className="mr-2 h-4 w-4" />
+                        Invoice Not Paid
+                      </Button>
+                    )}
                     <Button
-                      onClick={() => {
-                        const patientName = selectedPrescription.firstName && selectedPrescription.lastName
-                          ? `${selectedPrescription.firstName} ${selectedPrescription.lastName}`
-                          : selectedPrescription.patientNumber || 'Unknown Patient'
-                        setSelectedPatientForDispense({
-                          patientId: selectedPrescription.patientId,
-                          patientName: patientName
-                        })
-                        setDispenseDialogOpen(true)
-                      }}
-                      className="flex-1"
-                    >
-                      <Pill className="mr-2 h-4 w-4" />
-                      Dispense Medication
-                    </Button>
-                  ) : (
-                    <Button
-                      disabled
                       variant="outline"
+                      onClick={() => {
+                        handleUpdatePrescriptionStatus(selectedPrescription.prescriptionId, 'cancelled')
+                      }}
+                      disabled={updatingStatus === selectedPrescription.prescriptionId.toString()}
                       className="flex-1"
-                      title="Invoice must be paid before dispensing"
                     >
-                      <AlertCircle className="mr-2 h-4 w-4" />
-                      Invoice Not Paid
+                      <XCircle className="mr-2 h-4 w-4" />
+                      {updatingStatus === selectedPrescription.prescriptionId.toString() ? 'Cancelling...' : 'Cancel Prescription'}
                     </Button>
-                  )}
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      handleUpdatePrescriptionStatus(selectedPrescription.prescriptionId, 'cancelled')
-                    }}
-                    disabled={updatingStatus === selectedPrescription.prescriptionId.toString()}
-                    className="flex-1"
-                  >
-                    <XCircle className="mr-2 h-4 w-4" />
-                    {updatingStatus === selectedPrescription.prescriptionId.toString() ? 'Cancelling...' : 'Cancel Prescription'}
-                  </Button>
-                </div>
-              )}
+                  </>
+                )}
+              </div>
             </div>
           ) : null}
         </DialogContent>
