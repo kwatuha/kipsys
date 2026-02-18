@@ -22,8 +22,10 @@ const nextConfig = {
     } : false,
   },
   onDemandEntries: {
-    maxInactiveAge: 5 * 60 * 1000, 
-    pagesBufferLength: 10,
+    // Keep pages in memory longer (25 minutes instead of 5)
+    maxInactiveAge: 25 * 60 * 1000,
+    // Keep more pages in buffer for faster access
+    pagesBufferLength: 50,
   },
   // Keep your DOCKER_BUILD logic
   output: process.env.DOCKER_BUILD === 'true' ? 'standalone' : undefined,
@@ -39,11 +41,24 @@ const nextConfig = {
   },
 
   // ADD THIS WEBPACK SECTION:
-  webpack: (config) => {
+  webpack: (config, { isServer }) => {
     config.resolve.alias = {
       ...config.resolve.alias,
       '@': path.resolve(__dirname, './'),
     };
+
+    // Handle Node.js modules for client-side only
+    if (!isServer) {
+      config.resolve.fallback = {
+        ...config.resolve.fallback,
+        fs: false,
+        path: false,
+        crypto: false,
+        stream: false,
+        buffer: false,
+      };
+    }
+
     return config;
   },
 }

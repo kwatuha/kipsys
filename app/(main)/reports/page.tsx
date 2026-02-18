@@ -6,12 +6,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button"
 import { FileText, Download, Calendar, Building2, Loader2 } from "lucide-react"
 import { BreadcrumbsEnhanced } from "@/components/breadcrumbs-enhanced"
-import { MOH717Report } from "@/components/moh-717-report"
-import { MOH731PlusReport } from "@/components/moh-731-plus-report"
-import { MOH705Report } from "@/components/moh-705-report"
-import { MOH711Report } from "@/components/moh-711-report"
-import { MOH708Report } from "@/components/moh-708-report"
-import { MOH730Report } from "@/components/moh-730-report"
+import { MOH717Report } from "@/app/components/moh-717-report"
+import { MOH731PlusReport } from "@/app/components/moh-731-plus-report"
+import { MOH705Report } from "@/app/components/moh-705-report"
+import { MOH711Report } from "@/app/components/moh-711-report"
+import { MOH708Report } from "@/app/components/moh-708-report"
+import { MOH730Report } from "@/app/components/moh-730-report"
 
 export default function ReportsPage() {
   return (

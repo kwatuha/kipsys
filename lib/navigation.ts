@@ -172,6 +172,21 @@ export const navigationCategories: NavigationCategory[] = [
         href: "/finance/ledger",
       },
       {
+        title: "Financial Reports",
+        icon: FileText,
+        href: "/finance/reports",
+      },
+      {
+        title: "Ledger Accounts",
+        icon: Clipboard,
+        href: "/finance/accounts",
+      },
+      {
+        title: "Financial Statements",
+        icon: FileText,
+        href: "/finance/statements",
+      },
+      {
         title: "Accounts Payable",
         icon: Receipt,
         href: "/finance/payable",

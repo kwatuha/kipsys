@@ -46,15 +46,20 @@ export function RoleFilteredTabs({
   const currentPath = pathname
 
   // Filter tabs based on role access
-  const allowedTabs = menuLoading || !menuAccess
-    ? tabs // Show all while loading or if no access data
+  // While loading, show all tabs to prevent flickering
+  // Once loaded, only show explicitly allowed tabs
+  const allowedTabs = menuLoading
+    ? tabs // Show all while loading to prevent flickering
     : filterTabs(tabs, normalizedPagePath, menuAccess)
 
   // Filter children (TabsContent) to only show allowed tabs
+  // While loading, show all to prevent flickering
+  // Once loaded, show tabs based on role configuration (permissive by default)
   const filteredChildren = React.Children.toArray(children).filter((child: any) => {
-    if (!menuAccess || menuLoading) return true // Show all while loading
+    if (menuLoading) return true // Show all while loading to prevent flickering
+    if (!menuAccess) return true // If no access data, show all (permissive default)
     const tabValue = child?.props?.value
-    if (!tabValue) return true
+    if (!tabValue) return true // Allow non-tab children
     return isTabAllowed(normalizedPagePath, tabValue, menuAccess)
   })
 

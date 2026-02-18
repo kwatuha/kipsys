@@ -10,16 +10,35 @@ const bcrypt = require('bcryptjs');
  */
 router.get('/', async (req, res) => {
     try {
-        const [rows] = await pool.query(`
-            SELECT 
-                u.userId, u.username, u.email, u.firstName, u.lastName, 
+        const { search, limit = 50 } = req.query;
+
+        let query = `
+            SELECT
+                u.userId, u.username, u.email, u.firstName, u.lastName,
                 u.phone, u.department, u.isActive, u.roleId, u.createdAt, u.updatedAt,
-                r.roleName AS role
+                r.roleName AS role, r.roleName AS roleName
             FROM users u
             LEFT JOIN roles r ON u.roleId = r.roleId
             WHERE u.voided = 0
-            ORDER BY u.createdAt DESC
-        `);
+        `;
+        const params = [];
+
+        if (search) {
+            query += ` AND (
+                u.firstName LIKE ? OR
+                u.lastName LIKE ? OR
+                u.username LIKE ? OR
+                u.email LIKE ? OR
+                u.phone LIKE ?
+            )`;
+            const searchTerm = `%${search}%`;
+            params.push(searchTerm, searchTerm, searchTerm, searchTerm, searchTerm);
+        }
+
+        query += ` ORDER BY u.lastName, u.firstName LIMIT ?`;
+        params.push(parseInt(limit));
+
+        const [rows] = await pool.execute(query, params);
         res.status(200).json(rows);
     } catch (error) {
         console.error('Error fetching users:', error);
@@ -35,15 +54,15 @@ router.get('/:id', async (req, res) => {
     const { id } = req.params;
     try {
         const [rows] = await pool.query(`
-            SELECT 
-                u.userId, u.username, u.email, u.firstName, u.lastName, 
+            SELECT
+                u.userId, u.username, u.email, u.firstName, u.lastName,
                 u.phone, u.department, u.isActive, u.roleId, u.createdAt, u.updatedAt,
                 r.roleName AS role
             FROM users u
             LEFT JOIN roles r ON u.roleId = r.roleId
             WHERE u.userId = ? AND u.voided = 0
         `, [id]);
-        
+
         if (rows.length > 0) {
             res.status(200).json(rows[0]);
         } else {
@@ -91,8 +110,8 @@ router.post('/', async (req, res) => {
 
         // Get the created user
         const [rows] = await pool.query(`
-            SELECT 
-                u.userId, u.username, u.email, u.firstName, u.lastName, 
+            SELECT
+                u.userId, u.username, u.email, u.firstName, u.lastName,
                 u.phone, u.department, u.isActive, u.roleId, u.createdAt, u.updatedAt,
                 r.roleName AS role
             FROM users u
@@ -155,8 +174,8 @@ router.put('/:id', async (req, res) => {
 
         // Get updated user
         const [rows] = await pool.query(`
-            SELECT 
-                u.userId, u.username, u.email, u.firstName, u.lastName, 
+            SELECT
+                u.userId, u.username, u.email, u.firstName, u.lastName,
                 u.phone, u.department, u.isActive, u.roleId, u.createdAt, u.updatedAt,
                 r.roleName AS role
             FROM users u

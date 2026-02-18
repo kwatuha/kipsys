@@ -1257,13 +1257,60 @@ router.get('/prescriptions/paid/ready-for-dispensing', async (req, res) => {
                 pt.patientNumber,
                 u.firstName as doctorFirstName,
                 u.lastName as doctorLastName,
-                i.invoiceId,
-                i.invoiceNumber,
-                i.status as invoiceStatus,
+                (SELECT i.invoiceId FROM invoices i
+                 WHERE i.patientId = p.patientId
+                 AND i.status = 'paid'
+                 AND (
+                     i.notes LIKE CONCAT('%Prescription: ', p.prescriptionNumber, '%')
+                     OR i.notes LIKE CONCAT('%Drug payment%')
+                     OR EXISTS (
+                         SELECT 1 FROM invoice_items ii
+                         INNER JOIN drug_inventory di_match ON di_match.drugInventoryId = ii.drugInventoryId
+                         WHERE ii.invoiceId = i.invoiceId
+                         AND di_match.medicationId = pi.medicationId
+                     )
+                 )
+                 ORDER BY i.invoiceDate DESC
+                 LIMIT 1) as invoiceId,
+                (SELECT i.invoiceNumber FROM invoices i
+                 WHERE i.patientId = p.patientId
+                 AND i.status = 'paid'
+                 AND (
+                     i.notes LIKE CONCAT('%Prescription: ', p.prescriptionNumber, '%')
+                     OR i.notes LIKE CONCAT('%Drug payment%')
+                     OR EXISTS (
+                         SELECT 1 FROM invoice_items ii
+                         INNER JOIN drug_inventory di_match ON di_match.drugInventoryId = ii.drugInventoryId
+                         WHERE ii.invoiceId = i.invoiceId
+                         AND di_match.medicationId = pi.medicationId
+                     )
+                 )
+                 ORDER BY i.invoiceDate DESC
+                 LIMIT 1) as invoiceNumber,
+                'paid' as invoiceStatus,
                 COALESCE(
-                    (SELECT di_sel.drugInventoryId FROM invoice_items ii_sel
+                    (SELECT di_sel.drugInventoryId FROM invoices i_sel
+                     INNER JOIN invoice_items ii_sel ON ii_sel.invoiceId = i_sel.invoiceId
                      INNER JOIN drug_inventory di_sel ON di_sel.drugInventoryId = ii_sel.drugInventoryId
-                     WHERE ii_sel.invoiceId = i.invoiceId
+                     WHERE i_sel.patientId = p.patientId
+                     AND i_sel.status = 'paid'
+                     AND di_sel.medicationId = pi.medicationId
+                     AND (
+                         i_sel.notes LIKE CONCAT('%Prescription: ', p.prescriptionNumber, '%')
+                         OR i_sel.notes LIKE CONCAT('%Drug payment%')
+                     )
+                     AND di_sel.quantity > 0
+                     ORDER BY i_sel.invoiceDate DESC
+                     LIMIT 1),
+                    (SELECT di_sel2.drugInventoryId FROM invoices i_sel2
+                     INNER JOIN invoice_items ii_sel2 ON ii_sel2.invoiceId = i_sel2.invoiceId
+                     INNER JOIN drug_inventory di_sel2 ON di_sel2.drugInventoryId = ii_sel2.drugInventoryId
+                     WHERE i_sel2.patientId = p.patientId
+                     AND i_sel2.status = 'paid'
+                     AND di_sel2.medicationId = pi.medicationId
+                     AND di_sel2.quantity > 0
+                     ORDER BY i_sel2.invoiceDate DESC
+                     LIMIT 1),
                      AND (
                          ii_sel.description LIKE CONCAT('%Prescription Item: ', COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, ''), '%')
                          OR ii_sel.description LIKE CONCAT('%', COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, ''), '%')
@@ -1280,9 +1327,14 @@ router.get('/prescriptions/paid/ready-for-dispensing', async (req, res) => {
                      LIMIT 1)
                 ) as drugInventoryId,
                 COALESCE(
-                    (SELECT di_sel.sellPrice FROM invoice_items ii_sel
+                    (SELECT di_sel.sellPrice FROM invoices i_sel
+                     INNER JOIN invoice_items ii_sel ON ii_sel.invoiceId = i_sel.invoiceId
                      INNER JOIN drug_inventory di_sel ON di_sel.drugInventoryId = ii_sel.drugInventoryId
-                     WHERE ii_sel.invoiceId = i.invoiceId
+                     WHERE i_sel.patientId = p.patientId
+                     AND i_sel.status = 'paid'
+                     AND di_sel.medicationId = pi.medicationId
+                     ORDER BY i_sel.invoiceDate DESC
+                     LIMIT 1),
                      AND (
                          ii_sel.description LIKE CONCAT('%Prescription Item: ', COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, ''), '%')
                          OR ii_sel.description LIKE CONCAT('%', COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, ''), '%')
@@ -1298,8 +1350,14 @@ router.get('/prescriptions/paid/ready-for-dispensing', async (req, res) => {
                      LIMIT 1)
                 ) as unitPrice,
                 COALESCE(
-                    (SELECT ii_sel.totalPrice FROM invoice_items ii_sel
-                     WHERE ii_sel.invoiceId = i.invoiceId
+                    (SELECT ii_sel.totalPrice FROM invoices i_sel
+                     INNER JOIN invoice_items ii_sel ON ii_sel.invoiceId = i_sel.invoiceId
+                     INNER JOIN drug_inventory di_sel ON di_sel.drugInventoryId = ii_sel.drugInventoryId
+                     WHERE i_sel.patientId = p.patientId
+                     AND i_sel.status = 'paid'
+                     AND di_sel.medicationId = pi.medicationId
+                     ORDER BY i_sel.invoiceDate DESC
+                     LIMIT 1),
                      AND (
                          ii_sel.description LIKE CONCAT('%Prescription Item: ', COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, ''), '%')
                          OR ii_sel.description LIKE CONCAT('%', COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, ''), '%')
@@ -1317,14 +1375,13 @@ router.get('/prescriptions/paid/ready-for-dispensing', async (req, res) => {
                      LIMIT 1)
                 ) as totalPrice,
                 COALESCE(
-                    (SELECT di_sel.batchNumber FROM invoice_items ii_sel
+                    (SELECT di_sel.batchNumber FROM invoices i_sel
+                     INNER JOIN invoice_items ii_sel ON ii_sel.invoiceId = i_sel.invoiceId
                      INNER JOIN drug_inventory di_sel ON di_sel.drugInventoryId = ii_sel.drugInventoryId
-                     WHERE ii_sel.invoiceId = i.invoiceId
-                     AND (
-                         ii_sel.description LIKE CONCAT('%Prescription Item: ', COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, ''), '%')
-                         OR ii_sel.description LIKE CONCAT('%', COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, ''), '%')
-                         OR (ii_sel.drugInventoryId IS NOT NULL AND di_sel.medicationId = pi.medicationId)
-                     )
+                     WHERE i_sel.patientId = p.patientId
+                     AND i_sel.status = 'paid'
+                     AND di_sel.medicationId = pi.medicationId
+                     ORDER BY i_sel.invoiceDate DESC
                      LIMIT 1),
                     (SELECT di_fallback.batchNumber FROM drug_inventory di_fallback
                      WHERE di_fallback.medicationId = pi.medicationId
@@ -1335,14 +1392,13 @@ router.get('/prescriptions/paid/ready-for-dispensing', async (req, res) => {
                      LIMIT 1)
                 ) as batchNumber,
                 COALESCE(
-                    (SELECT di_sel.expiryDate FROM invoice_items ii_sel
+                    (SELECT di_sel.expiryDate FROM invoices i_sel
+                     INNER JOIN invoice_items ii_sel ON ii_sel.invoiceId = i_sel.invoiceId
                      INNER JOIN drug_inventory di_sel ON di_sel.drugInventoryId = ii_sel.drugInventoryId
-                     WHERE ii_sel.invoiceId = i.invoiceId
-                     AND (
-                         ii_sel.description LIKE CONCAT('%Prescription Item: ', COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, ''), '%')
-                         OR ii_sel.description LIKE CONCAT('%', COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, ''), '%')
-                         OR (ii_sel.drugInventoryId IS NOT NULL AND di_sel.medicationId = pi.medicationId)
-                     )
+                     WHERE i_sel.patientId = p.patientId
+                     AND i_sel.status = 'paid'
+                     AND di_sel.medicationId = pi.medicationId
+                     ORDER BY i_sel.invoiceDate DESC
                      LIMIT 1),
                     (SELECT di_fallback.expiryDate FROM drug_inventory di_fallback
                      WHERE di_fallback.medicationId = pi.medicationId
@@ -1353,9 +1409,15 @@ router.get('/prescriptions/paid/ready-for-dispensing', async (req, res) => {
                      LIMIT 1)
                 ) as expiryDate,
                 COALESCE(
-                    (SELECT di_sel.quantity FROM invoice_items ii_sel
+                    (SELECT di_sel.quantity FROM invoices i_sel
+                     INNER JOIN invoice_items ii_sel ON ii_sel.invoiceId = i_sel.invoiceId
                      INNER JOIN drug_inventory di_sel ON di_sel.drugInventoryId = ii_sel.drugInventoryId
-                     WHERE ii_sel.invoiceId = i.invoiceId
+                     WHERE i_sel.patientId = p.patientId
+                     AND i_sel.status = 'paid'
+                     AND di_sel.medicationId = pi.medicationId
+                     AND di_sel.quantity > 0
+                     ORDER BY i_sel.invoiceDate DESC
+                     LIMIT 1),
                      AND (
                          ii_sel.description LIKE CONCAT('%Prescription Item: ', COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, ''), '%')
                          OR ii_sel.description LIKE CONCAT('%', COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, ''), '%')
@@ -1376,13 +1438,61 @@ router.get('/prescriptions/paid/ready-for-dispensing', async (req, res) => {
             INNER JOIN patients pt ON p.patientId = pt.patientId
             INNER JOIN users u ON p.doctorId = u.userId
             LEFT JOIN medications m ON pi.medicationId = m.medicationId
-            INNER JOIN invoices i ON (
-                i.notes LIKE CONCAT('%Prescription: ', p.prescriptionNumber, '%')
-                OR i.notes LIKE CONCAT('%Drug payment - Prescription: ', p.prescriptionNumber, '%')
-            )
             WHERE pi.status = 'pending'
-            AND i.status = 'paid'
             AND pi.medicationId IS NOT NULL
+            AND EXISTS (
+                SELECT 1 FROM invoices i
+                WHERE i.patientId = p.patientId
+                AND i.status = 'paid'
+                AND (
+                    -- Match by invoice notes containing prescription number or drug payment
+                    i.notes LIKE CONCAT('%Prescription: ', p.prescriptionNumber, '%')
+                    OR i.notes LIKE CONCAT('%Drug payment - Prescription: ', p.prescriptionNumber, '%')
+                    OR i.notes LIKE CONCAT('%Prescription%', p.prescriptionNumber, '%')
+                    OR i.notes LIKE CONCAT('%Drug payment%')
+                    -- OR match by invoice items with drugInventoryId matching this medication
+                    OR EXISTS (
+                        SELECT 1 FROM invoice_items ii
+                        INNER JOIN drug_inventory di_match ON di_match.drugInventoryId = ii.drugInventoryId
+                        WHERE ii.invoiceId = i.invoiceId
+                        AND di_match.medicationId = pi.medicationId
+                    )
+                    -- OR match by invoice items description containing medication name
+                    OR EXISTS (
+                        SELECT 1 FROM invoice_items ii
+                        WHERE ii.invoiceId = i.invoiceId
+                        AND (
+                            ii.description LIKE CONCAT('%', COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, ''), '%')
+                            OR ii.description LIKE CONCAT('%Prescription Item%')
+                        )
+                    )
+                    -- OR if patient has any paid invoice with prescription-related notes, match all their pending prescriptions
+                    OR (
+                        i.notes LIKE CONCAT('%Drug payment%')
+                        AND NOT EXISTS (
+                            SELECT 1 FROM prescription_items pi_other
+                            INNER JOIN prescriptions p_other ON pi_other.prescriptionId = p_other.prescriptionId
+                            WHERE p_other.patientId = p.patientId
+                            AND pi_other.status = 'pending'
+                            AND pi_other.medicationId IS NOT NULL
+                            AND EXISTS (
+                                SELECT 1 FROM invoices i_other
+                                WHERE i_other.patientId = p.patientId
+                                AND i_other.status = 'paid'
+                                AND (
+                                    i_other.notes LIKE CONCAT('%Prescription: ', p_other.prescriptionNumber, '%')
+                                    OR EXISTS (
+                                        SELECT 1 FROM invoice_items ii_other
+                                        INNER JOIN drug_inventory di_other ON di_other.drugInventoryId = ii_other.drugInventoryId
+                                        WHERE ii_other.invoiceId = i_other.invoiceId
+                                        AND di_other.medicationId = pi_other.medicationId
+                                    )
+                                )
+                            )
+                        )
+                    )
+                )
+            )
             AND EXISTS (
                 SELECT 1 FROM drug_inventory di_check
                 WHERE di_check.medicationId = pi.medicationId
@@ -1484,15 +1594,33 @@ router.get('/prescriptions/paid/ready-for-dispensing', async (req, res) => {
                 INNER JOIN patients pt ON p.patientId = pt.patientId
                 INNER JOIN users u ON p.doctorId = u.userId
                 LEFT JOIN medications m ON pi.medicationId = m.medicationId
-                INNER JOIN invoices i ON i.patientId = p.patientId
+                INNER JOIN invoices i ON (
+                    i.patientId = p.patientId
+                    AND i.status = 'paid'
+                    AND (
+                        i.notes LIKE CONCAT('%Prescription: ', p.prescriptionNumber, '%')
+                        OR i.notes LIKE CONCAT('%Drug payment - Prescription: ', p.prescriptionNumber, '%')
+                        OR i.notes LIKE CONCAT('%Prescription%', p.prescriptionNumber, '%')
+                        OR i.notes LIKE CONCAT('%', p.prescriptionNumber, '%')
+                        OR i.notes LIKE CONCAT('%Prescription%')
+                        OR i.notes LIKE CONCAT('%Drug payment%')
+                        OR EXISTS (
+                            SELECT 1 FROM invoice_items ii
+                            WHERE ii.invoiceId = i.invoiceId
+                            AND (
+                                ii.description LIKE CONCAT('%', COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, ''), '%')
+                                OR (ii.drugInventoryId IS NOT NULL AND EXISTS (
+                                    SELECT 1 FROM drug_inventory di_check2
+                                    WHERE di_check2.drugInventoryId = ii.drugInventoryId
+                                    AND di_check2.medicationId = pi.medicationId
+                                ))
+                            )
+                        )
+                    )
+                )
                 WHERE pi.status = 'pending'
-                AND i.status = 'paid'
                 AND pi.medicationId IS NOT NULL
                 AND p.patientId = ?
-                AND (
-                    i.notes LIKE CONCAT('%Prescription: ', p.prescriptionNumber, '%')
-                    OR i.notes LIKE CONCAT('%Drug payment - Prescription: ', p.prescriptionNumber, '%')
-                    OR i.notes LIKE CONCAT('%', p.prescriptionNumber, '%')
                     OR EXISTS (
                         SELECT 1 FROM invoice_items ii2
                         WHERE ii2.invoiceId = i.invoiceId
@@ -1528,7 +1656,7 @@ router.get('/prescriptions/paid/ready-for-dispensing', async (req, res) => {
             // Match by invoice items (medication name or drugInventoryId) instead of invoice notes
             console.log(`[PHARMACY DISPENSE] Fallback query also returned 0 items, trying last resort query`);
             const lastResortQuery = `
-                SELECT DISTINCT
+                SELECT
                     pi.itemId,
                     pi.prescriptionId,
                     pi.medicationId,
@@ -1582,23 +1710,59 @@ router.get('/prescriptions/paid/ready-for-dispensing', async (req, res) => {
                         (SELECT invoiceNumber FROM invoices WHERE patientId = p.patientId AND status = 'paid' ORDER BY invoiceDate DESC LIMIT 1)
                     ) as invoiceNumber,
                     'paid' as invoiceStatus,
-                    di.drugInventoryId,
-                    di.sellPrice as unitPrice,
-                    di.sellPrice * pi.quantity as totalPrice,
-                    di.batchNumber,
-                    di.expiryDate,
-                    di.quantity as availableQuantity
+                    (SELECT di2.drugInventoryId
+                     FROM drug_inventory di2
+                     WHERE di2.medicationId = pi.medicationId
+                     AND di2.quantity > 0
+                     AND di2.status = 'active'
+                     AND (di2.expiryDate IS NULL OR di2.expiryDate >= CURDATE())
+                     ORDER BY di2.expiryDate ASC, di2.createdAt ASC
+                     LIMIT 1) as drugInventoryId,
+                    (SELECT di2.sellPrice
+                     FROM drug_inventory di2
+                     WHERE di2.medicationId = pi.medicationId
+                     AND di2.quantity > 0
+                     AND di2.status = 'active'
+                     AND (di2.expiryDate IS NULL OR di2.expiryDate >= CURDATE())
+                     ORDER BY di2.expiryDate ASC, di2.createdAt ASC
+                     LIMIT 1) as unitPrice,
+                    (SELECT di2.sellPrice * pi.quantity
+                     FROM drug_inventory di2
+                     WHERE di2.medicationId = pi.medicationId
+                     AND di2.quantity > 0
+                     AND di2.status = 'active'
+                     AND (di2.expiryDate IS NULL OR di2.expiryDate >= CURDATE())
+                     ORDER BY di2.expiryDate ASC, di2.createdAt ASC
+                     LIMIT 1) as totalPrice,
+                    (SELECT di2.batchNumber
+                     FROM drug_inventory di2
+                     WHERE di2.medicationId = pi.medicationId
+                     AND di2.quantity > 0
+                     AND di2.status = 'active'
+                     AND (di2.expiryDate IS NULL OR di2.expiryDate >= CURDATE())
+                     ORDER BY di2.expiryDate ASC, di2.createdAt ASC
+                     LIMIT 1) as batchNumber,
+                    (SELECT di2.expiryDate
+                     FROM drug_inventory di2
+                     WHERE di2.medicationId = pi.medicationId
+                     AND di2.quantity > 0
+                     AND di2.status = 'active'
+                     AND (di2.expiryDate IS NULL OR di2.expiryDate >= CURDATE())
+                     ORDER BY di2.expiryDate ASC, di2.createdAt ASC
+                     LIMIT 1) as expiryDate,
+                    (SELECT di2.quantity
+                     FROM drug_inventory di2
+                     WHERE di2.medicationId = pi.medicationId
+                     AND di2.quantity > 0
+                     AND di2.status = 'active'
+                     AND (di2.expiryDate IS NULL OR di2.expiryDate >= CURDATE())
+                     ORDER BY di2.expiryDate ASC, di2.createdAt ASC
+                     LIMIT 1) as availableQuantity
                 FROM prescription_items pi
                 INNER JOIN prescriptions p ON pi.prescriptionId = p.prescriptionId
                 INNER JOIN patients pt ON p.patientId = pt.patientId
                 INNER JOIN users u ON p.doctorId = u.userId
                 LEFT JOIN medications m ON pi.medicationId = m.medicationId
-                INNER JOIN drug_inventory di ON (
-                    di.medicationId = pi.medicationId
-                    AND di.quantity > 0
-                    AND di.status = 'active'
-                    AND (di.expiryDate IS NULL OR di.expiryDate >= CURDATE())
-                )
                 WHERE pi.status = 'pending'
                 AND pi.medicationId IS NOT NULL
                 AND p.patientId = ?
@@ -1618,16 +1782,14 @@ router.get('/prescriptions/paid/ready-for-dispensing', async (req, res) => {
                         OR i2.notes LIKE CONCAT('%Drug payment%')
                     )
                 )
-                AND di.drugInventoryId = (
-                    SELECT di2.drugInventoryId
-                    FROM drug_inventory di2
-                    WHERE di2.medicationId = pi.medicationId
-                    AND di2.quantity > 0
-                    AND di2.status = 'active'
-                    AND (di2.expiryDate IS NULL OR di2.expiryDate >= CURDATE())
-                    ORDER BY di2.expiryDate ASC, di2.createdAt ASC
-                    LIMIT 1
+                AND EXISTS (
+                    SELECT 1 FROM drug_inventory di_check
+                    WHERE di_check.medicationId = pi.medicationId
+                    AND di_check.quantity > 0
+                    AND di_check.status = 'active'
+                    AND (di_check.expiryDate IS NULL OR di_check.expiryDate >= CURDATE())
                 )
+                GROUP BY pi.itemId
                 ORDER BY p.prescriptionDate DESC, pi.itemId ASC
             `;
 

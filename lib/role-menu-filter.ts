@@ -65,6 +65,7 @@ export function filterSidebarItems(
 
 /**
  * Check if a tab is allowed for a role
+ * Permissive by default: shows all tabs unless explicitly restricted
  */
 export function isTabAllowed(
   pagePath: string,
@@ -72,23 +73,34 @@ export function isTabAllowed(
   roleAccess: RoleMenuAccess | null
 ): boolean {
   if (!roleAccess) {
-    return false
+    return true // Allow by default if no access data
   }
 
-  // Check if there are any tab restrictions for this page
-  const pageTabs = roleAccess.tabs.filter(t => t.pagePath === pagePath)
+  // Normalize the input page path for matching
+  const normalizedInputPath = normalizePagePath(pagePath)
 
-  // If no restrictions for this page, allow all tabs
+  // Check if there are any tab restrictions for this page
+  // Normalize both stored paths and input path, then compare
+  const pageTabs = roleAccess.tabs.filter(t => {
+    const normalizedStoredPath = normalizePagePath(t.pagePath)
+    // Match if normalized paths are equal, or use pattern matching
+    return normalizedInputPath === normalizedStoredPath ||
+           matchPagePath(normalizedInputPath, normalizedStoredPath)
+  })
+
+  // If no restrictions configured for this page, allow all tabs (permissive by default)
+  // This ensures roles see tabs unless explicitly restricted
   if (pageTabs.length === 0) {
     return true
   }
 
-  // Check if this specific tab is allowed
+  // If restrictions exist, check if this specific tab is allowed
   return pageTabs.some(t => t.tabId === tabId)
 }
 
 /**
  * Filter tabs based on role access
+ * Permissive by default: shows all tabs unless explicitly restricted
  */
 export function filterTabs(
   tabs: Array<{ value: string; label: string }>,
@@ -96,18 +108,28 @@ export function filterTabs(
   roleAccess: RoleMenuAccess | null
 ): Array<{ value: string; label: string }> {
   if (!roleAccess) {
-    return []
+    return tabs // Show all tabs if no access data (permissive default)
   }
 
-  // Check if there are any tab restrictions for this page
-  const pageTabs = roleAccess.tabs.filter(t => t.pagePath === pagePath)
+  // Normalize the input page path for matching
+  const normalizedInputPath = normalizePagePath(pagePath)
 
-  // If no restrictions for this page, allow all tabs
+  // Check if there are any tab restrictions for this page
+  // Normalize both stored paths and input path, then compare
+  const pageTabs = roleAccess.tabs.filter(t => {
+    const normalizedStoredPath = normalizePagePath(t.pagePath)
+    // Match if normalized paths are equal, or use pattern matching
+    return normalizedInputPath === normalizedStoredPath ||
+           matchPagePath(normalizedInputPath, normalizedStoredPath)
+  })
+
+  // If no restrictions configured for this page, show all tabs (permissive by default)
+  // This ensures roles see all tabs unless explicitly restricted
   if (pageTabs.length === 0) {
     return tabs
   }
 
-  // Filter tabs based on allowed tab IDs
+  // If restrictions exist, filter tabs based on allowed tab IDs
   const allowedTabIds = pageTabs.map(t => t.tabId)
   return tabs.filter(tab => allowedTabIds.includes(tab.value))
 }

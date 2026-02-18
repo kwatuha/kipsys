@@ -985,4 +985,136 @@ router.post('/pharmacy/cleanup', async (req, res) => {
     }
 });
 
+/**
+ * @route POST /api/queue/cleanup-old
+ * @description Complete queue entries that have been in the queue for more than 48 hours
+ * @access Admin only (should be protected by middleware)
+ */
+router.post('/cleanup-old', async (req, res) => {
+    const connection = await pool.getConnection();
+
+    try {
+        await connection.beginTransaction();
+
+        const { dryRun } = req.body;
+        const isDryRun = dryRun === true || dryRun === 'true';
+
+        console.log(`[QUEUE CLEANUP API] Starting cleanup${isDryRun ? ' (DRY RUN)' : ''}...`);
+
+        // Find queue entries that are older than 48 hours and not already completed/cancelled
+        const [oldQueues] = await connection.execute(
+            `SELECT queueId, patientId, ticketNumber, servicePoint, status, arrivalTime, createdAt
+             FROM queue_entries
+             WHERE status NOT IN ('completed', 'cancelled')
+             AND (
+                 (arrivalTime IS NOT NULL AND arrivalTime < DATE_SUB(NOW(), INTERVAL 48 HOUR))
+                 OR (arrivalTime IS NULL AND createdAt < DATE_SUB(NOW(), INTERVAL 48 HOUR))
+             )
+             ORDER BY arrivalTime ASC, createdAt ASC`
+        );
+
+        console.log(`[QUEUE CLEANUP API] Found ${oldQueues.length} queue entries older than 48 hours`);
+
+        if (oldQueues.length === 0) {
+            await connection.rollback();
+            return res.status(200).json({
+                message: 'No old queue entries to clean up.',
+                dryRun: isDryRun,
+                totalFound: 0,
+                completed: 0,
+                errors: 0,
+                summary: {}
+            });
+        }
+
+        // Calculate summary by service point
+        const summary = {};
+        for (const queue of oldQueues) {
+            const servicePoint = queue.servicePoint || 'unknown';
+            summary[servicePoint] = (summary[servicePoint] || 0) + 1;
+        }
+
+        if (isDryRun) {
+            await connection.rollback();
+            return res.status(200).json({
+                message: 'Dry run completed. No changes were made.',
+                dryRun: true,
+                totalFound: oldQueues.length,
+                completed: 0,
+                errors: 0,
+                summary: summary,
+                entries: oldQueues.slice(0, 50) // Return first 50 for preview
+            });
+        }
+
+        // Update each queue entry
+        let completedCount = 0;
+        let errorCount = 0;
+        const completedEntries = [];
+        const errors = [];
+
+        for (const queue of oldQueues) {
+            try {
+                const ageHours = queue.arrivalTime
+                    ? Math.round((new Date() - new Date(queue.arrivalTime)) / (1000 * 60 * 60))
+                    : Math.round((new Date() - new Date(queue.createdAt)) / (1000 * 60 * 60));
+
+                await connection.execute(
+                    `UPDATE queue_entries
+                     SET status = 'completed',
+                         endTime = NOW(),
+                         updatedAt = NOW(),
+                         notes = CONCAT(
+                             COALESCE(notes, ''),
+                             CASE WHEN notes IS NOT NULL AND notes != '' THEN ' | ' ELSE '' END,
+                             'Auto-completed: Queue entry older than 48 hours (', ?, ' hours old)'
+                         )
+                     WHERE queueId = ?`,
+                    [ageHours, queue.queueId]
+                );
+
+                completedCount++;
+                completedEntries.push({
+                    queueId: queue.queueId,
+                    ticketNumber: queue.ticketNumber,
+                    servicePoint: queue.servicePoint,
+                    ageHours: ageHours
+                });
+            } catch (error) {
+                errorCount++;
+                errors.push({
+                    queueId: queue.queueId,
+                    error: error.message
+                });
+                console.error(`[QUEUE CLEANUP API] Error completing queue ${queue.queueId}:`, error.message);
+            }
+        }
+
+        await connection.commit();
+
+        console.log(`[QUEUE CLEANUP API] Cleanup completed: ${completedCount} entries completed, ${errorCount} errors`);
+
+        res.status(200).json({
+            message: `Cleanup completed successfully. ${completedCount} entries completed, ${errorCount} errors.`,
+            dryRun: false,
+            totalFound: oldQueues.length,
+            completed: completedCount,
+            errors: errorCount,
+            summary: summary,
+            completedEntries: completedEntries.slice(0, 100), // Return first 100
+            errors: errors
+        });
+
+    } catch (error) {
+        await connection.rollback();
+        console.error('[QUEUE CLEANUP API] Error during cleanup:', error);
+        res.status(500).json({
+            message: 'Error during queue cleanup',
+            error: error.message
+        });
+    } finally {
+        connection.release();
+    }
+});
+
 module.exports = router;

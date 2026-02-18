@@ -220,6 +220,46 @@ router.put('/:id', async (req, res) => {
 });
 
 /**
+ * @route GET /api/roles/:id/users
+ * @description Get all users assigned to a role
+ */
+router.get('/:id/users', async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // Check if role exists
+        const [roleRows] = await pool.query(
+            'SELECT roleId, roleName FROM roles WHERE roleId = ?',
+            [id]
+        );
+
+        if (roleRows.length === 0) {
+            return res.status(404).json({ message: 'Role not found' });
+        }
+
+        // Get all users with this role
+        const [userRows] = await pool.query(`
+            SELECT
+                u.userId, u.username, u.email, u.firstName, u.lastName,
+                u.phone, u.department, u.isActive, u.roleId, u.createdAt, u.updatedAt,
+                r.roleName AS role
+            FROM users u
+            LEFT JOIN roles r ON u.roleId = r.roleId
+            WHERE u.roleId = ? AND u.voided = 0
+            ORDER BY u.lastName, u.firstName
+        `, [id]);
+
+        res.status(200).json({
+            role: roleRows[0],
+            users: userRows
+        });
+    } catch (error) {
+        console.error('Error fetching role users:', error);
+        res.status(500).json({ message: 'Error fetching role users', error: error.message });
+    }
+});
+
+/**
  * @route DELETE /api/roles/:id
  * @description Delete (deactivate) a role
  */

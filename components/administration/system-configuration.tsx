@@ -8,9 +8,48 @@ import { Switch } from "@/components/ui/switch"
 import { Separator } from "@/components/ui/separator"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
-import { Settings, Database, Server, Shield, Bell } from "lucide-react"
+import { Settings, Database, Server, Shield, Bell, Trash2, Loader2 } from "lucide-react"
+import { useState } from "react"
+import { queueApi } from "@/lib/api"
+import { toast } from "@/components/ui/use-toast"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 
 export function SystemConfiguration() {
+  const [cleaningUp, setCleaningUp] = useState(false)
+  const [cleanupResult, setCleanupResult] = useState<any>(null)
+  const [isDryRun, setIsDryRun] = useState(true)
+
+  const handleCleanupOldQueues = async (dryRun: boolean) => {
+    try {
+      setCleaningUp(true)
+      setCleanupResult(null)
+
+      const result = await queueApi.cleanupOld(dryRun)
+      setCleanupResult(result)
+
+      if (dryRun) {
+        toast({
+          title: "Dry Run Completed",
+          description: `Found ${result.totalFound} queue entries older than 48 hours. No changes were made.`,
+        })
+      } else {
+        toast({
+          title: "Queue Cleanup Completed",
+          description: `Successfully completed ${result.completed} queue entries.`,
+        })
+      }
+    } catch (error: any) {
+      console.error("Error cleaning up old queues:", error)
+      toast({
+        title: "Error",
+        description: error.message || "Failed to clean up old queue entries",
+        variant: "destructive",
+      })
+    } finally {
+      setCleaningUp(false)
+    }
+  }
+
   return (
     <div className="space-y-4">
       <div>
@@ -165,6 +204,105 @@ export function SystemConfiguration() {
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <Trash2 className="h-5 w-5" />
+            <CardTitle>Queue Maintenance</CardTitle>
+          </div>
+          <CardDescription>Clean up old queue entries that have been inactive for more than 48 hours</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="space-y-0.5">
+              <Label>Dry Run Mode</Label>
+              <p className="text-sm text-muted-foreground">Preview changes without applying them</p>
+            </div>
+            <Switch
+              checked={isDryRun}
+              onCheckedChange={setIsDryRun}
+              disabled={cleaningUp}
+            />
+          </div>
+
+          {cleanupResult && (
+            <Alert>
+              <AlertTitle>
+                {cleanupResult.dryRun ? "Dry Run Results" : "Cleanup Results"}
+              </AlertTitle>
+              <AlertDescription className="space-y-2 mt-2">
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div>
+                    <span className="font-medium">Total Found:</span> {cleanupResult.totalFound}
+                  </div>
+                  {!cleanupResult.dryRun && (
+                    <>
+                      <div>
+                        <span className="font-medium">Completed:</span> {cleanupResult.completed}
+                      </div>
+                      <div>
+                        <span className="font-medium">Errors:</span> {cleanupResult.errors}
+                      </div>
+                    </>
+                  )}
+                </div>
+                {cleanupResult.summary && Object.keys(cleanupResult.summary).length > 0 && (
+                  <div className="mt-2">
+                    <p className="font-medium text-sm mb-1">By Service Point:</p>
+                    <div className="flex flex-wrap gap-2">
+                      {Object.entries(cleanupResult.summary).map(([servicePoint, count]) => (
+                        <Badge key={servicePoint} variant="secondary">
+                          {servicePoint}: {count as number}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </AlertDescription>
+            </Alert>
+          )}
+
+          <div className="flex gap-2">
+            <Button
+              onClick={() => handleCleanupOldQueues(true)}
+              disabled={cleaningUp}
+              variant="outline"
+              className="flex-1"
+            >
+              {cleaningUp && isDryRun ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Running...
+                </>
+              ) : (
+                "Preview Changes"
+              )}
+            </Button>
+            <Button
+              onClick={() => handleCleanupOldQueues(false)}
+              disabled={cleaningUp}
+              variant="default"
+              className="flex-1"
+            >
+              {cleaningUp && !isDryRun ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Cleaning Up...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Clean Up Now
+                </>
+              )}
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            This will complete queue entries older than 48 hours. Entries are marked as completed (not deleted) to maintain audit trail.
+          </p>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

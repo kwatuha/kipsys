@@ -200,29 +200,32 @@ export function RoleForm({ open, onOpenChange, onSuccess, role, privileges }: Ro
         } else {
           console.warn("Menu config ref is null after waiting - menu configuration component may not be mounted")
           console.warn("Attempts made:", attempts, "out of", maxAttempts)
-          menuConfigError = "Menu configuration component not initialized. Please visit the 'Menu & Tab Access' tab first."
+          // Don't treat this as an error - role was updated successfully
+          // Menu config will be saved when user visits that tab
         }
 
+        // Always show success message for role update
         if (menuConfigError) {
           toast({
-            title: "Partial Success",
-            description: `Role updated, but menu configuration failed to save: ${menuConfigError}. Please visit the "Menu & Tab Access" tab and try again.`,
-            variant: "destructive",
+            title: "Role Updated Successfully",
+            description: `Role has been updated. However, menu configuration could not be saved: ${menuConfigError}. You can update menu configuration separately in the "Menu & Tab Access" tab.`,
+            variant: "default",
+            duration: 7000,
+          })
+        } else if (menuConfigSaved) {
+          toast({
+            title: "Success",
+            description: "Role and menu configuration updated successfully.",
             duration: 5000,
           })
-          form.reset()
-          onOpenChange(false)
-          if (onSuccess) onSuccess()
-          return
+        } else {
+          toast({
+            title: "Success",
+            description: "Role updated successfully.",
+            duration: 5000,
+          })
         }
 
-        toast({
-          title: "Success",
-          description: menuConfigSaved
-            ? "Role and menu configuration updated successfully."
-            : "Role updated successfully.",
-          duration: 5000,
-        })
         form.reset()
         onOpenChange(false)
         if (onSuccess) onSuccess()
@@ -633,15 +636,8 @@ export function RoleForm({ open, onOpenChange, onSuccess, role, privileges }: Ro
             Cancel
           </Button>
           <Button
-            type="button"
-            onClick={async (e) => {
-              e.preventDefault()
-              e.stopPropagation()
-              console.log("Update Role button clicked")
-              // Use form.handleSubmit to properly validate and submit
-              // This ensures all form validation rules are applied
-              form.handleSubmit(onSubmit)(e)
-            }}
+            type="submit"
+            form={isEditing ? "edit-role-form" : "create-role-form"}
             disabled={loading}
           >
             {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}

@@ -849,6 +849,9 @@ export const queueApi = {
   getById: (id: string) =>
     apiRequest<any>(`/api/queue/${id}`),
 
+  cleanupOld: (dryRun: boolean = false) =>
+    apiRequest<any>('/api/queue/cleanup-old', { method: 'POST', body: { dryRun } }),
+
   create: (data: any) =>
     apiRequest<any>('/api/queue', { method: 'POST', body: data }),
 
@@ -883,11 +886,21 @@ export const queueApi = {
 // Ledger API
 export const ledgerApi = {
   // Accounts
-  getAccounts: (search?: string, accountType?: string, page = 1, limit = 50) =>
-    apiRequest<any[]>(`/api/ledger/accounts?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(search && { search }), ...(accountType && { accountType }) })}`),
+  getAccounts: (search?: string, accountType?: string, asOfDate?: string, page = 1, limit = 50) => {
+    const params = new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(search && { search }), ...(accountType && { accountType }), ...(asOfDate && { asOfDate }) });
+    return apiRequest<any[]>(`/api/ledger/accounts?${params.toString()}`);
+  },
 
-  getAccountById: (id: string) =>
-    apiRequest<any>(`/api/ledger/accounts/${id}`),
+  getAccountById: (id: string, asOfDate?: string) => {
+    const params = new URLSearchParams();
+    if (asOfDate) params.append('asOfDate', asOfDate);
+    return apiRequest<any>(`/api/ledger/accounts/${id}?${params.toString()}`);
+  },
+
+  getAccountTransactions: (id: string, startDate?: string, endDate?: string, asOfDate?: string, page = 1, limit = 50) => {
+    const params = new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(startDate && { startDate }), ...(endDate && { endDate }), ...(asOfDate && { asOfDate }) });
+    return apiRequest<any[]>(`/api/ledger/accounts/${id}/transactions?${params.toString()}`);
+  },
 
   createAccount: (data: any) =>
     apiRequest<any>('/api/ledger/accounts', { method: 'POST', body: data }),
@@ -913,6 +926,43 @@ export const ledgerApi = {
 
   deleteTransaction: (id: string) =>
     apiRequest<any>(`/api/ledger/transactions/${id}`, { method: 'DELETE' }),
+
+  // Financial Reports
+  getTrialBalance: (asOfDate?: string) => {
+    const params = new URLSearchParams();
+    if (asOfDate) params.append('asOfDate', asOfDate);
+    return apiRequest<any>(`/api/ledger/reports/trial-balance?${params.toString()}`);
+  },
+
+  getIncomeStatement: (startDate?: string, endDate?: string) => {
+    const params = new URLSearchParams();
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    return apiRequest<any>(`/api/ledger/reports/income-statement?${params.toString()}`);
+  },
+
+  getBalanceSheet: (asOfDate?: string) => {
+    const params = new URLSearchParams();
+    if (asOfDate) params.append('asOfDate', asOfDate);
+    return apiRequest<any>(`/api/ledger/reports/balance-sheet?${params.toString()}`);
+  },
+
+  // Patient & Staff Statements
+  getPatientStatement: (patientId: string, startDate?: string, endDate?: string, asOfDate?: string) => {
+    const params = new URLSearchParams();
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    if (asOfDate) params.append('asOfDate', asOfDate);
+    return apiRequest<any>(`/api/ledger/reports/patient-statement/${patientId}?${params.toString()}`);
+  },
+
+  getStaffStatement: (staffId: string, startDate?: string, endDate?: string, asOfDate?: string) => {
+    const params = new URLSearchParams();
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    if (asOfDate) params.append('asOfDate', asOfDate);
+    return apiRequest<any>(`/api/ledger/reports/staff-statement/${staffId}?${params.toString()}`);
+  },
 };
 
 // Procurement Vendors API
@@ -1416,6 +1466,9 @@ export const roleMenuApi = {
 export const roleApi = {
   getAll: () =>
     apiRequest<any[]>('/api/roles'),
+
+  getUsersByRole: (roleId: string) =>
+    apiRequest<{ role: any; users: any[] }>(`/api/roles/${roleId}/users`),
   getById: (id: string) =>
     apiRequest<any>(`/api/roles/${id}`),
   create: (data: any) =>

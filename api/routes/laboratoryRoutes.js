@@ -282,22 +282,87 @@ router.post('/orders', async (req, res) => {
         }
         // ----------------------------------
 
-        // 1. Generate order number
+        // 1. Generate order number with retry logic to prevent duplicates
         let orderNum = orderNumber;
         if (!orderNum) {
-            const [count] = await connection.execute('SELECT COUNT(*) as count FROM lab_test_orders');
-            orderNum = `LAB-${String(count[0].count + 1).padStart(6, '0')}`;
+            // Get the maximum order number to avoid duplicates (similar to radiology orders)
+            const [maxResult] = await connection.execute(
+                `SELECT MAX(CAST(SUBSTRING(orderNumber, 5) AS UNSIGNED)) as maxNum
+                 FROM lab_test_orders
+                 WHERE orderNumber LIKE 'LAB-%' AND orderNumber NOT LIKE 'LAB-HIV-%'`
+            );
+
+            let nextNum = (maxResult[0]?.maxNum || 0) + 1;
+            orderNum = `LAB-${String(nextNum).padStart(6, '0')}`;
         }
 
         const clinicalInfo = clinicalIndication || clinicalNotes || null;
 
-        // 2. Insert order
-        const [result] = await connection.execute(
-            `INSERT INTO lab_test_orders (orderNumber, patientId, admissionId, orderedBy, orderDate, priority, status, clinicalIndication)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            [orderNum, patientId, admissionId || null, orderedBy, orderDate || new Date(), priority || 'routine', status || 'pending', clinicalInfo]
-        );
-        const orderId = result.insertId;
+        // 2. Insert order with retry logic for duplicate key errors
+        let result;
+        let insertAttempts = 0;
+        let finalOrderNum = orderNum;
+        let orderId;
+
+        while (insertAttempts < 100) {
+            // First check if the number exists before trying to insert
+            const [existing] = await connection.execute(
+                'SELECT orderId FROM lab_test_orders WHERE orderNumber = ?',
+                [finalOrderNum]
+            );
+
+            if (existing.length > 0) {
+                // Number exists, extract current number and increment
+                const currentNum = parseInt(finalOrderNum.substring(4)) || 0;
+                const nextNum = currentNum + 1;
+                finalOrderNum = `LAB-${String(nextNum).padStart(6, '0')}`;
+                insertAttempts++;
+
+                if (insertAttempts >= 100) {
+                    await connection.rollback();
+                    connection.release();
+                    return res.status(500).json({
+                        message: 'Failed to generate unique lab order number',
+                        error: 'Please try again.'
+                    });
+                }
+                // Continue to check next number
+                continue;
+            }
+
+            // Number doesn't exist, try to insert
+            try {
+                [result] = await connection.execute(
+                    `INSERT INTO lab_test_orders (orderNumber, patientId, admissionId, orderedBy, orderDate, priority, status, clinicalIndication)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [finalOrderNum, patientId, admissionId || null, orderedBy, orderDate || new Date(), priority || 'routine', status || 'pending', clinicalInfo]
+                );
+                orderId = result.insertId;
+                break; // Success, exit loop
+            } catch (insertError) {
+                if (insertError.code === 'ER_DUP_ENTRY' || insertError.errno === 1062) {
+                    // Duplicate key error, increment and retry
+                    const currentNum = parseInt(finalOrderNum.substring(4)) || 0;
+                    const nextNum = currentNum + 1;
+                    finalOrderNum = `LAB-${String(nextNum).padStart(6, '0')}`;
+                    insertAttempts++;
+
+                    if (insertAttempts >= 100) {
+                        await connection.rollback();
+                        connection.release();
+                        return res.status(500).json({
+                            message: 'Failed to generate unique lab order number',
+                            error: 'Please try again.'
+                        });
+                    }
+                    // Continue to retry
+                    continue;
+                } else {
+                    // Different error, rethrow
+                    throw insertError;
+                }
+            }
+        }
 
         // 3. Process Items and Fetch Prices for Billing
         let totalAmount = 0;
