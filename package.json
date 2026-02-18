@@ -3,11 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "predev": "node scripts/check-not-root.mjs",
     "build": "next build",
     "dev": "next dev --turbo -H 0.0.0.0",
     "dev:legacy": "next dev",
     "dev:fast": "next build && next dev --turbo -H 0.0.0.0",
     "dev:precompiled": "next build && next dev --turbo -H 0.0.0.0",
+    "dev:3003": "next dev --turbo -H 0.0.0.0 -p 3003",
     "lint": "next lint",
     "start": "next start",
     "start:prod": "next start -H 0.0.0.0",
