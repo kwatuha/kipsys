@@ -538,6 +538,240 @@ router.post('/', async (req, res) => {
             // return res.status(500).json({ message: 'Error creating invoice', error: invoiceError.message });
         }
 
+        // Check if patient should be charged registration fee (if last registration/triage was more than 5 days ago)
+        try {
+            console.log(`[REG FEE CHECK] Starting registration fee check for patient ${patientId}, triage ${triageId}`);
+
+            // Get patient's registration date and last triage date (excluding current triage)
+            // This checks if patient's last visit (registration or triage) was more than 5 days ago
+            const [patientInfo] = await connection.execute(
+                `SELECT p.createdAt as registrationDate,
+                        (SELECT MAX(t.triageDate)
+                         FROM triage_assessments t
+                         WHERE t.patientId = ? AND t.triageId != ?) as lastTriageDate
+                 FROM patients p
+                 WHERE p.patientId = ?`,
+                [patientId, triageId, patientId]
+            );
+
+            console.log(`[REG FEE CHECK] Query returned ${patientInfo.length} row(s) for patient ${patientId}`);
+
+            if (patientInfo.length > 0) {
+                const patient = patientInfo[0];
+
+                // Parse dates - handle both Date objects and strings from MySQL
+                let registrationDate = null;
+                let lastTriageDate = null;
+
+                if (patient.registrationDate) {
+                    registrationDate = patient.registrationDate instanceof Date
+                        ? patient.registrationDate
+                        : new Date(patient.registrationDate);
+                    // Check if date is valid
+                    if (isNaN(registrationDate.getTime())) {
+                        console.warn(`Invalid registration date for patient ${patientId}: ${patient.registrationDate}`);
+                        registrationDate = null;
+                    }
+                }
+
+                if (patient.lastTriageDate) {
+                    lastTriageDate = patient.lastTriageDate instanceof Date
+                        ? patient.lastTriageDate
+                        : new Date(patient.lastTriageDate);
+                    // Check if date is valid
+                    if (isNaN(lastTriageDate.getTime())) {
+                        console.warn(`Invalid last triage date for patient ${patientId}: ${patient.lastTriageDate}`);
+                        lastTriageDate = null;
+                    }
+                }
+
+                const now = new Date();
+                const fiveDaysAgo = new Date(now.getTime() - (5 * 24 * 60 * 60 * 1000)); // 5 days in milliseconds
+
+                // Determine the last visit date (either last triage or registration)
+                // If patient has been triaged before, use last triage date; otherwise use registration date
+                const lastVisitDate = lastTriageDate || registrationDate;
+
+                // Check if patient's last visit (registration or triage) was more than 5 days ago
+                // Compare dates only (ignore time) to ensure accurate day-based comparison
+                let shouldChargeRegFee = false;
+                if (lastVisitDate) {
+                    const lastVisitDateOnly = new Date(lastVisitDate.getFullYear(), lastVisitDate.getMonth(), lastVisitDate.getDate());
+                    const fiveDaysAgoDateOnly = new Date(fiveDaysAgo.getFullYear(), fiveDaysAgo.getMonth(), fiveDaysAgo.getDate());
+                    shouldChargeRegFee = lastVisitDateOnly < fiveDaysAgoDateOnly;
+                }
+
+                // Debug logging
+                console.log('Registration fee check:', {
+                    patientId,
+                    rawRegistrationDate: patient.registrationDate,
+                    rawLastTriageDate: patient.lastTriageDate,
+                    registrationDate: registrationDate ? registrationDate.toISOString() : null,
+                    lastTriageDate: lastTriageDate ? lastTriageDate.toISOString() : null,
+                    lastVisitDate: lastVisitDate ? lastVisitDate.toISOString() : null,
+                    fiveDaysAgo: fiveDaysAgo.toISOString(),
+                    shouldChargeRegFee
+                });
+
+                if (shouldChargeRegFee) {
+                    console.log(`Patient ${patientId} should be charged registration fee - last visit was more than 5 days ago`);
+
+                    // Check if patient already has a pending registration fee invoice
+                    const [existingRegFeeInvoice] = await connection.execute(
+                        `SELECT i.invoiceId
+                         FROM invoices i
+                         INNER JOIN invoice_items ii ON i.invoiceId = ii.invoiceId
+                         INNER JOIN service_charges sc ON ii.chargeId = sc.chargeId
+                         WHERE i.patientId = ?
+                         AND (sc.chargeCode = 'REG-FEE' OR sc.name LIKE '%Registration%Fee%')
+                         AND i.status = 'pending'
+                         AND i.voided = 0`,
+                        [patientId]
+                    );
+
+                    if (existingRegFeeInvoice.length > 0) {
+                        console.log(`Patient ${patientId} already has a pending registration fee invoice (ID: ${existingRegFeeInvoice[0].invoiceId})`);
+                    }
+
+                    // Only create registration fee invoice if one doesn't already exist
+                    if (existingRegFeeInvoice.length === 0) {
+                        console.log(`Creating registration fee invoice for patient ${patientId}`);
+                        // Find or get registration fee service charge
+                        let [regFeeCharge] = await connection.execute(
+                            `SELECT chargeId, cost FROM service_charges
+                             WHERE (chargeCode = 'REG-FEE' OR name LIKE '%Registration%Fee%')
+                             AND status = 'Active'
+                             LIMIT 1`
+                        );
+
+                        let registrationFeeAmount = 500.00; // Default fee if not found
+                        let chargeId = null;
+
+                        if (regFeeCharge.length > 0) {
+                            chargeId = regFeeCharge[0].chargeId;
+                            registrationFeeAmount = parseFloat(regFeeCharge[0].cost);
+                        } else {
+                            // Create a default registration fee service charge if it doesn't exist
+                            const [newCharge] = await connection.execute(
+                                `INSERT INTO service_charges (chargeCode, name, category, cost, description, status)
+                                 VALUES ('REG-FEE', 'Patient Registration Fee', 'Registration', ?, 'Patient registration fee', 'Active')`,
+                                [registrationFeeAmount]
+                            );
+                            chargeId = newCharge.insertId;
+                        }
+
+                        // Generate invoice number
+                        const today = new Date().toISOString().split('T')[0].replace(/-/g, '');
+                        const datePrefix = `INV-${today}-`;
+
+                        const [maxResult] = await connection.execute(
+                            `SELECT MAX(CAST(SUBSTRING_INDEX(invoiceNumber, '-', -1) AS UNSIGNED)) as maxNum
+                             FROM invoices
+                             WHERE invoiceNumber LIKE CONCAT(?, '%')`,
+                            [datePrefix]
+                        );
+
+                        let nextNum = (maxResult[0]?.maxNum || 0) + 1;
+                        let invoiceNumber = `${datePrefix}${String(nextNum).padStart(4, '0')}`;
+
+                        // Check if this number already exists (safety check)
+                        let attempts = 0;
+                        while (attempts < 100) {
+                            const [existing] = await connection.execute(
+                                'SELECT invoiceId FROM invoices WHERE invoiceNumber = ?',
+                                [invoiceNumber]
+                            );
+
+                            if (existing.length === 0) {
+                                break; // Number is available
+                            }
+                            nextNum++;
+                            invoiceNumber = `${datePrefix}${String(nextNum).padStart(4, '0')}`;
+                            attempts++;
+                        }
+
+                        if (attempts < 100) {
+                            // Create invoice for registration fee
+                            let invoiceResult;
+                            try {
+                                [invoiceResult] = await connection.execute(
+                                    `INSERT INTO invoices (invoiceNumber, patientId, invoiceDate, totalAmount, balance, status, notes, createdBy)
+                                     VALUES (?, ?, CURDATE(), ?, ?, 'pending', ?, ?)`,
+                                    [
+                                        invoiceNumber,
+                                        patientId,
+                                        registrationFeeAmount,
+                                        registrationFeeAmount,
+                                        'Registration fee payment (returning patient - last visit > 5 days ago)',
+                                        triagedByUserId
+                                    ]
+                                );
+
+                                const regInvoiceId = invoiceResult.insertId;
+
+                                // Add invoice item
+                                await connection.execute(
+                                    `INSERT INTO invoice_items (invoiceId, chargeId, description, quantity, unitPrice, totalPrice)
+                                     VALUES (?, ?, ?, 1, ?, ?)`,
+                                    [
+                                        regInvoiceId,
+                                        chargeId,
+                                        'Patient Registration Fee',
+                                        registrationFeeAmount,
+                                        registrationFeeAmount
+                                    ]
+                                );
+
+                                // Check if patient already exists in cashier queue (any active entry)
+                                const [existingCashier] = await connection.execute(
+                                    `SELECT queueId FROM queue_entries
+                                     WHERE patientId = ? AND servicePoint = 'cashier'
+                                     AND status IN ('waiting', 'called', 'serving')`,
+                                    [patientId]
+                                );
+
+                                if (existingCashier.length === 0) {
+                                    // Generate ticket number for cashier queue
+                                    const [cashierCount] = await connection.execute(
+                                        'SELECT COUNT(*) as count FROM queue_entries WHERE DATE(arrivalTime) = CURDATE() AND servicePoint = "cashier"'
+                                    );
+                                    const cashierTicketNum = cashierCount[0].count + 1;
+                                    const cashierTicketNumber = `C-${String(cashierTicketNum).padStart(3, '0')}`;
+
+                                    // Create queue entry for cashier (registration fee payment)
+                                    await connection.execute(
+                                        `INSERT INTO queue_entries
+                                        (patientId, ticketNumber, servicePoint, priority, status, notes, createdBy)
+                                        VALUES (?, ?, 'cashier', 'normal', 'waiting', ?, ?)`,
+                                        [
+                                            patientId,
+                                            cashierTicketNumber,
+                                            `Registration fee payment - Triage: ${triageNumber}`,
+                                            triagedByUserId
+                                        ]
+                                    );
+                                }
+                            } catch (regInvoiceError) {
+                                // Log error but don't fail the triage creation
+                                console.error('Error creating registration fee invoice:', regInvoiceError);
+                            }
+                        }
+                    }
+                } else {
+                    console.log(`[REG FEE CHECK] Patient ${patientId} not found in database`);
+                }
+            }
+        } catch (regFeeError) {
+            // Log error but don't fail the triage creation
+            console.error('[REG FEE CHECK] Error checking/creating registration fee:', regFeeError);
+            console.error('[REG FEE CHECK] Registration fee error details:', {
+                patientId,
+                triageId,
+                errorMessage: regFeeError.message,
+                errorStack: regFeeError.stack
+            });
+        }
+
         // Note: Consultation queue entry will be created automatically when consultation fee invoice is paid
         // See billingRoutes.js payment endpoint for consultation queue creation logic
 
