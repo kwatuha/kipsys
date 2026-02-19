@@ -43,7 +43,7 @@ The role-based menu and tab access control system has been successfully implemen
 - **Features**:
   - Wrapper component for filtering tabs
   - `useTabAccess` hook for checking individual tab access
-  - Handles dynamic route paths
+  - Handles dynamic route paths  
 
 ### ✅ Utilities & Hooks
 - **Filtering Utilities** (`lib/role-menu-filter.ts`):

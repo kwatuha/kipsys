@@ -1217,6 +1217,22 @@ export function PatientEncounterForm({
         orderDetails: data.orders?.map((o: any) => ({ chargeId: o.chargeId, alreadySaved: o.alreadySaved })),
       })
 
+      // Validate that diagnosis is provided if medications are prescribed
+      if (data.medications && data.medications.length > 0) {
+        const diagnosis = data.diagnosis || ""
+        if (!diagnosis || diagnosis.trim() === "") {
+          toast({
+            title: "Diagnosis Required",
+            description: "Please provide a diagnosis before prescribing medications. Click the 'Diagnosis' tab to add a diagnosis.",
+            variant: "destructive",
+          })
+          setActiveTab("diagnosis")
+          setDiagnosisSheetOpen(true)
+          setIsSubmitting(false)
+          return
+        }
+      }
+
       // Validate medications if any
       if (data.medications && data.medications.length > 0) {
         let hasValidationError = false
@@ -1238,6 +1254,7 @@ export function PatientEncounterForm({
 
         if (hasValidationError) {
           setActiveTab("prescription")
+          setIsSubmitting(false)
           return
         }
       }
@@ -3584,6 +3601,19 @@ const clearDraftFromStorage = (patientId:any) => {
                       variant="outline"
                       size="sm"
                       onClick={() => {
+                        // Check if diagnosis is filled before allowing medication prescription
+                        const currentDiagnosis = form.getValues("diagnosis")
+                        if (!currentDiagnosis || currentDiagnosis.trim() === "") {
+                          toast({
+                            title: "Diagnosis Required",
+                            description: "Please provide a diagnosis before prescribing medications. Click the 'Diagnosis' tab to add a diagnosis.",
+                            variant: "destructive",
+                          })
+                          // Switch to diagnosis tab
+                          setActiveTab("diagnosis")
+                          setDiagnosisSheetOpen(true)
+                          return
+                        }
                         setEditingMedicationIndex(null)
                         setTempMedication(defaultMedication)
                         setIsQuantityManuallyEdited(false) // Reset when adding new medication
@@ -3594,6 +3624,21 @@ const clearDraftFromStorage = (patientId:any) => {
                       Add Medication
                     </Button>
                   </div>
+
+                  {/* Warning if diagnosis is missing */}
+                  {(!form.watch("diagnosis") || form.watch("diagnosis")?.trim() === "") && (
+                    <div className="rounded-md border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950 p-3 flex items-start gap-2">
+                      <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
+                      <div className="flex-1">
+                        <p className="text-sm font-medium text-amber-800 dark:text-amber-200">
+                          Diagnosis Required
+                        </p>
+                        <p className="text-xs text-amber-700 dark:text-amber-300 mt-1">
+                          Please provide a diagnosis before prescribing medications. Click the "Diagnosis" tab above to add a diagnosis.
+                        </p>
+                      </div>
+                    </div>
+                  )}
 
                   {medicationFields.length === 0 ? (
                     <Card>

@@ -197,8 +197,23 @@ export default function QueueManagement() {
 
   const loadAllQueues = async () => {
     try {
-      const data = await queueApi.getAll(undefined, undefined)
-      setAllQueues(data || [])
+      // Load all queues without service point filter first
+      const allData = await queueApi.getAll(undefined, undefined)
+
+      // For pharmacy, we need to apply the same filter that's used when displaying
+      // So load pharmacy queue separately with the filter applied
+      let pharmacyData: any[] = []
+      try {
+        pharmacyData = await queueApi.getAll('pharmacy', undefined) || []
+      } catch (error) {
+        console.error("Error loading pharmacy queue:", error)
+      }
+
+      // Replace pharmacy entries in allData with filtered pharmacy data
+      const filteredData = allData.filter((q: any) => q.servicePoint !== 'pharmacy')
+      filteredData.push(...pharmacyData)
+
+      setAllQueues(filteredData)
     } catch (error: any) {
       console.error("Error loading all queues:", error)
     }

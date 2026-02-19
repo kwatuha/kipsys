@@ -85,7 +85,25 @@ export function PatientForm({ patient, open, onOpenChange, onSuccess }: PatientF
     try {
       setLoadingCompanies(true)
       const companies = await insuranceApi.getProviders('active')
-      setInsuranceCompanies(companies || [])
+
+      // Deduplicate by providerName, keeping the first occurrence (preferring ones with providerCode)
+      const uniqueCompanies = (companies || []).reduce((acc: any[], company: any) => {
+        const existing = acc.find(c =>
+          c.providerName?.toLowerCase().trim() === company.providerName?.toLowerCase().trim()
+        )
+        if (!existing) {
+          acc.push(company)
+        } else {
+          // If current has providerCode and existing doesn't, replace it
+          if (company.providerCode && !existing.providerCode) {
+            const index = acc.indexOf(existing)
+            acc[index] = company
+          }
+        }
+        return acc
+      }, [])
+
+      setInsuranceCompanies(uniqueCompanies)
     } catch (error) {
       console.error('Error loading insurance companies:', error)
     } finally {

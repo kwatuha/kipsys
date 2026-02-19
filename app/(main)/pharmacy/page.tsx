@@ -1,13 +1,13 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import React, { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
-import { Search, FileText, Package, Plus, Edit, Loader2, MoreVertical, Eye, CheckCircle, XCircle, Trash2, History, ArrowRight, Sliders, Download, Printer, Pill, AlertCircle, Calendar } from "lucide-react"
+import { Search, FileText, Package, Plus, Edit, Loader2, MoreVertical, Eye, CheckCircle, XCircle, Trash2, History, ArrowRight, Sliders, Download, Printer, Pill, AlertCircle, Calendar, Users, List } from "lucide-react"
 import Link from "next/link"
 import { AddPrescriptionForm } from "@/components/add-prescription-form"
 import { MedicationForm } from "@/components/medication-form"
@@ -41,6 +41,12 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion"
 
 interface Medication {
   medicationId: number
@@ -100,6 +106,8 @@ export default function PharmacyPage() {
   const [medicationSearch, setMedicationSearch] = useState("")
   const [prescriptionDateFilter, setPrescriptionDateFilter] = useState<string>("")
   const [prescriptionPatientFilter, setPrescriptionPatientFilter] = useState<string>("")
+  const [groupByPatient, setGroupByPatient] = useState(true) // Group by patient by default
+  const [expandedPatients, setExpandedPatients] = useState<Set<string>>(new Set())
 
   // Medication form state
   const [isAddMedicationOpen, setIsAddMedicationOpen] = useState(false)
@@ -513,6 +521,38 @@ export default function PharmacyPage() {
     }
     return true
   })
+
+  // Group prescriptions by patient
+  const groupedPrescriptions = React.useMemo(() => {
+    if (!groupByPatient) {
+      return null
+    }
+
+    const grouped: Record<string, Prescription[]> = {}
+
+    filteredPrescriptions.forEach((prescription) => {
+      const patientKey = `${prescription.patientId}_${getPatientName(prescription)}`
+      if (!grouped[patientKey]) {
+        grouped[patientKey] = []
+      }
+      grouped[patientKey].push(prescription)
+    })
+
+    // Convert to array and sort by patient name
+    return Object.entries(grouped)
+      .map(([key, prescriptions]) => ({
+        patientKey: key,
+        patientId: prescriptions[0].patientId,
+        patientName: getPatientName(prescriptions[0]),
+        patientNumber: prescriptions[0].patientNumber,
+        prescriptions: prescriptions.sort((a, b) => {
+          const dateA = a.prescriptionDate ? new Date(a.prescriptionDate).getTime() : 0
+          const dateB = b.prescriptionDate ? new Date(b.prescriptionDate).getTime() : 0
+          return dateB - dateA // Most recent first
+        })
+      }))
+      .sort((a, b) => a.patientName.localeCompare(b.patientName))
+  }, [filteredPrescriptions, groupByPatient])
 
   // Generate prescription HTML for printing/PDF
   const generatePrescriptionHTML = (prescription: any): string => {
@@ -1010,6 +1050,109 @@ export default function PharmacyPage() {
     }
   }
 
+  // Print all prescriptions for a specific patient
+  const handlePrintAllPrescriptionsForPatient = async (patientPrescriptions: Prescription[]) => {
+    if (patientPrescriptions.length === 0) {
+      alert('No prescriptions to print.')
+      return
+    }
+
+    try {
+      const prescriptionsWithDetails = await Promise.all(
+        patientPrescriptions.map(async (prescription) => {
+          try {
+            const details = await pharmacyApi.getPrescription(prescription.prescriptionId.toString())
+            return details
+          } catch (error) {
+            console.error(`Error fetching prescription ${prescription.prescriptionId}:`, error)
+            return prescription
+          }
+        })
+      )
+
+      const patientName = getPatientName(patientPrescriptions[0])
+      const patientNumber = patientPrescriptions[0].patientNumber
+
+      const htmlContent = `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <title>Prescriptions for ${patientName}</title>
+            <style>
+              @media print { @page { margin: 15mm; } }
+              body { font-family: Arial, sans-serif; margin: 20px; font-size: 11px; }
+              .header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #000; padding-bottom: 15px; }
+              .header img { max-width: 150px; height: auto; margin-bottom: 10px; }
+              h1 { text-align: center; margin-bottom: 10px; font-size: 22px; }
+              .patient-info { background-color: #f9f9f9; padding: 15px; border-radius: 5px; margin-bottom: 20px; border: 1px solid #ddd; }
+              .patient-info h2 { margin: 0 0 10px 0; font-size: 18px; }
+              .prescription-section { page-break-after: always; margin-bottom: 40px; border: 1px solid #ddd; padding: 20px; border-radius: 5px; }
+              .prescription-section:last-child { page-break-after: auto; }
+              table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 9px; }
+              th, td { border: 1px solid #ddd; padding: 6px; text-align: left; }
+              th { background-color: #f2f2f2; font-weight: bold; }
+            </style>
+          </head>
+          <body>
+            <div class="header">
+              <img src="${window.location.origin}/logo.png" alt="Hospital Logo" style="max-width: 150px; height: auto; margin-bottom: 10px;" onerror="this.style.display='none';" />
+              <h1>PRESCRIPTIONS REPORT</h1>
+            </div>
+            <div class="patient-info">
+              <h2>Patient: ${patientName}</h2>
+              ${patientNumber ? `<p><strong>Patient ID:</strong> ${patientNumber}</p>` : ''}
+              <p><strong>Total Prescriptions:</strong> ${prescriptionsWithDetails.length}</p>
+            </div>
+            ${prescriptionsWithDetails.map((prescription) => {
+              const doctorName = getDoctorName(prescription)
+              const prescriptionDate = prescription.prescriptionDate ? new Date(prescription.prescriptionDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : 'N/A'
+              const items = prescription.items || []
+              return `
+                <div class="prescription-section">
+                  <h3>Prescription #${prescription.prescriptionNumber || 'N/A'} - ${prescriptionDate}</h3>
+                  <p><strong>Doctor:</strong> ${doctorName}</p>
+                  ${items.length > 0 ? `
+                    <table>
+                      <thead><tr><th>#</th><th>Medication</th><th>Dosage</th><th>Frequency</th><th>Duration</th><th>Instructions</th></tr></thead>
+                      <tbody>
+                        ${items.map((item: any, idx: number) => `
+                          <tr>
+                            <td>${idx + 1}</td>
+                            <td><strong>${item.medicationName || 'Unknown'}</strong></td>
+                            <td>${item.dosage || '-'}</td>
+                            <td>${item.frequency || '-'}</td>
+                            <td>${item.duration || '-'}</td>
+                            <td>${item.instructions || '-'}</td>
+                          </tr>
+                        `).join('')}
+                      </tbody>
+                    </table>
+                  ` : '<p>No medications prescribed.</p>'}
+                </div>
+              `
+            }).join('')}
+          </body>
+        </html>
+      `
+
+      const printWindow = window.open('', '_blank')
+      if (!printWindow) return
+      printWindow.document.write(htmlContent)
+      printWindow.document.close()
+      printWindow.focus()
+      setTimeout(() => printWindow.print(), 250)
+    } catch (error: any) {
+      console.error('Error printing patient prescriptions:', error)
+      alert('Failed to print prescriptions. Please try again.')
+    }
+  }
+
+  // Download all prescriptions for a specific patient as PDF
+  const handleDownloadAllPrescriptionsPDFForPatient = async (patientPrescriptions: Prescription[]) => {
+    // Reuse the print function which opens print dialog (user can save as PDF)
+    await handlePrintAllPrescriptionsForPatient(patientPrescriptions)
+  }
+
   // Download all filtered prescriptions as PDF
   const handleDownloadAllPrescriptionsPDF = async () => {
     if (filteredPrescriptions.length === 0) {
@@ -1332,6 +1475,24 @@ export default function PharmacyPage() {
                       onChange={(e) => setPrescriptionSearch(e.target.value)}
                     />
                   </div>
+                  <Button
+                    variant={groupByPatient ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setGroupByPatient(!groupByPatient)}
+                    title={groupByPatient ? "Switch to individual view" : "Switch to grouped by patient view"}
+                  >
+                    {groupByPatient ? (
+                      <>
+                        <Users className="mr-2 h-4 w-4" />
+                        Grouped
+                      </>
+                    ) : (
+                      <>
+                        <List className="mr-2 h-4 w-4" />
+                        Individual
+                      </>
+                    )}
+                  </Button>
                   {filteredPrescriptions.length > 0 && (
                     <>
                       <Button
@@ -1375,7 +1536,158 @@ export default function PharmacyPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {filteredPrescriptions.length > 0 ? (
+                      {groupByPatient && groupedPrescriptions ? (
+                        groupedPrescriptions.length > 0 ? (
+                          groupedPrescriptions.map((group) => (
+                            <React.Fragment key={group.patientKey}>
+                              <TableRow className="bg-muted/50">
+                                <TableCell colSpan={6} className="p-0">
+                                  <Accordion type="single" collapsible className="w-full">
+                                    <AccordionItem value={group.patientKey} className="border-0">
+                                      <AccordionTrigger className="px-4 py-2 hover:no-underline">
+                                        <div className="flex items-center justify-between w-full pr-4">
+                                          <div className="flex items-center gap-3">
+                                            <div>
+                                              <div className="font-semibold">{group.patientName}</div>
+                                              {group.patientNumber && (
+                                                <div className="text-xs text-muted-foreground">{group.patientNumber}</div>
+                                              )}
+                                            </div>
+                                            <Badge variant="outline" className="ml-2">
+                                              {group.prescriptions.length} prescription{group.prescriptions.length !== 1 ? 's' : ''}
+                                            </Badge>
+                                          </div>
+                                          <div className="flex items-center gap-2">
+                                            <Button
+                                              variant="ghost"
+                                              size="sm"
+                                              onClick={(e) => {
+                                                e.stopPropagation()
+                                                handlePrintAllPrescriptionsForPatient(group.prescriptions)
+                                              }}
+                                              title="Print all prescriptions for this patient"
+                                            >
+                                              <Printer className="h-4 w-4" />
+                                            </Button>
+                                            <Button
+                                              variant="ghost"
+                                              size="sm"
+                                              onClick={(e) => {
+                                                e.stopPropagation()
+                                                handleDownloadAllPrescriptionsPDFForPatient(group.prescriptions)
+                                              }}
+                                              title="Download all prescriptions for this patient as PDF"
+                                            >
+                                              <Download className="h-4 w-4" />
+                                            </Button>
+                                          </div>
+                                        </div>
+                                      </AccordionTrigger>
+                                      <AccordionContent>
+                                        <div className="px-4 pb-2">
+                                          <Table>
+                                            <TableHeader>
+                                              <TableRow>
+                                                <TableHead>Prescription #</TableHead>
+                                                <TableHead>Doctor</TableHead>
+                                                <TableHead>Date</TableHead>
+                                                <TableHead>Status</TableHead>
+                                                <TableHead>Actions</TableHead>
+                                              </TableRow>
+                                            </TableHeader>
+                                            <TableBody>
+                                              {group.prescriptions.map((prescription) => (
+                                                <TableRow key={prescription.prescriptionId}>
+                                                  <TableCell className="font-medium">{prescription.prescriptionNumber}</TableCell>
+                                                  <TableCell>{getDoctorName(prescription)}</TableCell>
+                                                  <TableCell>
+                                                    {prescription.prescriptionDate
+                                                      ? new Date(prescription.prescriptionDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+                                                      : '-'}
+                                                  </TableCell>
+                                                  <TableCell>
+                                                    <Badge variant={prescription.status === "pending" ? "secondary" : "default"}>
+                                                      {prescription.status.charAt(0).toUpperCase() + prescription.status.slice(1)}
+                                                    </Badge>
+                                                  </TableCell>
+                                                  <TableCell>
+                                                    <DropdownMenu>
+                                                      <DropdownMenuTrigger asChild>
+                                                        <Button variant="outline" size="sm">
+                                                          <MoreVertical className="h-4 w-4" />
+                                                        </Button>
+                                                      </DropdownMenuTrigger>
+                                                      <DropdownMenuContent align="end">
+                                                        <DropdownMenuItem onClick={() => handleViewPrescription(prescription)}>
+                                                          <Eye className="mr-2 h-4 w-4" />
+                                                          View Details
+                                                        </DropdownMenuItem>
+                                                        <DropdownMenuSeparator />
+                                                        <DropdownMenuItem onClick={() => handlePrintPrescription(prescription)}>
+                                                          <Printer className="mr-2 h-4 w-4" />
+                                                          Print
+                                                        </DropdownMenuItem>
+                                                        <DropdownMenuItem onClick={() => handleDownloadPrescriptionPDF(prescription)}>
+                                                          <Download className="mr-2 h-4 w-4" />
+                                                          Download PDF
+                                                        </DropdownMenuItem>
+                                                        {prescription.status === 'pending' && (
+                                                          <>
+                                                            <DropdownMenuSeparator />
+                                                            {prescription.invoiceStatus === 'paid' ? (
+                                                              <DropdownMenuItem
+                                                                onClick={() => {
+                                                                  const patientName = prescription.firstName && prescription.lastName
+                                                                    ? `${prescription.firstName} ${prescription.lastName}`
+                                                                    : prescription.patientNumber || 'Unknown Patient'
+                                                                  setSelectedPatientForDispense({
+                                                                    patientId: prescription.patientId,
+                                                                    patientName: patientName
+                                                                  })
+                                                                  setDispenseDialogOpen(true)
+                                                                }}
+                                                              >
+                                                                <Pill className="mr-2 h-4 w-4" />
+                                                                Dispense Medication
+                                                              </DropdownMenuItem>
+                                                            ) : (
+                                                              <DropdownMenuItem disabled title="Invoice must be paid before dispensing">
+                                                                <AlertCircle className="mr-2 h-4 w-4" />
+                                                                Invoice Not Paid
+                                                              </DropdownMenuItem>
+                                                            )}
+                                                            <DropdownMenuItem
+                                                              onClick={() => handleUpdatePrescriptionStatus(prescription.prescriptionId, 'cancelled')}
+                                                              disabled={updatingStatus === prescription.prescriptionId.toString()}
+                                                            >
+                                                              <XCircle className="mr-2 h-4 w-4" />
+                                                              {updatingStatus === prescription.prescriptionId.toString() ? 'Cancelling...' : 'Cancel'}
+                                                            </DropdownMenuItem>
+                                                          </>
+                                                        )}
+                                                      </DropdownMenuContent>
+                                                    </DropdownMenu>
+                                                  </TableCell>
+                                                </TableRow>
+                                              ))}
+                                            </TableBody>
+                                          </Table>
+                                        </div>
+                                      </AccordionContent>
+                                    </AccordionItem>
+                                  </Accordion>
+                                </TableCell>
+                              </TableRow>
+                            </React.Fragment>
+                          ))
+                        ) : (
+                          <TableRow>
+                            <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                              No prescriptions found
+                            </TableCell>
+                          </TableRow>
+                        )
+                      ) : filteredPrescriptions.length > 0 ? (
                         filteredPrescriptions.map((prescription) => (
                           <TableRow key={prescription.prescriptionId}>
                             <TableCell className="font-medium">{prescription.prescriptionNumber}</TableCell>

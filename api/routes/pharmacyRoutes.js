@@ -1295,10 +1295,6 @@ router.get('/prescriptions/paid/ready-for-dispensing', async (req, res) => {
                      WHERE i_sel.patientId = p.patientId
                      AND i_sel.status = 'paid'
                      AND di_sel.medicationId = pi.medicationId
-                     AND (
-                         i_sel.notes LIKE CONCAT('%Prescription: ', p.prescriptionNumber, '%')
-                         OR i_sel.notes LIKE CONCAT('%Drug payment%')
-                     )
                      AND di_sel.quantity > 0
                      ORDER BY i_sel.invoiceDate DESC
                      LIMIT 1),
@@ -1310,13 +1306,6 @@ router.get('/prescriptions/paid/ready-for-dispensing', async (req, res) => {
                      AND di_sel2.medicationId = pi.medicationId
                      AND di_sel2.quantity > 0
                      ORDER BY i_sel2.invoiceDate DESC
-                     LIMIT 1),
-                     AND (
-                         ii_sel.description LIKE CONCAT('%Prescription Item: ', COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, ''), '%')
-                         OR ii_sel.description LIKE CONCAT('%', COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, ''), '%')
-                         OR (ii_sel.drugInventoryId IS NOT NULL AND di_sel.medicationId = pi.medicationId)
-                     )
-                     AND di_sel.quantity > 0
                      LIMIT 1),
                     (SELECT di_fallback.drugInventoryId FROM drug_inventory di_fallback
                      WHERE di_fallback.medicationId = pi.medicationId
@@ -1335,12 +1324,6 @@ router.get('/prescriptions/paid/ready-for-dispensing', async (req, res) => {
                      AND di_sel.medicationId = pi.medicationId
                      ORDER BY i_sel.invoiceDate DESC
                      LIMIT 1),
-                     AND (
-                         ii_sel.description LIKE CONCAT('%Prescription Item: ', COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, ''), '%')
-                         OR ii_sel.description LIKE CONCAT('%', COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, ''), '%')
-                         OR (ii_sel.drugInventoryId IS NOT NULL AND di_sel.medicationId = pi.medicationId)
-                     )
-                     LIMIT 1),
                     (SELECT di_fallback.sellPrice FROM drug_inventory di_fallback
                      WHERE di_fallback.medicationId = pi.medicationId
                      AND di_fallback.quantity > 0
@@ -1357,14 +1340,6 @@ router.get('/prescriptions/paid/ready-for-dispensing', async (req, res) => {
                      AND i_sel.status = 'paid'
                      AND di_sel.medicationId = pi.medicationId
                      ORDER BY i_sel.invoiceDate DESC
-                     LIMIT 1),
-                     AND (
-                         ii_sel.description LIKE CONCAT('%Prescription Item: ', COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, ''), '%')
-                         OR ii_sel.description LIKE CONCAT('%', COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, ''), '%')
-                         OR (ii_sel.drugInventoryId IS NOT NULL AND EXISTS (
-                             SELECT 1 FROM drug_inventory di2 WHERE di2.drugInventoryId = ii_sel.drugInventoryId AND di2.medicationId = pi.medicationId
-                         ))
-                     )
                      LIMIT 1),
                     (SELECT di_fallback.sellPrice * pi.quantity FROM drug_inventory di_fallback
                      WHERE di_fallback.medicationId = pi.medicationId
@@ -1417,13 +1392,6 @@ router.get('/prescriptions/paid/ready-for-dispensing', async (req, res) => {
                      AND di_sel.medicationId = pi.medicationId
                      AND di_sel.quantity > 0
                      ORDER BY i_sel.invoiceDate DESC
-                     LIMIT 1),
-                     AND (
-                         ii_sel.description LIKE CONCAT('%Prescription Item: ', COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, ''), '%')
-                         OR ii_sel.description LIKE CONCAT('%', COALESCE(NULLIF(pi.medicationName, 'Unknown'), m.name, ''), '%')
-                         OR (ii_sel.drugInventoryId IS NOT NULL AND di_sel.medicationId = pi.medicationId)
-                     )
-                     AND di_sel.quantity > 0
                      LIMIT 1),
                     (SELECT di_fallback.quantity FROM drug_inventory di_fallback
                      WHERE di_fallback.medicationId = pi.medicationId
@@ -1500,7 +1468,6 @@ router.get('/prescriptions/paid/ready-for-dispensing', async (req, res) => {
                 AND di_check.status = 'active'
                 AND (di_check.expiryDate IS NULL OR di_check.expiryDate >= CURDATE())
             )
-            GROUP BY pi.itemId
         `;
         const params = [];
 
@@ -1512,6 +1479,7 @@ router.get('/prescriptions/paid/ready-for-dispensing', async (req, res) => {
         query += ' ORDER BY p.prescriptionDate DESC, pi.itemId ASC';
 
         const [rows] = await pool.execute(query, params);
+        console.log(`[PHARMACY DISPENSE] Main query returned ${rows.length} items for patient ${patientId || 'all'}`);
 
         // If no results with invoice_items match, try a fallback query
         if (rows.length === 0 && patientId) {
@@ -1641,7 +1609,6 @@ router.get('/prescriptions/paid/ready-for-dispensing', async (req, res) => {
                     AND di_check.status = 'active'
                     AND (di_check.expiryDate IS NULL OR di_check.expiryDate >= CURDATE())
                 )
-                GROUP BY pi.itemId
                 ORDER BY p.prescriptionDate DESC, pi.itemId ASC
             `;
 
@@ -1789,7 +1756,6 @@ router.get('/prescriptions/paid/ready-for-dispensing', async (req, res) => {
                     AND di_check.status = 'active'
                     AND (di_check.expiryDate IS NULL OR di_check.expiryDate >= CURDATE())
                 )
-                GROUP BY pi.itemId
                 ORDER BY p.prescriptionDate DESC, pi.itemId ASC
             `;
 
