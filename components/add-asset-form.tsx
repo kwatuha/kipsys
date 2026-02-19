@@ -20,6 +20,7 @@ import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, For
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { assetApi } from "@/lib/api"
@@ -43,6 +44,7 @@ const assetSchema = z.object({
   manufacturer: z.string().optional(),
   model: z.string().optional(),
   status: z.string().optional(),
+  isCritical: z.boolean().optional(),
   notes: z.string().optional(),
 })
 
@@ -73,6 +75,7 @@ export function AddAssetForm({ open, onOpenChange, onSuccess, editData }: AddAss
       manufacturer: "",
       model: "",
       status: "active",
+      isCritical: false,
       notes: "",
     },
   })
@@ -95,6 +98,7 @@ export function AddAssetForm({ open, onOpenChange, onSuccess, editData }: AddAss
           manufacturer: editData.manufacturer || "",
           model: editData.model || "",
           status: editData.status || "active",
+          isCritical: editData.isCritical || false,
           notes: editData.notes || "",
         })
       } else {
@@ -112,6 +116,7 @@ export function AddAssetForm({ open, onOpenChange, onSuccess, editData }: AddAss
           manufacturer: "",
           model: "",
           status: "active",
+          isCritical: false,
           notes: "",
         })
       }
@@ -136,6 +141,7 @@ export function AddAssetForm({ open, onOpenChange, onSuccess, editData }: AddAss
         manufacturer: data.manufacturer || undefined,
         model: data.model || undefined,
         status: data.status || "active",
+        isCritical: data.isCritical || false,
         notes: data.notes || undefined,
       }
 
@@ -431,6 +437,27 @@ export function AddAssetForm({ open, onOpenChange, onSuccess, editData }: AddAss
                   </FormControl>
                   <FormDescription>Optional</FormDescription>
                   <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="isCritical"
+              render={({ field }) => (
+                <FormItem className="flex flex-row items-start space-x-3 space-y-0 rounded-md border p-4">
+                  <FormControl>
+                    <Checkbox
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                  <div className="space-y-1 leading-none">
+                    <FormLabel>Critical Asset</FormLabel>
+                    <FormDescription>
+                      Mark this asset as critical. Critical assets require daily presence verification before hospital close.
+                    </FormDescription>
+                  </div>
                 </FormItem>
               )}
             />

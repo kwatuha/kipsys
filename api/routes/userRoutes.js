@@ -10,7 +10,9 @@ const bcrypt = require('bcryptjs');
  */
 router.get('/', async (req, res) => {
     try {
-        const { search, limit = 50 } = req.query;
+        const { search, limit = 50, page } = req.query;
+        const limitNum = parseInt(limit) || 50;
+        const offset = page ? (parseInt(page) - 1) * limitNum : 0;
 
         let query = `
             SELECT
@@ -35,8 +37,7 @@ router.get('/', async (req, res) => {
             params.push(searchTerm, searchTerm, searchTerm, searchTerm, searchTerm);
         }
 
-        query += ` ORDER BY u.lastName, u.firstName LIMIT ?`;
-        params.push(parseInt(limit));
+        query += ` ORDER BY u.lastName, u.firstName LIMIT ${limitNum} OFFSET ${offset}`;
 
         const [rows] = await pool.execute(query, params);
         res.status(200).json(rows);

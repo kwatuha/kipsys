@@ -89,6 +89,8 @@ services:
     environment:
       NODE_ENV: production
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
+      # Base URL for QR codes and absolute links (e.g., http://41.89.173.8 or https://yourdomain.com)
+      NEXT_PUBLIC_BASE_URL: ${NEXT_PUBLIC_BASE_URL:-}
       HOSTNAME: "0.0.0.0"
     depends_on:
       api:

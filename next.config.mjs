@@ -59,6 +59,12 @@ const nextConfig = {
       };
     }
 
+    // Ensure qrcode.react is resolved correctly
+    config.resolve.extensionAlias = {
+      '.js': ['.js', '.ts', '.tsx'],
+      '.jsx': ['.jsx', '.tsx'],
+    };
+
     return config;
   },
 }

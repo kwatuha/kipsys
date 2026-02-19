@@ -896,6 +896,7 @@ export default function ICUPage() {
           setEditingAdmission(null)
         }}
         admission={editingAdmission}
+        admissionType="icu"
       />
 
       <AlertDialog open={!!deletingAdmission} onOpenChange={(open) => !open && setDeletingAdmission(null)}>

@@ -25,22 +25,27 @@ API_BASE_URL=http://41.89.173.8:8081
 # If left empty, the frontend will use relative URLs (recommended for nginx setup)
 NEXT_PUBLIC_API_URL=http://41.89.173.8:8081
 
+# Base URL for QR codes and absolute links
+# Set this to your public domain (e.g., http://41.89.173.8 or https://yourdomain.com)
+# If left empty, will use window.location.origin (works but less optimal for printed QR codes)
+NEXT_PUBLIC_BASE_URL=http://41.89.173.8
+
 # Nginx Configuration
 NGINX_PORT=8081
 ```
 
 ## Important Notes
 
-1. **NEXT_PUBLIC_API_URL**: 
+1. **NEXT_PUBLIC_API_URL**:
    - If set to `http://41.89.173.8:8081`, API calls will use this absolute URL
    - If left empty (recommended), the frontend will use relative URLs (`/api/...`) which work through nginx
    - The code is configured to use relative URLs by default when this is not set
 
-2. **API_BASE_URL**: 
+2. **API_BASE_URL**:
    - Used for internal API-to-API communication
    - Should use the internal Docker network name: `http://kiplombe_api:3001`
 
-3. **JWT_SECRET**: 
+3. **JWT_SECRET**:
    - **CHANGE THIS** to a secure random string in production
    - Generate with: `openssl rand -base64 32`
 

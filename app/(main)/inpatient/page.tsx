@@ -1085,6 +1085,7 @@ export default function InpatientPage() {
       <AddAdmissionForm
         open={showAdmissionForm}
         onOpenChange={setShowAdmissionForm}
+        admissionType="inpatient"
         onSuccess={() => {
           loadAdmissions()
           loadBeds()

@@ -1578,6 +1578,111 @@ export const assetApi = {
 
   getStats: () =>
     apiRequest<any>('/api/assets/stats/summary'),
+
+  // Critical Assets
+  getCriticalAssets: () =>
+    apiRequest<any[]>('/api/assets/critical/list'),
+
+  getVerificationHistory: (assetId?: string, startDate?: string, endDate?: string) => {
+    const params = new URLSearchParams();
+    if (assetId) params.append('assetId', assetId);
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    return apiRequest<any[]>(`/api/assets/critical/verification-history?${params.toString()}`);
+  },
+
+  createDailyLog: (data: any) =>
+    apiRequest<any>('/api/assets/critical/daily-log', { method: 'POST', body: data }),
+
+  bulkVerify: (data: any) =>
+    apiRequest<any>('/api/assets/critical/bulk-verify', { method: 'POST', body: data }),
+
+  getCriticalStats: (startDate?: string, endDate?: string) => {
+    const params = new URLSearchParams();
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    return apiRequest<any>(`/api/assets/critical/stats?${params.toString()}`);
+  },
+
+  // Maintenance Records
+  getMaintenanceByAsset: (assetId: string, status?: string, type?: string, startDate?: string, endDate?: string) => {
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    if (type) params.append('type', type);
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    return apiRequest<any[]>(`/api/assets/${assetId}/maintenance?${params.toString()}`);
+  },
+
+  getUpcomingMaintenance: (days?: number) => {
+    const params = new URLSearchParams();
+    if (days) params.append('days', days.toString());
+    return apiRequest<any[]>(`/api/assets/maintenance/upcoming?${params.toString()}`);
+  },
+
+  getMaintenanceHistory: (assetId?: string, startDate?: string, endDate?: string, status?: string, type?: string) => {
+    const params = new URLSearchParams();
+    if (assetId) params.append('assetId', assetId);
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    if (status) params.append('status', status);
+    if (type) params.append('type', type);
+    return apiRequest<any[]>(`/api/assets/maintenance/history?${params.toString()}`);
+  },
+
+  createMaintenance: (data: any) =>
+    apiRequest<any>('/api/assets/maintenance', { method: 'POST', body: data }),
+
+  updateMaintenance: (id: string, data: any) =>
+    apiRequest<any>(`/api/assets/maintenance/${id}`, { method: 'PUT', body: data }),
+
+  deleteMaintenance: (id: string) =>
+    apiRequest<any>(`/api/assets/maintenance/${id}`, { method: 'DELETE' }),
+
+  getMaintenanceStats: () =>
+    apiRequest<any>('/api/assets/maintenance/stats'),
+
+  completeMaintenance: (id: string, data: any) =>
+    apiRequest<any>(`/api/assets/maintenance/${id}/complete`, { method: 'POST', body: data }),
+
+  // Asset Assignments
+  getAssignmentsByAsset: (assetId: string, status?: string) => {
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    return apiRequest<any[]>(`/api/assets/${assetId}/assignments?${params.toString()}`);
+  },
+
+  getCurrentAssignments: (userId?: string, department?: string) => {
+    const params = new URLSearchParams();
+    if (userId) params.append('userId', userId);
+    if (department) params.append('department', department);
+    return apiRequest<any[]>(`/api/assets/assignments/current?${params.toString()}`);
+  },
+
+  getAssignmentHistory: (assetId?: string, userId?: string, status?: string, startDate?: string, endDate?: string) => {
+    const params = new URLSearchParams();
+    if (assetId) params.append('assetId', assetId);
+    if (userId) params.append('userId', userId);
+    if (status) params.append('status', status);
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    return apiRequest<any[]>(`/api/assets/assignments/history?${params.toString()}`);
+  },
+
+  createAssignment: (data: any) =>
+    apiRequest<any>('/api/assets/assignments', { method: 'POST', body: data }),
+
+  updateAssignment: (id: string, data: any) =>
+    apiRequest<any>(`/api/assets/assignments/${id}`, { method: 'PUT', body: data }),
+
+  returnAssignment: (id: string, data: any) =>
+    apiRequest<any>(`/api/assets/assignments/${id}/return`, { method: 'POST', body: data }),
+
+  deleteAssignment: (id: string) =>
+    apiRequest<any>(`/api/assets/assignments/${id}`, { method: 'DELETE' }),
+
+  getAssignmentStats: () =>
+    apiRequest<any>('/api/assets/assignments/stats'),
 };
 
 // Insurance Management API

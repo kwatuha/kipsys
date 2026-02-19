@@ -19,48 +19,83 @@ import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "@/components/ui/use-toast"
 import { PatientCombobox } from "@/components/patient-combobox"
-import { patientApi, icuApi, doctorsApi } from "@/lib/api"
+import { patientApi, icuApi, doctorsApi, inpatientApi } from "@/lib/api"
 import { Loader2 } from "lucide-react"
 
-// Create a dynamic schema that makes doctorId optional when editing
-const createFormSchema = (isEditing: boolean) => z.object({
-  patientId: z.string().min(1, { message: "Patient is required" }),
-  patientName: z.string().optional(),
-  admissionDate: z.string().min(1, { message: "Admission date is required" }),
-  admissionTime: z.string().min(1, { message: "Admission time is required" }),
-  diagnosis: z.string().min(1, { message: "Diagnosis is required" }),
-  doctorId: isEditing 
-    ? z.string().optional() // Optional when editing since it can't be changed
-    : z.string().min(1, { message: "Doctor is required" }),
-  icuBedId: z.string().min(1, { message: "ICU Bed is required" }),
-  admissionNotes: z.string().optional(),
-  admissionType: z.string().min(1, { message: "Admission type is required" }),
-  requiresVentilator: z.string().min(1, { message: "Please specify if ventilator is required" }),
-})
+// Create a dynamic schema based on admission type
+const createFormSchema = (isEditing: boolean, admissionType: "inpatient" | "icu" = "icu") => {
+  const baseSchema = {
+    patientId: z.string().min(1, { message: "Patient is required" }),
+    patientName: z.string().optional(),
+    admissionDate: z.string().min(1, { message: "Admission date is required" }),
+    admissionTime: z.string().min(1, { message: "Admission time is required" }),
+    diagnosis: z.string().min(1, { message: "Diagnosis is required" }),
+    doctorId: isEditing
+      ? z.string().optional() // Optional when editing since it can't be changed
+      : z.string().min(1, { message: "Doctor is required" }),
+    admissionNotes: z.string().optional(),
+  }
 
-export function AddAdmissionForm({ open, onOpenChange, onSuccess, admission }) {
+  if (admissionType === "icu") {
+    return z.object({
+      ...baseSchema,
+      icuBedId: z.string().min(1, { message: "ICU Bed is required" }),
+      icuAdmissionType: z.string().min(1, { message: "Admission type is required" }),
+      requiresVentilator: z.string().min(1, { message: "Please specify if ventilator is required" }),
+    })
+  } else {
+    // Inpatient schema
+    return z.object({
+      ...baseSchema,
+      bedId: z.string().min(1, { message: "Bed is required" }),
+      expectedDischargeDate: z.string().optional(),
+    })
+  }
+}
+
+export function AddAdmissionForm({ open, onOpenChange, onSuccess, admission, admissionType = "icu" }: { open: boolean; onOpenChange: (open: boolean) => void; onSuccess?: () => void; admission?: any; admissionType?: "inpatient" | "icu" }) {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [loading, setLoading] = useState(false)
   const [doctors, setDoctors] = useState<any[]>([])
   const [icuBeds, setIcuBeds] = useState<any[]>([])
+  const [beds, setBeds] = useState<any[]>([])
   const [error, setError] = useState<string | null>(null)
   const [isMounted, setIsMounted] = useState(false)
   const isEditing = !!admission
+  const isICU = admissionType === "icu"
+
+  const getDefaultValues = () => {
+    if (isICU) {
+      return {
+        patientId: "",
+        patientName: "",
+        admissionDate: "",
+        admissionTime: "",
+        diagnosis: "",
+        doctorId: "",
+        icuBedId: "",
+        admissionNotes: "",
+        icuAdmissionType: "",
+        requiresVentilator: "",
+      }
+    } else {
+      return {
+        patientId: "",
+        patientName: "",
+        admissionDate: "",
+        admissionTime: "",
+        diagnosis: "",
+        doctorId: "",
+        bedId: "",
+        admissionNotes: "",
+        expectedDischargeDate: "",
+      }
+    }
+  }
 
   const form = useForm({
-    resolver: zodResolver(createFormSchema(isEditing)),
-    defaultValues: {
-      patientId: "",
-      patientName: "",
-      admissionDate: "",
-      admissionTime: "",
-      diagnosis: "",
-      doctorId: "",
-      icuBedId: "",
-      admissionNotes: "",
-      admissionType: "",
-      requiresVentilator: "",
-    },
+    resolver: zodResolver(createFormSchema(isEditing, admissionType)),
+    defaultValues: getDefaultValues(),
   })
 
   // Set mounted state to avoid hydration mismatch
@@ -73,45 +108,59 @@ export function AddAdmissionForm({ open, onOpenChange, onSuccess, admission }) {
 
   // Set form values when editing and data is loaded
   useEffect(() => {
-    if (admission && !loading && doctors.length > 0 && icuBeds.length > 0 && open && isMounted) {
+    const bedsLoaded = isICU ? icuBeds.length > 0 : beds.length > 0
+    if (admission && !loading && doctors.length > 0 && bedsLoaded && open && isMounted) {
       const admissionDate = new Date(admission.admissionDate)
       const doctorId = admission.admittingDoctorId?.toString() || admission.doctorUserId?.toString() || ""
-      const icuBedId = admission.icuBedId?.toString() || ""
-      
+      const bedId = isICU
+        ? (admission.icuBedId?.toString() || admission.bedId?.toString() || "")
+        : (admission.bedId?.toString() || "")
+
       console.log("Setting form values - data loaded:", {
         doctorId,
-        icuBedId,
+        bedId,
         doctorsAvailable: doctors.length,
-        bedsAvailable: icuBeds.length,
+        bedsAvailable: isICU ? icuBeds.length : beds.length,
         admission,
+        isICU,
       })
-      
+
       // Use form.reset to set all values at once
-      form.reset({
+      const formValues: any = {
         patientId: admission.patientId?.toString() || "",
-        patientName: admission.firstName && admission.lastName 
-          ? `${admission.firstName} ${admission.lastName}` 
+        patientName: admission.firstName && admission.lastName
+          ? `${admission.firstName} ${admission.lastName}`
           : "",
         admissionDate: admissionDate.toISOString().split("T")[0],
         admissionTime: admissionDate.toTimeString().split(" ")[0].substring(0, 5),
-        diagnosis: admission.admissionReason || "",
+        diagnosis: admission.admissionDiagnosis || admission.admissionReason || "",
         doctorId: doctorId,
-        icuBedId: icuBedId,
         admissionNotes: admission.notes || "",
-        admissionType: admission.initialCondition || "",
-        requiresVentilator: admission.ventilator || "no",
-      })
-      
+      }
+
+      if (isICU) {
+        formValues.icuBedId = bedId
+        formValues.icuAdmissionType = admission.initialCondition || ""
+        formValues.requiresVentilator = admission.ventilator || "no"
+      } else {
+        formValues.bedId = bedId
+        formValues.expectedDischargeDate = admission.expectedDischargeDate
+          ? new Date(admission.expectedDischargeDate).toISOString().split("T")[0]
+          : ""
+      }
+
+      form.reset(formValues)
+
       // Also explicitly set the Select values to ensure they're selected
       if (doctorId) {
         setTimeout(() => form.setValue("doctorId", doctorId), 0)
       }
-      if (icuBedId) {
-        setTimeout(() => form.setValue("icuBedId", icuBedId), 0)
+      if (bedId) {
+        setTimeout(() => form.setValue(isICU ? "icuBedId" : "bedId", bedId), 0)
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [admission, loading, doctors.length, icuBeds.length, open, isMounted])
+  }, [admission, loading, doctors.length, icuBeds.length, beds.length, open, isMounted, isICU])
 
   // Load patient name when patientId changes
   useEffect(() => {
@@ -135,7 +184,7 @@ export function AddAdmissionForm({ open, onOpenChange, onSuccess, admission }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [patientId])
 
-  // Load doctors and ICU beds when dialog opens, and set dates client-side only
+  // Load doctors and beds when dialog opens, and set dates client-side only
   useEffect(() => {
     if (open && isMounted) {
       loadFormData()
@@ -143,35 +192,17 @@ export function AddAdmissionForm({ open, onOpenChange, onSuccess, admission }) {
         // New admission mode - set dates client-side only to avoid hydration mismatch
         const now = new Date()
         form.reset({
-          patientId: "",
-          patientName: "",
+          ...getDefaultValues(),
           admissionDate: now.toISOString().split("T")[0],
           admissionTime: now.toTimeString().split(" ")[0].substring(0, 5),
-          diagnosis: "",
-          doctorId: "",
-          icuBedId: "",
-          admissionNotes: "",
-          admissionType: "",
-          requiresVentilator: "",
         })
       }
     } else if (!open) {
       // Reset form when dialog closes
-      form.reset({
-        patientId: "",
-        patientName: "",
-        admissionDate: "",
-        admissionTime: "",
-        diagnosis: "",
-        doctorId: "",
-        icuBedId: "",
-        admissionNotes: "",
-        admissionType: "",
-        requiresVentilator: "",
-      })
+      form.reset(getDefaultValues())
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, isMounted])
+  }, [open, isMounted, admissionType])
 
   const loadFormData = async () => {
     try {
@@ -180,31 +211,62 @@ export function AddAdmissionForm({ open, onOpenChange, onSuccess, admission }) {
 
       // When editing, load all beds; when creating, load only available beds
       const bedsStatus = isEditing ? undefined : "available"
-      const [doctorsResult, bedsResult] = await Promise.allSettled([
-        doctorsApi.getAll(),
-        icuApi.getBeds(bedsStatus, 1, 100),
-      ])
 
-      if (doctorsResult.status === "fulfilled") {
-        setDoctors(doctorsResult.value || [])
-      } else {
-        console.error("Error loading doctors:", doctorsResult.reason)
-        toast({
-          title: "Error loading doctors",
-          description: doctorsResult.reason?.message || "Failed to load doctors",
-          variant: "destructive",
-        })
-      }
+      if (isICU) {
+        const [doctorsResult, bedsResult] = await Promise.allSettled([
+          doctorsApi.getAll(),
+          icuApi.getBeds(bedsStatus, 1, 100),
+        ])
 
-      if (bedsResult.status === "fulfilled") {
-        setIcuBeds(bedsResult.value || [])
+        if (doctorsResult.status === "fulfilled") {
+          setDoctors(doctorsResult.value || [])
+        } else {
+          console.error("Error loading doctors:", doctorsResult.reason)
+          toast({
+            title: "Error loading doctors",
+            description: doctorsResult.reason?.message || "Failed to load doctors",
+            variant: "destructive",
+          })
+        }
+
+        if (bedsResult.status === "fulfilled") {
+          setIcuBeds(bedsResult.value || [])
+        } else {
+          console.error("Error loading ICU beds:", bedsResult.reason)
+          toast({
+            title: "Error loading ICU beds",
+            description: bedsResult.reason?.message || "Failed to load ICU beds",
+            variant: "destructive",
+          })
+        }
       } else {
-        console.error("Error loading ICU beds:", bedsResult.reason)
-        toast({
-          title: "Error loading ICU beds",
-          description: bedsResult.reason?.message || "Failed to load ICU beds",
-          variant: "destructive",
-        })
+        // Inpatient
+        const [doctorsResult, bedsResult] = await Promise.allSettled([
+          doctorsApi.getAll(),
+          inpatientApi.getBeds(undefined, bedsStatus, 1, 100),
+        ])
+
+        if (doctorsResult.status === "fulfilled") {
+          setDoctors(doctorsResult.value || [])
+        } else {
+          console.error("Error loading doctors:", doctorsResult.reason)
+          toast({
+            title: "Error loading doctors",
+            description: doctorsResult.reason?.message || "Failed to load doctors",
+            variant: "destructive",
+          })
+        }
+
+        if (bedsResult.status === "fulfilled") {
+          setBeds(bedsResult.value || [])
+        } else {
+          console.error("Error loading beds:", bedsResult.reason)
+          toast({
+            title: "Error loading beds",
+            description: bedsResult.reason?.message || "Failed to load beds",
+            variant: "destructive",
+          })
+        }
       }
 
       // Form values will be set by the useEffect hook after data loads
@@ -222,7 +284,8 @@ export function AddAdmissionForm({ open, onOpenChange, onSuccess, admission }) {
       setError(null)
 
       // Validate required fields
-      if (!values.patientId || !values.icuBedId) {
+      const bedId = isICU ? values.icuBedId : values.bedId
+      if (!values.patientId || !bedId) {
         throw new Error("Please fill in all required fields")
       }
 
@@ -233,8 +296,8 @@ export function AddAdmissionForm({ open, onOpenChange, onSuccess, admission }) {
 
       // Parse and validate IDs
       const patientId = parseInt(values.patientId)
-      const icuBedId = parseInt(values.icuBedId)
-      
+      const parsedBedId = parseInt(bedId)
+
       // When editing, doctorId is optional since it can't be changed
       // We'll use the existing doctorId from the admission
       let admittingDoctorId: number | undefined
@@ -249,10 +312,10 @@ export function AddAdmissionForm({ open, onOpenChange, onSuccess, admission }) {
         admittingDoctorId = parseInt(values.doctorId)
       }
 
-      if (isNaN(patientId) || isNaN(icuBedId)) {
+      if (isNaN(patientId) || isNaN(parsedBedId)) {
         throw new Error("Invalid patient or bed ID")
       }
-      
+
       if (admittingDoctorId && isNaN(admittingDoctorId)) {
         throw new Error("Invalid doctor ID")
       }
@@ -269,7 +332,7 @@ export function AddAdmissionForm({ open, onOpenChange, onSuccess, admission }) {
       // The admissions table expects DATETIME, not just DATE
       let admissionDate = values.admissionDate
       let admissionTime = values.admissionTime || "00:00"
-      
+
       if (!admissionDate) {
         const now = new Date()
         admissionDate = now.toISOString().split("T")[0]
@@ -283,77 +346,123 @@ export function AddAdmissionForm({ open, onOpenChange, onSuccess, admission }) {
           throw new Error("Invalid date format. Please use YYYY-MM-DD format.")
         }
       }
-      
+
       // Combine date and time into DATETIME format (YYYY-MM-DD HH:MM:SS)
       // Ensure time is in HH:MM format, then add :00 for seconds
       const timeParts = admissionTime.split(":")
       const normalizedTime = `${timeParts[0]}:${timeParts[1] || "00"}:00`
       const admissionDateTime = `${admissionDate} ${normalizedTime}`
 
-      // Prepare API payload - ensure all values are properly typed
-      // Backend expects: patientId, icuBedId, admissionDate (DATETIME), admittingDoctorId, admissionReason, initialCondition, status, notes
-      const payload = {
-        patientId: Number(patientId),
-        icuBedId: Number(icuBedId),
-        admissionDate: admissionDateTime, // DATETIME format: YYYY-MM-DD HH:MM:SS
-        admittingDoctorId: admittingDoctorId ? Number(admittingDoctorId) : undefined,
-        admissionReason: toNullIfEmpty(values.diagnosis),
-        initialCondition: toNullIfEmpty(values.admissionType),
-        status: "critical", // Default status
-        notes: toNullIfEmpty(values.admissionNotes),
-      }
-
-      // Validate all required numeric fields
-      if (!Number.isInteger(payload.patientId) || payload.patientId <= 0) {
-        throw new Error("Invalid patient ID")
-      }
-      if (!Number.isInteger(payload.icuBedId) || payload.icuBedId <= 0) {
-        throw new Error("Invalid ICU bed ID")
-      }
-      // Doctor ID validation only when creating (not editing)
-      if (!isEditing && (!payload.admittingDoctorId || !Number.isInteger(payload.admittingDoctorId) || payload.admittingDoctorId <= 0)) {
-        throw new Error("Invalid doctor ID")
-      }
-
-      console.log("Submitting ICU admission payload:", JSON.stringify(payload, null, 2))
-      console.log("Payload types:", {
-        patientId: typeof payload.patientId,
-        icuBedId: typeof payload.icuBedId,
-        admissionDate: typeof payload.admissionDate,
-        admittingDoctorId: typeof payload.admittingDoctorId,
-        admissionReason: typeof payload.admissionReason,
-        initialCondition: typeof payload.initialCondition,
-        status: typeof payload.status,
-        notes: typeof payload.notes,
-      })
-
-      try {
-        if (isEditing && admission?.icuAdmissionId) {
-          // For updates, only send fields that can be updated (not patientId, admissionDate, admittingDoctorId)
-          const updatePayload = {
-            icuBedId: Number(icuBedId),
-            admissionReason: toNullIfEmpty(values.diagnosis),
-            initialCondition: toNullIfEmpty(values.admissionType),
-            status: "critical", // Default status
-            notes: toNullIfEmpty(values.admissionNotes),
-          }
-          await icuApi.updateAdmission(admission.icuAdmissionId.toString(), updatePayload)
-          toast({
-            title: "Admission updated",
-            description: `ICU admission has been updated successfully.`,
-          })
-        } else {
-          await icuApi.createAdmission(payload)
-          toast({
-            title: "Admission created",
-            description: `Patient ${values.patientName || "selected patient"} has been admitted to ICU.`,
-          })
+      if (isICU) {
+        // Prepare ICU API payload
+        const payload = {
+          patientId: Number(patientId),
+          icuBedId: Number(parsedBedId),
+          admissionDate: admissionDateTime, // DATETIME format: YYYY-MM-DD HH:MM:SS
+          admittingDoctorId: admittingDoctorId ? Number(admittingDoctorId) : undefined,
+          admissionReason: toNullIfEmpty(values.diagnosis),
+          initialCondition: toNullIfEmpty(values.icuAdmissionType),
+          status: "critical", // Default status
+          notes: toNullIfEmpty(values.admissionNotes),
         }
-      } catch (apiError: any) {
-        console.error("API Error caught:", apiError)
-        console.error("API Error response:", apiError?.response)
-        console.error("API Error message:", apiError?.message)
-        throw apiError // Re-throw to be caught by outer catch
+
+        // Validate all required numeric fields
+        if (!Number.isInteger(payload.patientId) || payload.patientId <= 0) {
+          throw new Error("Invalid patient ID")
+        }
+        if (!Number.isInteger(payload.icuBedId) || payload.icuBedId <= 0) {
+          throw new Error("Invalid ICU bed ID")
+        }
+        // Doctor ID validation only when creating (not editing)
+        if (!isEditing && (!payload.admittingDoctorId || !Number.isInteger(payload.admittingDoctorId) || payload.admittingDoctorId <= 0)) {
+          throw new Error("Invalid doctor ID")
+        }
+
+        console.log("Submitting ICU admission payload:", JSON.stringify(payload, null, 2))
+
+        try {
+          if (isEditing && admission?.icuAdmissionId) {
+            // For updates, only send fields that can be updated (not patientId, admissionDate, admittingDoctorId)
+            const updatePayload = {
+              icuBedId: Number(parsedBedId),
+              admissionReason: toNullIfEmpty(values.diagnosis),
+              initialCondition: toNullIfEmpty(values.icuAdmissionType),
+              status: "critical", // Default status
+              notes: toNullIfEmpty(values.admissionNotes),
+            }
+            await icuApi.updateAdmission(admission.icuAdmissionId.toString(), updatePayload)
+            toast({
+              title: "Admission updated",
+              description: `ICU admission has been updated successfully.`,
+            })
+          } else {
+            await icuApi.createAdmission(payload)
+            toast({
+              title: "Admission created",
+              description: `Patient ${values.patientName || "selected patient"} has been admitted to ICU.`,
+            })
+          }
+        } catch (apiError: any) {
+          console.error("API Error caught:", apiError)
+          console.error("API Error response:", apiError?.response)
+          console.error("API Error message:", apiError?.message)
+          throw apiError // Re-throw to be caught by outer catch
+        }
+      } else {
+        // Prepare Inpatient API payload
+        const payload = {
+          patientId: Number(patientId),
+          bedId: Number(parsedBedId),
+          admissionDate: admissionDateTime, // DATETIME format: YYYY-MM-DD HH:MM:SS
+          admittingDoctorId: admittingDoctorId ? Number(admittingDoctorId) : undefined,
+          admissionDiagnosis: toNullIfEmpty(values.diagnosis),
+          admissionReason: toNullIfEmpty(values.diagnosis),
+          expectedDischargeDate: values.expectedDischargeDate || null,
+          notes: toNullIfEmpty(values.admissionNotes),
+        }
+
+        // Validate all required numeric fields
+        if (!Number.isInteger(payload.patientId) || payload.patientId <= 0) {
+          throw new Error("Invalid patient ID")
+        }
+        if (!Number.isInteger(payload.bedId) || payload.bedId <= 0) {
+          throw new Error("Invalid bed ID")
+        }
+        // Doctor ID validation only when creating (not editing)
+        if (!isEditing && (!payload.admittingDoctorId || !Number.isInteger(payload.admittingDoctorId) || payload.admittingDoctorId <= 0)) {
+          throw new Error("Invalid doctor ID")
+        }
+
+        console.log("Submitting Inpatient admission payload:", JSON.stringify(payload, null, 2))
+
+        try {
+          if (isEditing && admission?.admissionId) {
+            // For updates
+            const updatePayload = {
+              bedId: Number(parsedBedId),
+              admissionDiagnosis: toNullIfEmpty(values.diagnosis),
+              admissionReason: toNullIfEmpty(values.diagnosis),
+              expectedDischargeDate: values.expectedDischargeDate || null,
+              notes: toNullIfEmpty(values.admissionNotes),
+            }
+            await inpatientApi.updateAdmission(admission.admissionId.toString(), updatePayload)
+            toast({
+              title: "Admission updated",
+              description: `Inpatient admission has been updated successfully.`,
+            })
+          } else {
+            await inpatientApi.createAdmission(payload)
+            toast({
+              title: "Admission created",
+              description: `Patient ${values.patientName || "selected patient"} has been admitted.`,
+            })
+          }
+        } catch (apiError: any) {
+          console.error("API Error caught:", apiError)
+          console.error("API Error response:", apiError?.response)
+          console.error("API Error message:", apiError?.message)
+          throw apiError // Re-throw to be caught by outer catch
+        }
       }
 
       form.reset()
@@ -365,8 +474,8 @@ export function AddAdmissionForm({ open, onOpenChange, onSuccess, admission }) {
     } catch (err: any) {
       // Extract error message from API response
       // Check for nested error object from backend
-      let errorMessage = "Failed to create ICU admission"
-      
+      let errorMessage = `Failed to ${isEditing ? "update" : "create"} ${isICU ? "ICU" : "inpatient"} admission`
+
       if (err?.response?.error) {
         // Backend returned { message: "...", error: "..." }
         errorMessage = err.response.error
@@ -377,7 +486,7 @@ export function AddAdmissionForm({ open, onOpenChange, onSuccess, admission }) {
       } else if (err?.error) {
         errorMessage = err.error
       }
-      
+
       setError(errorMessage)
       toast({
         title: isEditing ? "Error updating admission" : "Error creating admission",
@@ -401,11 +510,11 @@ export function AddAdmissionForm({ open, onOpenChange, onSuccess, admission }) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[600px]">
         <DialogHeader>
-          <DialogTitle>{isEditing ? "Edit ICU Admission" : "New ICU Admission"}</DialogTitle>
+          <DialogTitle>{isEditing ? `Edit ${isICU ? "ICU" : "Inpatient"} Admission` : `New ${isICU ? "ICU" : "Inpatient"} Admission`}</DialogTitle>
           <DialogDescription>
-            {isEditing 
-              ? "Update the details for this ICU admission. Click save when you're done."
-              : "Enter the details for a new ICU admission. Click save when you're done."}
+            {isEditing
+              ? `Update the details for this ${isICU ? "ICU" : "inpatient"} admission. Click save when you're done.`
+              : `Enter the details for a new ${isICU ? "ICU" : "inpatient"} admission. Click save when you're done.`}
           </DialogDescription>
         </DialogHeader>
         {error && (
@@ -525,79 +634,124 @@ export function AddAdmissionForm({ open, onOpenChange, onSuccess, admission }) {
                   </FormItem>
                 )}
               />
-              <FormField
-                control={form.control}
-                name="icuBedId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>ICU Bed</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value || ""}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select bed" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {icuBeds.map((bed) => (
-                          <SelectItem key={bed.icuBedId} value={bed.icuBedId.toString()}>
-                            {bed.bedNumber} ({bed.status === "available" ? "Available" : bed.status})
-                            {bed.equipmentList && ` - ${bed.equipmentList}`}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+              {isICU ? (
+                <FormField
+                  control={form.control}
+                  name="icuBedId"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>ICU Bed</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value || ""}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select bed" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {icuBeds.map((bed) => (
+                            <SelectItem key={bed.icuBedId} value={bed.icuBedId.toString()}>
+                              {bed.bedNumber} ({bed.status === "available" ? "Available" : bed.status})
+                              {bed.equipmentList && ` - ${bed.equipmentList}`}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              ) : (
+                <FormField
+                  control={form.control}
+                  name="bedId"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Bed</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value || ""}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select bed" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {beds.map((bed) => (
+                            <SelectItem key={bed.bedId} value={bed.bedId.toString()}>
+                              {bed.bedNumber} - {bed.wardName} ({bed.status === "available" ? "Available" : bed.status})
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            {isICU && (
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="icuAdmissionType"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Admission Type</FormLabel>
+                      <Select onValueChange={field.onChange} defaultValue={field.value}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select type" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="emergency">Emergency</SelectItem>
+                          <SelectItem value="scheduled">Scheduled</SelectItem>
+                          <SelectItem value="transfer">Transfer from Ward</SelectItem>
+                          <SelectItem value="post-op">Post-Operative</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="requiresVentilator"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Requires Ventilator</FormLabel>
+                      <Select onValueChange={field.onChange} defaultValue={field.value}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select option" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="yes">Yes</SelectItem>
+                          <SelectItem value="no">No</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+            )}
+
+            {!isICU && (
               <FormField
                 control={form.control}
-                name="admissionType"
+                name="expectedDischargeDate"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Admission Type</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select type" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value="emergency">Emergency</SelectItem>
-                        <SelectItem value="scheduled">Scheduled</SelectItem>
-                        <SelectItem value="transfer">Transfer from Ward</SelectItem>
-                        <SelectItem value="post-op">Post-Operative</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <FormLabel>Expected Discharge Date (Optional)</FormLabel>
+                    <FormControl>
+                      <Input type="date" {...field} />
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
-              <FormField
-                control={form.control}
-                name="requiresVentilator"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Requires Ventilator</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select option" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value="yes">Yes</SelectItem>
-                        <SelectItem value="no">No</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </div>
+            )}
 
             <FormField
               control={form.control}

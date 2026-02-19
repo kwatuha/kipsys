@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
-import { Search, Plus, Download, Loader2, MoreVertical, Eye, Edit, Trash2 } from "lucide-react"
+import { Search, Plus, Download, Loader2, MoreVertical, Eye, Edit, Trash2, ClipboardCheck, AlertTriangle, CheckCircle2, XCircle } from "lucide-react"
 import { Pie, PieChart, Cell, ResponsiveContainer, Tooltip, Legend } from "recharts"
 import { assetApi } from "@/lib/api"
 import { toast } from "@/components/ui/use-toast"
@@ -37,6 +37,10 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { AddAssetForm } from "@/components/add-asset-form"
+import { CriticalAssetsDailyLog } from "@/components/critical-assets-daily-log"
+import { AssetQRLabels } from "@/components/asset-qr-labels"
+import { MaintenanceRecordsList } from "@/components/maintenance-records-list"
+import { AssetAssignmentsList } from "@/components/asset-assignments-list"
 import { format } from "date-fns"
 
 export default function FixedAssetsPage() {
@@ -55,6 +59,10 @@ export default function FixedAssetsPage() {
   const [editingAsset, setEditingAsset] = useState<any>(null)
   const [stats, setStats] = useState<any>(null)
   const [statsLoading, setStatsLoading] = useState(true)
+  const [criticalAssets, setCriticalAssets] = useState<any[]>([])
+  const [criticalStats, setCriticalStats] = useState<any>(null)
+  const [criticalLoading, setCriticalLoading] = useState(false)
+  const [dailyLogOpen, setDailyLogOpen] = useState(false)
 
   useEffect(() => {
     setIsMounted(true)
@@ -64,8 +72,37 @@ export default function FixedAssetsPage() {
     if (isMounted) {
       loadAssets()
       loadStats()
+      loadCriticalAssets()
+      loadCriticalStats()
     }
   }, [isMounted, statusFilter, categoryFilter])
+
+  const loadCriticalAssets = async () => {
+    try {
+      setCriticalLoading(true)
+      const data = await assetApi.getCriticalAssets()
+      setCriticalAssets(data || [])
+    } catch (error: any) {
+      console.error("Error loading critical assets:", error)
+      toast({
+        title: "Error",
+        description: error.message || "Failed to load critical assets",
+        variant: "destructive",
+      })
+    } finally {
+      setCriticalLoading(false)
+    }
+  }
+
+  const loadCriticalStats = async () => {
+    try {
+      const data = await assetApi.getCriticalStats()
+      setCriticalStats(data)
+    } catch (error: any) {
+      console.error("Error loading critical stats:", error)
+      // Don't show toast for stats errors as they're not critical
+    }
+  }
 
   const loadAssets = async () => {
     try {
@@ -222,6 +259,10 @@ export default function FixedAssetsPage() {
           <p className="text-muted-foreground">Manage hospital fixed assets and maintenance</p>
         </div>
         <div className="flex gap-2">
+          <Button variant="outline" onClick={() => setDailyLogOpen(true)}>
+            <ClipboardCheck className="mr-2 h-4 w-4" />
+            Daily Verification
+          </Button>
           <Button variant="outline">
             <Download className="mr-2 h-4 w-4" />
             Export
@@ -363,17 +404,38 @@ export default function FixedAssetsPage() {
         </Card>
       </div>
 
-      <Tabs defaultValue="assets" className="w-full">
-        <TabsList className="grid w-full grid-cols-2">
+      <Tabs defaultValue="assets" className="w-full" onValueChange={(value) => {
+        if (value === "critical") {
+          loadCriticalAssets()
+          loadCriticalStats()
+        }
+      }}>
+        <TabsList className="grid w-full grid-cols-5">
           <TabsTrigger value="assets">Assets</TabsTrigger>
+          <TabsTrigger value="critical">Critical Assets</TabsTrigger>
+          <TabsTrigger value="labels">Asset Labels</TabsTrigger>
           <TabsTrigger value="maintenance">Maintenance</TabsTrigger>
+          <TabsTrigger value="assignments">Assignments</TabsTrigger>
         </TabsList>
 
         <TabsContent value="assets" className="space-y-4 mt-4">
           <Card>
             <CardHeader>
-              <CardTitle>Asset Registry</CardTitle>
-              <CardDescription>View and manage fixed assets</CardDescription>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Asset Registry</CardTitle>
+                  <CardDescription>View and manage fixed assets</CardDescription>
+                </div>
+                <Button
+                  onClick={() => {
+                    setEditingAsset(null)
+                    setOpenAddAssetForm(true)
+                  }}
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add New Asset
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
               <div className="flex items-center justify-between mb-4">
@@ -457,9 +519,14 @@ export default function FixedAssetsPage() {
                           <TableCell>{formatCurrency(parseFloat(asset.purchaseCost || 0))}</TableCell>
                           <TableCell>{formatCurrency(parseFloat(asset.currentValue || asset.purchaseCost || 0))}</TableCell>
                           <TableCell>
-                            <Badge variant={getStatusBadge(asset.status)}>
-                              {asset.status?.charAt(0).toUpperCase() + asset.status?.slice(1)}
-                            </Badge>
+                            <div className="flex items-center gap-2">
+                              <Badge variant={getStatusBadge(asset.status)}>
+                                {asset.status?.charAt(0).toUpperCase() + asset.status?.slice(1)}
+                              </Badge>
+                              {asset.isCritical && (
+                                <Badge variant="destructive" className="text-xs">Critical</Badge>
+                              )}
+                            </div>
                           </TableCell>
                           <TableCell className="text-right">
                             <DropdownMenu>
@@ -495,16 +562,174 @@ export default function FixedAssetsPage() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="maintenance" className="space-y-4 mt-4">
+        <TabsContent value="critical" className="space-y-4 mt-4">
           <Card>
             <CardHeader>
-              <CardTitle>Maintenance Records</CardTitle>
-              <CardDescription>Maintenance functionality coming soon</CardDescription>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Critical Assets Registry</CardTitle>
+                  <CardDescription>Assets requiring daily presence verification</CardDescription>
+                </div>
+                <Button onClick={() => setDailyLogOpen(true)}>
+                  <ClipboardCheck className="mr-2 h-4 w-4" />
+                  Daily Verification
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
-              <p className="text-muted-foreground">Maintenance tracking will be available in a future update.</p>
+              {criticalStats && (
+                <div className="grid grid-cols-4 gap-4 mb-4">
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-medium">Total Critical</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-2xl font-bold">{criticalStats.today?.totalCritical || 0}</div>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-medium">Verified Today</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-2xl font-bold text-green-600">{criticalStats.today?.verified || 0}</div>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-medium">Missing</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-2xl font-bold text-red-600">{criticalStats.today?.missing || 0}</div>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-medium">Pending</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-2xl font-bold text-yellow-600">{criticalStats.today?.pending || 0}</div>
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
+
+              <div className="rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Asset Code</TableHead>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Category</TableHead>
+                      <TableHead>Location</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Today's Verification</TableHead>
+                      <TableHead>Verified By</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {criticalLoading ? (
+                      <TableRow>
+                        <TableCell colSpan={8} className="text-center py-8">
+                          <Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" />
+                          <p className="text-sm text-muted-foreground mt-2">Loading critical assets...</p>
+                        </TableCell>
+                      </TableRow>
+                    ) : criticalAssets.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                          No critical assets registered. Mark assets as critical when creating or editing them.
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      criticalAssets.map((asset) => (
+                        <TableRow key={asset.assetId}>
+                          <TableCell className="font-medium">{asset.assetCode || "-"}</TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              {asset.assetName || "-"}
+                              <Badge variant="destructive" className="text-xs">Critical</Badge>
+                            </div>
+                          </TableCell>
+                          <TableCell>{asset.category || "-"}</TableCell>
+                          <TableCell>{asset.location || "-"}</TableCell>
+                          <TableCell>
+                            <Badge variant={getStatusBadge(asset.status)}>
+                              {asset.status?.charAt(0).toUpperCase() + asset.status?.slice(1)}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            {asset.verifiedToday === null ? (
+                              <Badge variant="outline" className="gap-1">
+                                <AlertTriangle className="h-3 w-3" />
+                                Pending
+                              </Badge>
+                            ) : asset.verifiedToday ? (
+                              <Badge variant="default" className="gap-1">
+                                <CheckCircle2 className="h-3 w-3" />
+                                Verified
+                              </Badge>
+                            ) : (
+                              <Badge variant="destructive" className="gap-1">
+                                <XCircle className="h-3 w-3" />
+                                Missing
+                              </Badge>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {asset.verifiedByFirstName && asset.verifiedByLastName ? (
+                              <div className="text-sm">
+                                {asset.verifiedByFirstName} {asset.verifiedByLastName}
+                                {asset.verifiedAt && (
+                                  <div className="text-xs text-muted-foreground">
+                                    {format(new Date(asset.verifiedAt), "HH:mm")}
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-sm text-muted-foreground">-</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon">
+                                  <MoreVertical className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem onClick={() => handleView(asset)}>
+                                  <Eye className="mr-2 h-4 w-4" />
+                                  View Details
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => handleEdit(asset)}>
+                                  <Edit className="mr-2 h-4 w-4" />
+                                  Edit
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="labels" className="space-y-4 mt-4">
+          <AssetQRLabels />
+        </TabsContent>
+
+        <TabsContent value="maintenance" className="space-y-4 mt-4">
+          <MaintenanceRecordsList />
+        </TabsContent>
+
+        <TabsContent value="assignments" className="space-y-4 mt-4">
+          <AssetAssignmentsList />
         </TabsContent>
       </Tabs>
 
@@ -628,8 +853,23 @@ export default function FixedAssetsPage() {
             setEditingAsset(null)
           }
         }}
-        onSuccess={handleAssetSaved}
+        onSuccess={() => {
+          handleAssetSaved()
+          loadCriticalAssets()
+          loadCriticalStats()
+        }}
         editData={editingAsset}
+      />
+
+      <CriticalAssetsDailyLog
+        open={dailyLogOpen}
+        onOpenChange={(open) => {
+          setDailyLogOpen(open)
+          if (!open) {
+            loadCriticalAssets()
+            loadCriticalStats()
+          }
+        }}
       />
     </div>
   )
