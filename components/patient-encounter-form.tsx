@@ -335,6 +335,7 @@ export function PatientEncounterForm({
   const [patientAllergies, setPatientAllergies] = useState<any[]>([])
   const [patientMedications, setPatientMedications] = useState<any[]>([])
   const [patientLabResults, setPatientLabResults] = useState<any[]>([])
+  const [patientRadiologyResults, setPatientRadiologyResults] = useState<any[]>([])
   const [patientProcedures, setPatientProcedures] = useState<any[]>([])
   const [patientOrders, setPatientOrders] = useState<any[]>([]) // Invoices with consumables/orders
   const [patientHistory, setPatientHistory] = useState<any[]>([])
@@ -621,6 +622,7 @@ export function PatientEncounterForm({
       setPatientAllergies([])
       setPatientMedications([])
       setPatientLabResults([])
+      setPatientRadiologyResults([])
       setPatientHistory([])
       setPatientVitals([])
       setPatientAppointments([])
@@ -1035,11 +1037,12 @@ export function PatientEncounterForm({
     try {
       setIsLoadingPatientData(true)
       setLoadingPatientData(true)
-      const [patient, allergies, prescriptions, labOrders, records, vitals, procedures, invoices, appts] = await Promise.all([
+      const [patient, allergies, prescriptions, labOrders, radiologyOrders, records, vitals, procedures, invoices, appts] = await Promise.all([
         patientApi.getById(id).catch(() => null),
         patientApi.getAllergies(id).catch(() => []),
         pharmacyApi.getPrescriptions(id, undefined, 1, 10).catch(() => []),
-        laboratoryApi.getOrders(id, undefined, 1, 10).catch(() => []),
+        laboratoryApi.getOrders(id, undefined, 1, 50).catch(() => []), // Increased limit to 50 to include all orders
+        radiologyApi.getOrders(id, undefined, 1, 10).catch(() => []),
         medicalRecordsApi.getAll(undefined, id, undefined, undefined, undefined, 1, 10).catch(() => []),
         patientApi.getVitals(id, true).catch(() => []),
         proceduresApi.getPatientProcedures(id).catch(() => []),
@@ -1047,17 +1050,21 @@ export function PatientEncounterForm({
         appointmentsApi.getAll(undefined, undefined, undefined, id, 1, 50).catch(() => []),
       ])
 
-      // Only fetch full order details for pending/in-progress orders that don't have items
-      // Limit to first 5 to avoid excessive API calls
+      // Fetch full order details for orders that don't have items
+      // Separate pending/in-progress from completed orders
       const pendingLabOrders = (labOrders || []).filter((order: any) =>
         (order.status === 'pending' || order.status === 'sample_collected' || order.status === 'in_progress') &&
         (!order.items || order.items.length === 0)
-      ).slice(0, 5) // Limit to 5 to prevent too many API calls
+      )
 
-      // Only fetch details for orders that need it (more efficient - only map over what needs fetching)
-      const labOrdersWithItems = pendingLabOrders.length > 0
+      const completedLabOrders = (labOrders || []).filter((order: any) =>
+        order.status === 'completed'
+      )
+
+      // Fetch details for pending/in-progress orders that don't have items
+      const pendingOrdersWithItems = pendingLabOrders.length > 0
         ? await Promise.all(
-            pendingLabOrders.map(async (order: any) => {
+            pendingLabOrders.slice(0, 10).map(async (order: any) => {
               try {
                 const fullOrder = await laboratoryApi.getOrder(order.orderId.toString())
                 return fullOrder || order
@@ -1066,12 +1073,79 @@ export function PatientEncounterForm({
                 return order
               }
             })
-          ).then(fetchedOrders => {
-            // Merge fetched orders back into the original array
-            const orderMap = new Map(fetchedOrders.map(o => [o.orderId, o]))
-            return (labOrders || []).map((order: any) => orderMap.get(order.orderId) || order)
-          })
-        : (labOrders || [])
+          )
+        : []
+
+      // Fetch details and results for completed orders (limit to most recent 10 to prevent freezing)
+      const completedOrdersWithResults = completedLabOrders.length > 0
+        ? await Promise.all(
+            completedLabOrders
+              .sort((a: any, b: any) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime()) // Sort by date, newest first
+              .slice(0, 10) // Limit to 10 most recent to prevent too many API calls
+              .map(async (order: any) => {
+                try {
+                  // Fetch full order if items are missing
+                  let fullOrder = order
+                  if (!order.items || order.items.length === 0) {
+                    fullOrder = await laboratoryApi.getOrder(order.orderId.toString()) || order
+                  }
+                  
+                  // Fetch results for completed orders (with timeout protection)
+                  try {
+                    const results = await Promise.race([
+                      laboratoryApi.getOrderResults(fullOrder.orderId.toString()),
+                      new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000)) // 5 second timeout
+                    ]) as any[]
+                    
+                    if (results && fullOrder.items) {
+                      fullOrder.items = fullOrder.items.map((item: any) => {
+                        const itemResult = results.find((r: any) => r.itemId === item.itemId)
+                        return itemResult ? { ...item, result: itemResult.result } : item
+                      })
+                    }
+                  } catch (err: any) {
+                    if (err.message !== 'Timeout') {
+                      console.error(`Error fetching results for completed order ${fullOrder.orderId}:`, err)
+                    }
+                    // Continue without results if fetch fails
+                  }
+                  
+                  return fullOrder
+                } catch (err) {
+                  console.error(`Error fetching completed order ${order.orderId}:`, err)
+                  return order
+                }
+              })
+          )
+        : []
+      
+      // Add remaining completed orders without fetching results (to show they exist)
+      const remainingCompletedOrders = completedLabOrders.length > 10
+        ? completedLabOrders
+            .sort((a: any, b: any) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime())
+            .slice(10) // Orders beyond the first 10
+        : []
+      
+      // Merge: orders with results + remaining orders without results
+      const allCompletedOrders = [...completedOrdersWithResults, ...remainingCompletedOrders]
+
+      // Merge all orders: pending with items + completed with results + others
+      const orderMap = new Map()
+      
+      // Add pending orders with fetched details
+      pendingOrdersWithItems.forEach(o => orderMap.set(o.orderId, o))
+      
+      // Add completed orders (with and without results)
+      allCompletedOrders.forEach(o => orderMap.set(o.orderId, o))
+      
+      // Add any remaining orders that weren't fetched (in-progress with items, etc.)
+      ;(labOrders || []).forEach((order: any) => {
+        if (!orderMap.has(order.orderId)) {
+          orderMap.set(order.orderId, order)
+        }
+      })
+
+      const labOrdersWithItems = Array.from(orderMap.values())
 
       // Only fetch full prescription details for today's prescriptions or pending ones without items
       // Limit to first 5 to avoid excessive API calls
@@ -1129,10 +1203,31 @@ export function PatientEncounterForm({
         }
       }
 
+      // Fetch radiology orders with results
+      const radiologyOrdersWithResults = await Promise.all(
+        (radiologyOrders || []).slice(0, 10).map(async (order: any) => {
+          try {
+            // Fetch full order details if needed
+            if (!order.items || order.items.length === 0) {
+              const fullOrder = await radiologyApi.getOrder(order.orderId.toString())
+              if (fullOrder) order = fullOrder
+            }
+            // Note: Radiology results API may not be available yet
+            // If results are included in the order response, they'll be displayed
+            // Otherwise, we'll show the order without results
+          } catch (err) {
+            console.error(`Error fetching radiology order ${order.orderId}:`, err)
+          }
+          return order
+        })
+      )
+
+
       setPatientData(patient)
       setPatientAllergies(allergies || [])
       setPatientMedications(prescriptionsWithItems || [])
       setPatientLabResults(labOrdersWithItems || [])
+      setPatientRadiologyResults(radiologyOrdersWithResults || [])
       setPatientProcedures(procedures || [])
       setPatientOrders(consumablesInvoices || [])
       setPatientHistory(records || [])
@@ -2238,45 +2333,227 @@ const clearDraftFromStorage = (patientId:any) => {
             </div>
           )}
 
-          {/* Recent Lab Results */}
+          {/* Laboratory Tests & Results */}
           <div>
             <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
               <Flask className="h-4 w-4 text-blue-500" />
-              Recent Lab Results
+              Laboratory Tests & Results
             </h3>
             {patientLabResults.length > 0 ? (
-              <div className="space-y-1.5">
-                {patientLabResults.slice(0, 5).map((order: any) => (
-                  <div key={order.orderId} className="border-l-2 border-l-blue-500/30 bg-muted/30 rounded-md p-2.5 text-xs">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex-1 min-w-0 space-y-0.5">
-                        <div className="font-medium text-foreground">
-                          Order #{order.orderNumber || order.orderId}
-                        </div>
-                        <div className="text-foreground/70 text-[11px]">
-                          {order.items?.length || 0} test(s) • Priority: <span className="font-medium">{order.priority}</span>
-                          {order.items && order.items.length > 0 && (
-                            <> • {order.items.slice(0, 2).map((item: any) => item.testName || item.testType?.testName || item.testTypeName).join(', ')}
-                            {order.items.length > 2 && ` +${order.items.length - 2} more`}</>
+              <div className="space-y-2">
+                {patientLabResults.slice(0, 5).map((order: any) => {
+                  const hasResults = order.items?.some((item: any) => item.result?.resultId)
+                  const completedTests = order.items?.filter((item: any) => item.result?.resultId).length || 0
+                  const totalTests = order.items?.length || 0
+                  
+                  return (
+                    <Card key={order.orderId} className="border-l-4 border-l-blue-500/50">
+                      <CardContent className="pt-3 pb-2.5 px-3">
+                        <div className="space-y-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex-1 min-w-0">
+                              <div className="font-medium text-foreground text-xs mb-1">
+                                Order #{order.orderNumber || order.orderId}
+                              </div>
+                              <div className="text-foreground/70 text-[11px] space-y-0.5">
+                                <div>
+                                  {totalTests} test(s) • Priority: <span className="font-medium">{order.priority || 'routine'}</span>
+                                  {hasResults && (
+                                    <span className="ml-1 text-green-600 dark:text-green-400">
+                                      • {completedTests}/{totalTests} completed
+                                    </span>
+                                  )}
+                                </div>
+                                {order.items && order.items.length > 0 && (
+                                  <div className="text-foreground/60">
+                                    {order.items.slice(0, 2).map((item: any, idx: number) => {
+                                      const testName = item.testName || item.testType?.testName || item.testTypeName || 'Test'
+                                      const hasResult = item.result?.resultId
+                                      return (
+                                        <span key={idx} className={hasResult ? "text-green-600 dark:text-green-400" : ""}>
+                                          {testName}{hasResult && ' ✓'}{idx < Math.min(2, order.items.length - 1) && ', '}
+                                        </span>
+                                      )
+                                    })}
+                                    {order.items.length > 2 && ` +${order.items.length - 2} more`}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                              <Badge 
+                                variant={
+                                  order.status === 'completed' ? 'default' : 
+                                  order.status === 'in_progress' ? 'secondary' : 
+                                  'outline'
+                                } 
+                                className="text-[10px] px-1.5 py-0 h-4"
+                              >
+                                {order.status || 'pending'}
+                              </Badge>
+                              <span className="text-foreground/60 text-[10px] whitespace-nowrap">
+                                {new Date(order.orderDate).toLocaleDateString()}
+                              </span>
+                            </div>
+                          </div>
+                          
+                          {/* Show test results if available */}
+                          {hasResults && order.items && (
+                            <div className="mt-2 pt-2 border-t border-border/50 space-y-1.5">
+                              {order.items.filter((item: any) => item.result?.resultId).slice(0, 3).map((item: any, idx: number) => {
+                                const testName = item.testName || item.testType?.testName || item.testTypeName || 'Test'
+                                const result = item.result
+                                return (
+                                  <div key={idx} className="text-[11px] bg-green-50 dark:bg-green-950/20 rounded p-1.5">
+                                    <div className="font-medium text-green-700 dark:text-green-400 mb-0.5">
+                                      {testName} ✓
+                                    </div>
+                                    {result?.values && result.values.length > 0 ? (
+                                      <div className="space-y-0.5 text-foreground/80">
+                                        {result.values.slice(0, 2).map((val: any, vIdx: number) => (
+                                          <div key={vIdx} className="text-[10px]">
+                                            <span className="font-medium">{val.parameterName}:</span> {val.value} {val.unit || ''}
+                                            {val.referenceRange && (
+                                              <span className="text-foreground/60 ml-1">({val.referenceRange})</span>
+                                            )}
+                                          </div>
+                                        ))}
+                                        {result.values.length > 2 && (
+                                          <div className="text-[10px] text-foreground/60">
+                                            +{result.values.length - 2} more parameters
+                                          </div>
+                                        )}
+                                      </div>
+                                    ) : (
+                                      <div className="text-[10px] text-foreground/60">Results available</div>
+                                    )}
+                                  </div>
+                                )
+                              })}
+                              {completedTests > 3 && (
+                                <div className="text-[10px] text-foreground/60 text-center pt-1">
+                                  +{completedTests - 3} more test results
+                                </div>
+                              )}
+                            </div>
                           )}
                         </div>
-                      </div>
-                      <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                        <Badge variant={order.status === 'completed' ? 'default' : 'secondary'} className="text-[10px] px-1.5 py-0 h-4">
-                          {order.status}
-                        </Badge>
-                        <span className="text-foreground/60 text-[10px] whitespace-nowrap">
-                          {new Date(order.orderDate).toLocaleDateString()}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+                      </CardContent>
+                    </Card>
+                  )
+                })}
               </div>
             ) : (
-              <div className="text-xs text-foreground/60 bg-muted/30 rounded-md p-2.5 text-center">
-                No recent lab results
+              <Card className="bg-card">
+                <CardContent className="pt-4 text-xs text-foreground/60 text-center py-4">
+                  No laboratory tests ordered
+                </CardContent>
+              </Card>
+            )}
+          </div>
+          
+          {/* Radiology Tests & Results */}
+          <div>
+            <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
+              <Scan className="h-4 w-4 text-purple-500" />
+              Radiology Tests & Results
+            </h3>
+            {patientRadiologyResults && patientRadiologyResults.length > 0 ? (
+              <div className="space-y-2">
+                {patientRadiologyResults.slice(0, 5).map((order: any) => {
+                  const hasResults = order.items?.some((item: any) => item.result?.resultId)
+                  const completedTests = order.items?.filter((item: any) => item.result?.resultId).length || 0
+                  const totalTests = order.items?.length || 0
+                  
+                  return (
+                    <Card key={order.orderId} className="border-l-4 border-l-purple-500/50">
+                      <CardContent className="pt-3 pb-2.5 px-3">
+                        <div className="space-y-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex-1 min-w-0">
+                              <div className="font-medium text-foreground text-xs mb-1">
+                                Order #{order.orderNumber || order.orderId}
+                              </div>
+                              <div className="text-foreground/70 text-[11px] space-y-0.5">
+                                <div>
+                                  {totalTests} exam(s) • Priority: <span className="font-medium">{order.priority || 'routine'}</span>
+                                  {hasResults && (
+                                    <span className="ml-1 text-green-600 dark:text-green-400">
+                                      • {completedTests}/{totalTests} completed
+                                    </span>
+                                  )}
+                                </div>
+                                {order.items && order.items.length > 0 && (
+                                  <div className="text-foreground/60">
+                                    {order.items.slice(0, 2).map((item: any, idx: number) => {
+                                      const examName = item.examName || item.examType?.examName || item.examTypeName || 'Exam'
+                                      const hasResult = item.result?.resultId
+                                      return (
+                                        <span key={idx} className={hasResult ? "text-green-600 dark:text-green-400" : ""}>
+                                          {examName}{hasResult && ' ✓'}{idx < Math.min(2, order.items.length - 1) && ', '}
+                                        </span>
+                                      )
+                                    })}
+                                    {order.items.length > 2 && ` +${order.items.length - 2} more`}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                              <Badge 
+                                variant={
+                                  order.status === 'completed' ? 'default' : 
+                                  order.status === 'in_progress' ? 'secondary' : 
+                                  'outline'
+                                } 
+                                className="text-[10px] px-1.5 py-0 h-4"
+                              >
+                                {order.status || 'pending'}
+                              </Badge>
+                              <span className="text-foreground/60 text-[10px] whitespace-nowrap">
+                                {new Date(order.orderDate).toLocaleDateString()}
+                              </span>
+                            </div>
+                          </div>
+                          
+                          {/* Show results if available */}
+                          {hasResults && order.items && (
+                            <div className="mt-2 pt-2 border-t border-border/50 space-y-1.5">
+                              {order.items.filter((item: any) => item.result?.resultId).slice(0, 2).map((item: any, idx: number) => {
+                                const examName = item.examName || item.examType?.examName || item.examTypeName || 'Exam'
+                                const result = item.result
+                                return (
+                                  <div key={idx} className="text-[11px] bg-green-50 dark:bg-green-950/20 rounded p-1.5">
+                                    <div className="font-medium text-green-700 dark:text-green-400 mb-0.5">
+                                      {examName} ✓
+                                    </div>
+                                    {result?.findings && (
+                                      <div className="text-[10px] text-foreground/80 line-clamp-2">
+                                        {result.findings}
+                                      </div>
+                                    )}
+                                    {result?.impression && (
+                                      <div className="text-[10px] text-foreground/70 mt-0.5 line-clamp-1">
+                                        Impression: {result.impression}
+                                      </div>
+                                    )}
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )
+                })}
               </div>
+            ) : (
+              <Card className="bg-card">
+                <CardContent className="pt-4 text-xs text-foreground/60 text-center py-4">
+                  No radiology tests ordered
+                </CardContent>
+              </Card>
             )}
           </div>
         </div>
