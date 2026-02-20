@@ -37,8 +37,9 @@ import { AddToQueueForm } from "@/components/add-to-queue-form"
 import { AddTriageForm } from "@/components/add-triage-form"
 import { queueApi, medicalRecordsApi } from "@/lib/api"
 import { toast } from "@/components/ui/use-toast"
-import { Search, Plus, Edit, Trash2, MoreHorizontal, Loader2, ArrowRight, Monitor, Users, Receipt, FileText, PlayCircle, Stethoscope } from "lucide-react"
+import { Search, Plus, Edit, Trash2, MoreHorizontal, Loader2, ArrowRight, Monitor, Users, Receipt, FileText, PlayCircle, Stethoscope, FlaskConical } from "lucide-react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { ViewBillDialog } from "@/components/view-bill-dialog"
 import { DispenseMedicationDialog } from "@/components/dispense-medication-dialog"
 import { PatientEncounterForm } from "@/components/patient-encounter-form"
@@ -74,6 +75,7 @@ const priorities = [
 ]
 
 export default function QueueManagement() {
+  const router = useRouter()
   const [isMounted, setIsMounted] = useState(false)
   const [allQueues, setAllQueues] = useState<any[]>([]) // Unfiltered queues for summary stats
   const [queues, setQueues] = useState<any[]>([]) // Filtered queues for display
@@ -622,6 +624,14 @@ export default function QueueManagement() {
                                   }}>
                                     <Pill className="mr-2 h-4 w-4" />
                                     Dispense Medication
+                                  </DropdownMenuItem>
+                                )}
+                                {queue.servicePoint === "laboratory" && (
+                                  <DropdownMenuItem onClick={() => {
+                                    router.push('/laboratory')
+                                  }}>
+                                    <FlaskConical className="mr-2 h-4 w-4" />
+                                    View in Laboratory
                                   </DropdownMenuItem>
                                 )}
                                 <DropdownMenuItem onClick={() => handleEdit(queue)}>

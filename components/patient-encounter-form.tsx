@@ -249,7 +249,7 @@ export function PatientEncounterForm({
   const [selectedMedicationsInventory, setSelectedMedicationsInventory] = useState<Record<number, { totalQuantity: number; hasStock: boolean; sellPrice: number | null }>>({})
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
   const [showCloseConfirm, setShowCloseConfirm] = useState(false)
-  const [activeTab, setActiveTab] = useState("encounter")
+  const [activeTab, setActiveTab] = useState("overview")
   const [prescriptionSheetOpen, setPrescriptionSheetOpen] = useState(false)
   const [proceduresSheetOpen, setProceduresSheetOpen] = useState(false)
   const [radiologySheetOpen, setRadiologySheetOpen] = useState(false)
@@ -278,6 +278,8 @@ export function PatientEncounterForm({
   const [tempMedication, setTempMedication] = useState<MedicationValues>(defaultMedication)
   const [isQuantityManuallyEdited, setIsQuantityManuallyEdited] = useState(false)
   const [patientProfileDialogOpen, setPatientProfileDialogOpen] = useState(false)
+  const [viewLabResultsDialogOpen, setViewLabResultsDialogOpen] = useState(false)
+  const [viewingLabOrder, setViewingLabOrder] = useState<any>(null)
 
   // Helper function to extract numeric value from text
   const extractNumber = (text: string): number => {
@@ -329,6 +331,24 @@ export function PatientEncounterForm({
       setIsQuantityManuallyEdited(false)
     }
   }, [addMedicationDialogOpen])
+
+  // Load procedure data when editing
+  useEffect(() => {
+    if (addProcedureDialogOpen && editingProcedureIndex !== null) {
+      const procData = form.getValues(`procedures.${editingProcedureIndex}`)
+      if (procData) {
+        console.log('Loading procedure data for editing:', procData)
+        setTempProcedure({
+          procedureId: procData.procedureId ? String(procData.procedureId) : "",
+          notes: procData.notes || "",
+          complications: procData.complications || "",
+        })
+      }
+    } else if (addProcedureDialogOpen && editingProcedureIndex === null) {
+      // Reset to default when adding new
+      setTempProcedure(defaultProcedure)
+    }
+  }, [addProcedureDialogOpen, editingProcedureIndex])
 
   // Patient data state
   const [patientData, setPatientData] = useState<any>(null)
@@ -2852,7 +2872,11 @@ const clearDraftFromStorage = (patientId:any) => {
                 }} className="flex-1 flex flex-col overflow-hidden min-h-0">
                   {/* Sticky Tabs Navigation - Compact */}
                   <div className="px-4 py-1.5 border-b bg-background flex-shrink-0">
-                    <TabsList className="grid w-full grid-cols-9 h-auto gap-1">
+                    <TabsList className="grid w-full grid-cols-10 h-auto gap-1">
+                      <TabsTrigger value="overview" className="py-1.5 h-auto text-xs">
+                        <User className="h-3 w-3 mr-1" />
+                        <span>Overview</span>
+                      </TabsTrigger>
                       <TabsTrigger value="encounter" className="py-1.5 h-auto text-xs">
                         <FileText className="h-3 w-3 mr-1" />
                         <span>Encounter</span>
@@ -2902,6 +2926,180 @@ const clearDraftFromStorage = (patientId:any) => {
                   </div>
 
                   {/* Scrollable Tab Content */}
+                  {/* Overview Tab - Patient Information and Summary */}
+                  <TabsContent value="overview" className="flex-1 overflow-hidden min-h-0">
+                    <ScrollArea className="h-full px-6">
+                      <div className="space-y-4 mt-4 pb-4">
+                        {patientId && patientData ? (
+                          <>
+                            {/* Patient Information Cards */}
+                            <div className="grid grid-cols-2 gap-4">
+                              <Card>
+                                <CardHeader>
+                                  <CardTitle className="text-sm">Patient Information</CardTitle>
+                                </CardHeader>
+                                <CardContent className="space-y-2">
+                                  <p><span className="text-muted-foreground">Name:</span> {getPatientName(patientData)}</p>
+                                  <p><span className="text-muted-foreground">Patient Number:</span> {patientData.patientNumber || `ID: ${patientId}`}</p>
+                                  {patientData.gender && (
+                                    <p><span className="text-muted-foreground">Gender:</span> {patientData.gender}</p>
+                                  )}
+                                  {patientData.dateOfBirth && (() => {
+                                    const dob = new Date(patientData.dateOfBirth)
+                                    const today = new Date()
+                                    const age = today.getFullYear() - dob.getFullYear() - (today.getMonth() < dob.getMonth() || (today.getMonth() === dob.getMonth() && today.getDate() < dob.getDate()) ? 1 : 0)
+                                    return (
+                                      <p><span className="text-muted-foreground">Age:</span> {age} years ({format(new Date(patientData.dateOfBirth), "PP")})</p>
+                                    )
+                                  })()}
+                                  {patientData.phoneNumber && (
+                                    <p><span className="text-muted-foreground">Phone:</span> {patientData.phoneNumber}</p>
+                                  )}
+                                  {patientData.email && (
+                                    <p><span className="text-muted-foreground">Email:</span> {patientData.email}</p>
+                                  )}
+                                </CardContent>
+                              </Card>
+
+                              <Card>
+                                <CardHeader>
+                                  <CardTitle className="text-sm">Clinical Summary</CardTitle>
+                                </CardHeader>
+                                <CardContent className="space-y-2">
+                                  {todayVitals ? (
+                                    <>
+                                      {todayVitals.systolicBP && todayVitals.diastolicBP && (
+                                        <p><span className="text-muted-foreground">Blood Pressure:</span> {todayVitals.systolicBP}/{todayVitals.diastolicBP} mmHg</p>
+                                      )}
+                                      {todayVitals.heartRate && (
+                                        <p><span className="text-muted-foreground">Heart Rate:</span> {todayVitals.heartRate} bpm</p>
+                                      )}
+                                      {todayVitals.temperature && (
+                                        <p><span className="text-muted-foreground">Temperature:</span> {todayVitals.temperature}°C</p>
+                                      )}
+                                      {todayVitals.respiratoryRate && (
+                                        <p><span className="text-muted-foreground">Respiratory Rate:</span> {todayVitals.respiratoryRate} bpm</p>
+                                      )}
+                                      {todayVitals.oxygenSaturation && (
+                                        <p><span className="text-muted-foreground">SpO2:</span> {todayVitals.oxygenSaturation}%</p>
+                                      )}
+                                    </>
+                                  ) : (
+                                    <p className="text-muted-foreground">No vitals recorded today</p>
+                                  )}
+                                  {patientAllergies.length > 0 && (
+                                    <div className="pt-2">
+                                      <p className="text-muted-foreground mb-1">Allergies:</p>
+                                      <div className="flex flex-wrap gap-1">
+                                        {patientAllergies.slice(0, 3).map((allergy: any) => (
+                                          <Badge key={allergy.allergyId} variant="destructive" className="text-xs">
+                                            {allergy.allergen}
+                                          </Badge>
+                                        ))}
+                                        {patientAllergies.length > 3 && (
+                                          <Badge variant="destructive" className="text-xs">
+                                            +{patientAllergies.length - 3} more
+                                          </Badge>
+                                        )}
+                                      </div>
+                                    </div>
+                                  )}
+                                </CardContent>
+                              </Card>
+                            </div>
+
+                            {/* Summary Statistics Cards - Clickable */}
+                            <div className="grid grid-cols-4 gap-4">
+                              <Card 
+                                className="cursor-pointer hover:bg-accent transition-colors"
+                                onClick={() => {
+                                  setLabTestsSheetOpen(true)
+                                }}
+                              >
+                                <CardHeader className="pb-2">
+                                  <CardTitle className="text-sm flex items-center gap-2">
+                                    <Flask className="h-4 w-4" />
+                                    Lab Orders
+                                  </CardTitle>
+                                </CardHeader>
+                                <CardContent>
+                                  <p className="text-2xl font-bold">{patientLabResults.length}</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {patientLabResults.filter((o: any) => o.status === 'completed').length} completed
+                                  </p>
+                                </CardContent>
+                              </Card>
+
+                              <Card 
+                                className="cursor-pointer hover:bg-accent transition-colors"
+                                onClick={() => {
+                                  setPrescriptionSheetOpen(true)
+                                }}
+                              >
+                                <CardHeader className="pb-2">
+                                  <CardTitle className="text-sm flex items-center gap-2">
+                                    <Pills className="h-4 w-4" />
+                                    Prescriptions
+                                  </CardTitle>
+                                </CardHeader>
+                                <CardContent>
+                                  <p className="text-2xl font-bold">{patientMedications.length}</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {patientMedications.filter((p: any) => p.status === 'active' || p.status === 'pending').length} active
+                                  </p>
+                                </CardContent>
+                              </Card>
+
+                              <Card 
+                                className="cursor-pointer hover:bg-accent transition-colors"
+                                onClick={() => {
+                                  setRadiologySheetOpen(true)
+                                }}
+                              >
+                                <CardHeader className="pb-2">
+                                  <CardTitle className="text-sm flex items-center gap-2">
+                                    <Scan className="h-4 w-4" />
+                                    Radiology Orders
+                                  </CardTitle>
+                                </CardHeader>
+                                <CardContent>
+                                  <p className="text-2xl font-bold">{patientRadiologyResults.length}</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {patientRadiologyResults.filter((o: any) => o.status === 'completed').length} completed
+                                  </p>
+                                </CardContent>
+                              </Card>
+
+                              <Card 
+                                className="cursor-pointer hover:bg-accent transition-colors"
+                                onClick={() => {
+                                  setProceduresSheetOpen(true)
+                                }}
+                              >
+                                <CardHeader className="pb-2">
+                                  <CardTitle className="text-sm flex items-center gap-2">
+                                    <Stethoscope className="h-4 w-4" />
+                                    Procedures
+                                  </CardTitle>
+                                </CardHeader>
+                                <CardContent>
+                                  <p className="text-2xl font-bold">{patientProcedures.length}</p>
+                                  <p className="text-xs text-muted-foreground">Recorded</p>
+                                </CardContent>
+                              </Card>
+                            </div>
+                          </>
+                        ) : (
+                          <Card>
+                            <CardContent className="py-8 text-center text-muted-foreground">
+                              Please select a patient to view overview
+                            </CardContent>
+                          </Card>
+                        )}
+                      </div>
+                    </ScrollArea>
+                  </TabsContent>
+
                   {/* Encounter Details Tab - Combined with Patient Summary */}
                   <TabsContent value="encounter" className="flex-1 overflow-hidden min-h-0">
                     <ScrollArea className="h-full px-6">
@@ -3220,8 +3418,99 @@ const clearDraftFromStorage = (patientId:any) => {
             <div className="flex flex-1 overflow-hidden min-h-0">
               <ScrollArea className="flex-1 px-6">
                 <div className="space-y-4 mt-4 pb-4">
+                  {/* Existing Lab Orders Section */}
+                  {patientLabResults.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-md font-medium">Existing Lab Orders</h3>
+                        <Badge variant="secondary">{patientLabResults.length} order(s)</Badge>
+                      </div>
+                      <Card>
+                        <CardContent className="p-0">
+                          <Table>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead>Order Date</TableHead>
+                                <TableHead>Order Number</TableHead>
+                                <TableHead>Tests</TableHead>
+                                <TableHead>Status</TableHead>
+                                <TableHead>Priority</TableHead>
+                                <TableHead className="text-right">Actions</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {patientLabResults.map((order: any) => {
+                                const hasResults = order.items && order.items.some((item: any) => item.result?.resultId)
+                                return (
+                                  <TableRow key={order.orderId}>
+                                    <TableCell>{format(new Date(order.orderDate), "PP")}</TableCell>
+                                    <TableCell className="font-mono text-sm">{order.orderNumber || `#${order.orderId}`}</TableCell>
+                                    <TableCell>
+                                      {order.items && order.items.length > 0 ? (
+                                        <div className="space-y-1">
+                                          {order.items.slice(0, 2).map((item: any, idx: number) => (
+                                            <div key={idx} className="text-sm">
+                                              {item.testName || item.testType?.testName || 'Test'}
+                                              {item.result?.resultId && (
+                                                <Badge variant="default" className="ml-2 text-xs">Results</Badge>
+                                              )}
+                                            </div>
+                                          ))}
+                                          {order.items.length > 2 && (
+                                            <div className="text-xs text-muted-foreground">+{order.items.length - 2} more</div>
+                                          )}
+                                        </div>
+                                      ) : (
+                                        <span className="text-muted-foreground">-</span>
+                                      )}
+                                    </TableCell>
+                                    <TableCell>
+                                      <Badge variant={
+                                        order.status === 'completed' ? 'default' :
+                                        order.status === 'in_progress' ? 'secondary' :
+                                        'outline'
+                                      }>
+                                        {order.status || 'pending'}
+                                      </Badge>
+                                    </TableCell>
+                                    <TableCell>
+                                      <Badge variant={
+                                        order.priority === 'stat' ? 'destructive' :
+                                        order.priority === 'urgent' ? 'default' :
+                                        'secondary'
+                                      }>
+                                        {order.priority || 'routine'}
+                                      </Badge>
+                                    </TableCell>
+                                    <TableCell className="text-right">
+                                      {hasResults && (
+                                        <Button
+                                          type="button"
+                                          variant="ghost"
+                                          size="sm"
+                                          onClick={() => {
+                                            setViewingLabOrder(order)
+                                            setViewLabResultsDialogOpen(true)
+                                          }}
+                                          className="h-8"
+                                        >
+                                          <Eye className="h-4 w-4 mr-1" />
+                                          View Results
+                                        </Button>
+                                      )}
+                                    </TableCell>
+                                  </TableRow>
+                                )
+                              })}
+                            </TableBody>
+                          </Table>
+                        </CardContent>
+                      </Card>
+                    </div>
+                  )}
+
                   <div className="flex items-center justify-between">
-                    <h3 className="text-md font-medium">Order Lab Tests</h3>
+                    <h3 className="text-md font-medium">Order New Lab Tests</h3>
                     <Button
                       type="button"
                       variant="outline"
@@ -3871,8 +4160,77 @@ const clearDraftFromStorage = (patientId:any) => {
             <div className="flex flex-1 overflow-hidden min-h-0">
               <ScrollArea className="flex-1 px-6">
                 <div className="space-y-4 mt-4 pb-4">
+                  {/* Existing Prescriptions Section */}
+                  {patientMedications.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-md font-medium">Existing Prescriptions</h3>
+                        <Badge variant="secondary">{patientMedications.length} prescription(s)</Badge>
+                      </div>
+                      <Card>
+                        <CardContent className="p-0">
+                          <Table>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead>Date</TableHead>
+                                <TableHead>Prescription #</TableHead>
+                                <TableHead>Medications</TableHead>
+                                <TableHead>Doctor</TableHead>
+                                <TableHead>Status</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {patientMedications.map((prescription: any) => (
+                                <TableRow key={prescription.prescriptionId}>
+                                  <TableCell>{format(new Date(prescription.prescriptionDate), "PP")}</TableCell>
+                                  <TableCell className="font-mono text-sm">{prescription.prescriptionNumber || `#${prescription.prescriptionId}`}</TableCell>
+                                  <TableCell>
+                                    {prescription.items && prescription.items.length > 0 ? (
+                                      <div className="space-y-1">
+                                        {prescription.items.slice(0, 2).map((item: any, idx: number) => (
+                                          <div key={idx} className="text-sm">
+                                            {item.medicationName || item.medicationNameFromCatalog || 'Medication'}
+                                            {item.dosage && (
+                                              <span className="text-xs text-muted-foreground ml-1">
+                                                ({item.dosage} {item.frequency})
+                                              </span>
+                                            )}
+                                          </div>
+                                        ))}
+                                        {prescription.items.length > 2 && (
+                                          <div className="text-xs text-muted-foreground">+{prescription.items.length - 2} more</div>
+                                        )}
+                                      </div>
+                                    ) : (
+                                      <span className="text-muted-foreground">-</span>
+                                    )}
+                                  </TableCell>
+                                  <TableCell>
+                                    {prescription.doctorFirstName && prescription.doctorLastName
+                                      ? `${prescription.doctorFirstName} ${prescription.doctorLastName}`
+                                      : '-'}
+                                  </TableCell>
+                                  <TableCell>
+                                    <Badge variant={
+                                      prescription.status === 'active' ? 'default' :
+                                      prescription.status === 'completed' ? 'secondary' :
+                                      prescription.status === 'dispensed' ? 'default' :
+                                      'outline'
+                                    }>
+                                      {prescription.status || 'pending'}
+                                    </Badge>
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </CardContent>
+                      </Card>
+                    </div>
+                  )}
+
                   <div className="flex items-center justify-between">
-                    <h3 className="text-md font-medium">Prescribe Medications</h3>
+                    <h3 className="text-md font-medium">Prescribe New Medications</h3>
                     <Button
                       type="button"
                       variant="outline"
@@ -4092,8 +4450,46 @@ const clearDraftFromStorage = (patientId:any) => {
           </SheetHeader>
           <ScrollArea className="flex-1 px-6">
             <div className="space-y-4 mt-4 pb-4">
+              {/* Existing Procedures Section */}
+              {patientProcedures.length > 0 && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-md font-medium">Existing Procedures</h3>
+                    <Badge variant="secondary">{patientProcedures.length} procedure(s)</Badge>
+                  </div>
+                  <Card>
+                    <CardContent className="p-0">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Date</TableHead>
+                            <TableHead>Procedure</TableHead>
+                            <TableHead>Performed By</TableHead>
+                            <TableHead>Notes</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {patientProcedures.map((procedure: any) => (
+                            <TableRow key={procedure.patientProcedureId}>
+                              <TableCell>{format(new Date(procedure.procedureDate), "PP")}</TableCell>
+                              <TableCell className="font-medium">{procedure.procedureName || 'Unknown'}</TableCell>
+                              <TableCell>
+                                {procedure.performedByFirstName && procedure.performedByLastName
+                                  ? `${procedure.performedByFirstName} ${procedure.performedByLastName}`
+                                  : '-'}
+                              </TableCell>
+                              <TableCell className="max-w-xs truncate">{procedure.notes || "-"}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
+
               <div className="flex items-center justify-between">
-                <h3 className="text-md font-medium">Procedures</h3>
+                <h3 className="text-md font-medium">Record New Procedures</h3>
                 <Button
                   type="button"
                   variant="outline"
@@ -4144,8 +4540,17 @@ const clearDraftFromStorage = (patientId:any) => {
                                   onClick={() => {
                                     setEditingProcedureIndex(index)
                                     const procData = form.getValues(`procedures.${index}`)
-                                    setTempProcedure(procData || defaultProcedure)
-                                    setAddProcedureDialogOpen(true)
+                                    console.log('Editing procedure at index', index, 'Data:', procData)
+                                    // Ensure all fields are properly set, convert procedureId to string if needed
+                                    setTempProcedure({
+                                      procedureId: procData?.procedureId ? String(procData.procedureId) : "",
+                                      notes: procData?.notes || "",
+                                      complications: procData?.complications || "",
+                                    })
+                                    // Small delay to ensure state is set before opening dialog
+                                    setTimeout(() => {
+                                      setAddProcedureDialogOpen(true)
+                                    }, 0)
                                   }}
                                   className="h-8 w-8 p-0"
                                 >
@@ -4215,8 +4620,62 @@ const clearDraftFromStorage = (patientId:any) => {
           </SheetHeader>
           <ScrollArea className="flex-1 px-6">
             <div className="space-y-4 mt-4 pb-4">
+              {/* Existing Radiology Orders Section */}
+              {patientRadiologyResults.length > 0 && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-md font-medium">Existing Radiology Orders</h3>
+                    <Badge variant="secondary">{patientRadiologyResults.length} order(s)</Badge>
+                  </div>
+                  <Card>
+                    <CardContent className="p-0">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Order Date</TableHead>
+                            <TableHead>Order Number</TableHead>
+                            <TableHead>Examination</TableHead>
+                            <TableHead>Body Part</TableHead>
+                            <TableHead>Status</TableHead>
+                            <TableHead>Priority</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {patientRadiologyResults.map((order: any) => (
+                            <TableRow key={order.orderId}>
+                              <TableCell>{format(new Date(order.orderDate), "PP")}</TableCell>
+                              <TableCell className="font-mono text-sm">{order.orderNumber || `#${order.orderId}`}</TableCell>
+                              <TableCell>{order.examName || order.examType?.examName || 'Unknown'}</TableCell>
+                              <TableCell>{order.bodyPart || "-"}</TableCell>
+                              <TableCell>
+                                <Badge variant={
+                                  order.status === 'completed' ? 'default' :
+                                  order.status === 'in_progress' ? 'secondary' :
+                                  'outline'
+                                }>
+                                  {order.status || 'pending'}
+                                </Badge>
+                              </TableCell>
+                              <TableCell>
+                                <Badge variant={
+                                  order.priority === 'stat' ? 'destructive' :
+                                  order.priority === 'urgent' ? 'default' :
+                                  'secondary'
+                                }>
+                                  {order.priority || 'routine'}
+                                </Badge>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
+
               <div className="flex items-center justify-between">
-                <h3 className="text-md font-medium">Radiology Orders</h3>
+                <h3 className="text-md font-medium">Order New Radiology Examinations</h3>
                 <Button
                   type="button"
                   variant="outline"
@@ -5104,7 +5563,13 @@ const clearDraftFromStorage = (patientId:any) => {
       </Dialog>
 
       {/* Add/Edit Procedure Dialog */}
-      <Dialog open={addProcedureDialogOpen} onOpenChange={setAddProcedureDialogOpen}>
+      <Dialog open={addProcedureDialogOpen} onOpenChange={(open) => {
+        setAddProcedureDialogOpen(open)
+        if (!open) {
+          setEditingProcedureIndex(null)
+          setTempProcedure(defaultProcedure)
+        }
+      }}>
         <DialogContent className="sm:max-w-[600px] z-[121]" overlayClassName="z-[120]">
           <DialogHeader>
             <DialogTitle>
@@ -5120,7 +5585,8 @@ const clearDraftFromStorage = (patientId:any) => {
                 Procedure *
               </label>
               <ProcedureCombobox
-                value={tempProcedure.procedureId || ""}
+                key={editingProcedureIndex !== null ? `edit-${editingProcedureIndex}-${tempProcedure.procedureId}` : 'new'}
+                value={tempProcedure.procedureId ? String(tempProcedure.procedureId) : ""}
                 onValueChange={(value, procedure) => {
                   setTempProcedure({
                     ...tempProcedure,
@@ -5187,6 +5653,224 @@ const clearDraftFromStorage = (patientId:any) => {
               disabled={!tempProcedure.procedureId}
             >
               {editingProcedureIndex !== null ? "Update" : "Add"} Procedure
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* View Lab Results Dialog */}
+      <Dialog open={viewLabResultsDialogOpen} onOpenChange={setViewLabResultsDialogOpen}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto !z-[200]" overlayClassName="!z-[199] !bg-black/80">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Flask className="h-5 w-5" />
+              Lab Test Results
+            </DialogTitle>
+            <DialogDescription>
+              {viewingLabOrder && (
+                <>
+                  Order: {viewingLabOrder.orderNumber || `#${viewingLabOrder.orderId}`} - {format(new Date(viewingLabOrder.orderDate), "PP")}
+                </>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          {viewingLabOrder && (
+            <div className="space-y-4">
+              {/* Order Information */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm">Order Information</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-sm text-muted-foreground">Order Number</p>
+                      <p className="font-medium">{viewingLabOrder.orderNumber || `#${viewingLabOrder.orderId}`}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Order Date</p>
+                      <p className="font-medium">{format(new Date(viewingLabOrder.orderDate), "PP")}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Status</p>
+                      <Badge variant={
+                        viewingLabOrder.status === 'completed' ? 'default' :
+                        viewingLabOrder.status === 'in_progress' ? 'secondary' :
+                        'outline'
+                      }>
+                        {viewingLabOrder.status || 'pending'}
+                      </Badge>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Priority</p>
+                      <Badge variant={
+                        viewingLabOrder.priority === 'stat' ? 'destructive' :
+                        viewingLabOrder.priority === 'urgent' ? 'default' :
+                        'secondary'
+                      }>
+                        {viewingLabOrder.priority || 'routine'}
+                      </Badge>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Test Results */}
+              {viewingLabOrder.items && viewingLabOrder.items.length > 0 ? (
+                <div className="space-y-4">
+                  <h3 className="text-lg font-semibold">Test Results</h3>
+                  {viewingLabOrder.items.map((item: any, idx: number) => {
+                    const testName = item.testName || item.testType?.testName || 'Unknown Test'
+                    const result = item.result
+                    const hasResult = result?.resultId
+
+                    return (
+                      <Card key={idx} className={hasResult ? "border-l-4 border-l-primary" : ""}>
+                        <CardHeader>
+                          <CardTitle className="text-base flex items-center gap-2">
+                            {testName}
+                            {hasResult && (
+                              <Badge variant="default" className="text-xs">Results Available</Badge>
+                            )}
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          {hasResult ? (
+                            <div className="space-y-4">
+                              {/* Result Values - Array of parameters */}
+                              {result.values && result.values.length > 0 ? (
+                                <div className="space-y-3">
+                                  <div className="text-sm font-semibold text-muted-foreground mb-2">Test Parameters:</div>
+                                  <div className="space-y-2">
+                                    {result.values.map((val: any, vIdx: number) => (
+                                      <div key={vIdx} className="p-3 bg-muted rounded-md border-l-4 border-l-primary">
+                                        <div className="flex items-start justify-between gap-4 mb-2">
+                                          <div className="flex-1">
+                                            <p className="font-semibold text-base">{val.parameterName || 'Parameter'}</p>
+                                            {val.parameterCode && (
+                                              <p className="text-xs text-muted-foreground font-mono">{val.parameterCode}</p>
+                                            )}
+                                          </div>
+                                          <div className="text-right">
+                                            <p className="text-2xl font-bold">
+                                              {val.value}
+                                              {val.unit && <span className="text-lg text-muted-foreground ml-1">{val.unit}</span>}
+                                            </p>
+                                            {val.flag && (
+                                              <Badge 
+                                                variant={
+                                                  val.flag === 'H' || val.flag === 'HIGH' ? 'destructive' :
+                                                  val.flag === 'L' || val.flag === 'LOW' ? 'secondary' :
+                                                  'default'
+                                                }
+                                                className="mt-1"
+                                              >
+                                                {val.flag}
+                                              </Badge>
+                                            )}
+                                          </div>
+                                        </div>
+                                        {val.referenceRange && (
+                                          <div className="mt-2 pt-2 border-t">
+                                            <p className="text-xs text-muted-foreground">Reference Range:</p>
+                                            <p className="text-sm font-medium">{val.referenceRange}</p>
+                                          </div>
+                                        )}
+                                        {val.normalRange && val.normalRange !== val.referenceRange && (
+                                          <div className="mt-1">
+                                            <p className="text-xs text-muted-foreground">Normal Range:</p>
+                                            <p className="text-sm font-medium">{val.normalRange}</p>
+                                          </div>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              ) : (
+                                // Fallback: Try to display single result value if structure is different
+                                <div className="p-3 bg-muted rounded-md">
+                                  <div className="grid grid-cols-3 gap-4">
+                                    {result.resultValue && (
+                                      <div>
+                                        <p className="text-sm text-muted-foreground">Result Value</p>
+                                        <p className="text-lg font-bold">{result.resultValue}</p>
+                                      </div>
+                                    )}
+                                    {result.unit && (
+                                      <div>
+                                        <p className="text-sm text-muted-foreground">Unit</p>
+                                        <p className="font-medium">{result.unit}</p>
+                                      </div>
+                                    )}
+                                    {result.flag && (
+                                      <div>
+                                        <p className="text-sm text-muted-foreground">Flag</p>
+                                        <Badge variant={
+                                          result.flag === 'H' || result.flag === 'HIGH' ? 'destructive' :
+                                          result.flag === 'L' || result.flag === 'LOW' ? 'secondary' :
+                                          'default'
+                                        }>
+                                          {result.flag}
+                                        </Badge>
+                                      </div>
+                                    )}
+                                  </div>
+                                  {result.referenceRange && (
+                                    <div className="mt-2 pt-2 border-t">
+                                      <p className="text-sm text-muted-foreground">Reference Range:</p>
+                                      <p className="font-medium">{result.referenceRange}</p>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* Comments/Notes */}
+                              {result.comments && (
+                                <div>
+                                  <p className="text-sm text-muted-foreground mb-1">Comments</p>
+                                  <p className="text-sm whitespace-pre-wrap bg-muted p-2 rounded-md">{result.comments}</p>
+                                </div>
+                              )}
+
+                              {/* Result Date */}
+                              {result.resultDate && (
+                                <div>
+                                  <p className="text-sm text-muted-foreground mb-1">Result Date</p>
+                                  <p className="text-sm">{format(new Date(result.resultDate), "PPp")}</p>
+                                </div>
+                              )}
+
+                              {/* Verified By */}
+                              {result.verifiedBy && (
+                                <div>
+                                  <p className="text-sm text-muted-foreground mb-1">Verified By</p>
+                                  <p className="text-sm">{result.verifiedBy}</p>
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="text-center py-4 text-muted-foreground">
+                              <p>No results available for this test yet.</p>
+                              <p className="text-xs mt-1">Status: {item.status || 'pending'}</p>
+                            </div>
+                          )}
+                        </CardContent>
+                      </Card>
+                    )
+                  })}
+                </div>
+              ) : (
+                <Card>
+                  <CardContent className="py-8 text-center text-muted-foreground">
+                    No test items found for this order.
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setViewLabResultsDialogOpen(false)}>
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>

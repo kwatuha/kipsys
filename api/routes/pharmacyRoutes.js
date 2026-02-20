@@ -438,24 +438,32 @@ router.post('/prescriptions', async (req, res) => {
             }
 
             // Create Cashier Queue Entry (check for duplicates first)
-            const [existingCashierQueue] = await connection.execute(
-                `SELECT queueId FROM queue_entries
-                 WHERE patientId = ? AND servicePoint = 'cashier'
-                 AND status IN ('waiting', 'called', 'serving')`,
-                [patientId]
-            );
-
-            if (existingCashierQueue.length === 0) {
-                // Patient not in cashier queue, add them
-                const [cashierCount] = await connection.execute('SELECT COUNT(*) as count FROM queue_entries WHERE DATE(arrivalTime) = CURDATE() AND servicePoint = "cashier"');
-                const cashierTicketNumber = `C-${String(cashierCount[0].count + 1).padStart(3, '0')}`;
-                await connection.execute(
-                    `INSERT INTO queue_entries (patientId, ticketNumber, servicePoint, priority, status, notes, createdBy)
-                     VALUES (?, ?, 'cashier', 'normal', 'waiting', ?, ?)`,
-                    [patientId, cashierTicketNumber, `Drug payment - Prescription: ${prescNumber}`, userId || null]
+            try {
+                const [existingCashierQueue] = await connection.execute(
+                    `SELECT queueId FROM queue_entries
+                     WHERE patientId = ? AND servicePoint = 'cashier'
+                     AND status IN ('waiting', 'called', 'serving')`,
+                    [patientId]
                 );
-            } else {
-                console.log(`Patient ${patientId} already exists in cashier queue (queueId: ${existingCashierQueue[0].queueId}) - skipping duplicate entry for prescription ${prescNumber}`);
+
+                if (existingCashierQueue.length === 0) {
+                    // Patient not in cashier queue, add them
+                    const [cashierCount] = await connection.execute('SELECT COUNT(*) as count FROM queue_entries WHERE DATE(arrivalTime) = CURDATE() AND servicePoint = "cashier"');
+                    const cashierTicketNumber = `C-${String(cashierCount[0].count + 1).padStart(3, '0')}`;
+                    const [queueResult] = await connection.execute(
+                        `INSERT INTO queue_entries (patientId, ticketNumber, servicePoint, priority, status, notes, createdBy)
+                         VALUES (?, ?, 'cashier', 'normal', 'waiting', ?, ?)`,
+                        [patientId, cashierTicketNumber, `Drug payment - Prescription: ${prescNumber}`, userId || null]
+                    );
+                    console.log(`[CASHIER QUEUE] Successfully created cashier queue entry for patient ${patientId} with ticket ${cashierTicketNumber} for prescription ${prescNumber}`);
+                } else {
+                    console.log(`[CASHIER QUEUE] Patient ${patientId} already exists in cashier queue (queueId: ${existingCashierQueue[0].queueId}) - skipping duplicate entry for prescription ${prescNumber}`);
+                }
+            } catch (queueError) {
+                console.error('[CASHIER QUEUE] Error creating cashier queue entry:', queueError);
+                console.error('[CASHIER QUEUE] Error stack:', queueError.stack);
+                // Don't fail the prescription creation if queue entry fails
+                // The invoice is already created, so the patient can still pay
             }
         }
 
