@@ -28,6 +28,80 @@ router.get('/', async (req, res) => {
 });
 
 /**
+ * @route GET /api/roles/:roleName/landing-config
+ * @description Get landing page configuration for a role by name
+ * IMPORTANT: This route must come before /:id to avoid route conflicts
+ */
+router.get('/:roleName/landing-config', async (req, res) => {
+    try {
+        const { roleName } = req.params;
+        
+        // Handle case-insensitive role name matching
+        const [rows] = await pool.query(
+            `SELECT 
+                roleId,
+                roleName,
+                landingPageType,
+                landingPageLabel,
+                landingPageUrl,
+                landingPageIcon,
+                landingPageDescription,
+                defaultServicePoint
+            FROM roles 
+            WHERE LOWER(roleName) = LOWER(?) AND isActive = 1`,
+            [roleName]
+        );
+        
+        if (rows.length === 0) {
+            return res.status(404).json({ message: 'Role not found' });
+        }
+        
+        const role = rows[0];
+        
+        // Return landing page config with defaults
+        res.status(200).json({
+            roleName: role.roleName,
+            landingPageType: role.landingPageType || 'dashboard',
+            landingPageLabel: role.landingPageLabel || null,
+            landingPageUrl: role.landingPageUrl || null,
+            landingPageIcon: role.landingPageIcon || 'Home',
+            landingPageDescription: role.landingPageDescription || null,
+            defaultServicePoint: role.defaultServicePoint || null
+        });
+    } catch (error) {
+        console.error('Error fetching role landing config:', error);
+        res.status(500).json({ message: 'Error fetching role landing config', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/roles/:id/dashboard-cards
+ * @description Get dashboard card visibility configuration for a role
+ */
+router.get('/:id/dashboard-cards', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const [rows] = await pool.query(
+            `SELECT cardId, isVisible 
+             FROM role_dashboard_cards 
+             WHERE roleId = ?`,
+            [id]
+        );
+        
+        // Return as object for easier lookup
+        const cards = {};
+        rows.forEach(row => {
+            cards[row.cardId] = row.isVisible;
+        });
+        
+        res.status(200).json(cards);
+    } catch (error) {
+        console.error('Error fetching role dashboard cards:', error);
+        res.status(500).json({ message: 'Error fetching role dashboard cards', error: error.message });
+    }
+});
+
+/**
  * @route GET /api/roles/:id
  * @description Get a single role with its privileges
  */
@@ -56,9 +130,22 @@ router.get('/:id', async (req, res) => {
             ORDER BY p.module, p.privilegeName
         `, [id]);
 
+        // Get dashboard card visibility configuration
+        const [cardRows] = await pool.query(
+            `SELECT cardId, isVisible 
+             FROM role_dashboard_cards 
+             WHERE roleId = ?`,
+            [id]
+        );
+        const dashboardCards = {};
+        cardRows.forEach(row => {
+            dashboardCards[row.cardId] = row.isVisible;
+        });
+
         res.status(200).json({
             ...roleRows[0],
-            privileges: privilegeRows
+            privileges: privilegeRows,
+            dashboardCards: dashboardCards
         });
     } catch (error) {
         console.error('Error fetching role:', error);
@@ -72,7 +159,19 @@ router.get('/:id', async (req, res) => {
  */
 router.post('/', async (req, res) => {
     try {
-        const { roleName, description, isActive = true, privileges = [] } = req.body;
+        const { 
+            roleName, 
+            description, 
+            isActive = true, 
+            privileges = [],
+            landingPageType = 'dashboard',
+            landingPageLabel = null,
+            landingPageUrl = null,
+            landingPageIcon = null,
+            landingPageDescription = null,
+            defaultServicePoint = null,
+            dashboardCards = {}
+        } = req.body;
 
         if (!roleName) {
             return res.status(400).json({ error: 'Role name is required' });
@@ -88,10 +187,30 @@ router.post('/', async (req, res) => {
             return res.status(400).json({ error: 'Role with that name already exists' });
         }
 
-        // Insert role
+        // Insert role with landing page configuration
         const [result] = await pool.execute(
-            'INSERT INTO roles (roleName, description, isActive) VALUES (?, ?, ?)',
-            [roleName, description || null, isActive]
+            `INSERT INTO roles (
+                roleName, 
+                description, 
+                isActive,
+                landingPageType,
+                landingPageLabel,
+                landingPageUrl,
+                landingPageIcon,
+                landingPageDescription,
+                defaultServicePoint
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                roleName, 
+                description || null, 
+                isActive,
+                landingPageType,
+                landingPageLabel,
+                landingPageUrl,
+                landingPageIcon,
+                landingPageDescription,
+                defaultServicePoint
+            ]
         );
 
         const roleId = result.insertId;
@@ -125,7 +244,19 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        const { roleName, description, isActive, privileges } = req.body;
+        const { 
+            roleName, 
+            description, 
+            isActive,
+            privileges,
+            landingPageType,
+            landingPageLabel,
+            landingPageUrl,
+            landingPageIcon,
+            landingPageDescription,
+            defaultServicePoint,
+            dashboardCards
+        } = req.body;
 
         // Check if role exists
         const [existing] = await pool.query(
@@ -164,6 +295,37 @@ router.put('/:id', async (req, res) => {
             values.push(isActive);
         }
 
+        // Landing page configuration fields
+        if (landingPageType !== undefined) {
+            updates.push('landingPageType = ?');
+            values.push(landingPageType);
+        }
+        
+        if (landingPageLabel !== undefined) {
+            updates.push('landingPageLabel = ?');
+            values.push(landingPageLabel);
+        }
+        
+        if (landingPageUrl !== undefined) {
+            updates.push('landingPageUrl = ?');
+            values.push(landingPageUrl);
+        }
+        
+        if (landingPageIcon !== undefined) {
+            updates.push('landingPageIcon = ?');
+            values.push(landingPageIcon);
+        }
+        
+        if (landingPageDescription !== undefined) {
+            updates.push('landingPageDescription = ?');
+            values.push(landingPageDescription);
+        }
+        
+        if (defaultServicePoint !== undefined) {
+            updates.push('defaultServicePoint = ?');
+            values.push(defaultServicePoint);
+        }
+
         // Start transaction for atomic updates
         await pool.query('START TRANSACTION');
 
@@ -194,6 +356,31 @@ router.put('/:id', async (req, res) => {
                     await pool.query(
                         'INSERT INTO role_privileges (roleId, privilegeId) VALUES ?',
                         [privilegeValues]
+                    );
+                }
+            }
+
+            // Update dashboard card visibility if provided
+            if (dashboardCards !== undefined) {
+                if (typeof dashboardCards !== 'object' || Array.isArray(dashboardCards)) {
+                    throw new Error('Dashboard cards must be an object');
+                }
+
+                // Remove all existing dashboard card configurations
+                await pool.execute(
+                    'DELETE FROM role_dashboard_cards WHERE roleId = ?',
+                    [id]
+                );
+
+                // Add new dashboard card configurations if any
+                const cardValues = Object.entries(dashboardCards)
+                    .filter(([cardId, isVisible]) => cardId && typeof isVisible === 'boolean')
+                    .map(([cardId, isVisible]) => [parseInt(id), cardId, isVisible]);
+                
+                if (cardValues.length > 0) {
+                    await pool.query(
+                        'INSERT INTO role_dashboard_cards (roleId, cardId, isVisible) VALUES ?',
+                        [cardValues]
                     );
                 }
             }

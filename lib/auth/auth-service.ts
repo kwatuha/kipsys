@@ -8,6 +8,16 @@ export interface User {
   name: string
   email: string
   department: string
+  privileges?: Array<{ privilegeName: string; module?: string }> | string[]
+  dashboardCards?: Record<string, boolean> | null
+  landingConfig?: {
+    type: 'dashboard' | 'app_view' | 'redirect';
+    label?: string;
+    url?: string;
+    icon?: string;
+    description?: string;
+    servicePoint?: string;
+  };
 }
 
 export interface LoginCredentials {

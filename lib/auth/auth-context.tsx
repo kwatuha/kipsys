@@ -83,6 +83,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (response && response.ok) {
           const data = await response.json()
           if (data.user) {
+            // Normalize privileges - handle both array of strings and array of objects
+            let privileges: Array<{ privilegeName: string; module?: string }> = []
+            if (data.user.privileges) {
+              if (Array.isArray(data.user.privileges)) {
+                privileges = data.user.privileges.map((priv: any) => {
+                  if (typeof priv === 'string') {
+                    return { privilegeName: priv }
+                  }
+                  return { privilegeName: priv.privilegeName || priv, module: priv.module }
+                })
+              }
+            }
+            
             setUser({
               id: data.user.id?.toString() || data.user.userId?.toString() || '',
               username: data.user.username,
@@ -90,6 +103,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               name: `${data.user.firstName || ''} ${data.user.lastName || ''}`.trim(),
               email: data.user.email,
               department: data.user.department || '',
+              privileges: privileges,
+              dashboardCards: data.user.dashboardCards || null,
+              landingConfig: data.user.landingConfig || null,
             })
             setIsAuthenticated(true)
             setIsLoading(false)
@@ -121,6 +137,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             const payload = JSON.parse(atob(parts[1]))
             if (payload.user && payload.exp && payload.exp * 1000 > Date.now()) {
               // Token not expired, use stored user data
+              // Normalize privileges from JWT payload
+              let privileges: Array<{ privilegeName: string; module?: string }> = []
+              if (payload.user.privileges) {
+                if (Array.isArray(payload.user.privileges)) {
+                  privileges = payload.user.privileges.map((priv: any) => {
+                    if (typeof priv === 'string') {
+                      return { privilegeName: priv }
+                    }
+                    return { privilegeName: priv.privilegeName || priv, module: priv.module }
+                  })
+                }
+              }
+              
               setUser({
                 id: payload.user.id?.toString() || '',
                 username: payload.user.username,
@@ -128,6 +157,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 name: `${payload.user.firstName || ''} ${payload.user.lastName || ''}`.trim(),
                 email: payload.user.email,
                 department: payload.user.department || '',
+                privileges: privileges,
+                dashboardCards: payload.user.dashboardCards || null,
+                landingConfig: payload.user.landingConfig || null,
               })
               setIsAuthenticated(true)
               setIsLoading(false)
@@ -185,14 +217,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             localStorage.setItem('jwt_token', data.token)
             // Also store user data
             if (data.user) {
-              setUser({
-                id: data.user.id.toString(),
-                username: data.user.username,
-                role: data.user.role?.toLowerCase() || 'registration',
-                name: `${data.user.firstName || ''} ${data.user.lastName || ''}`.trim(),
-                email: data.user.email,
-                department: data.user.department || '',
-              })
+            // Normalize privileges - handle both array of strings and array of objects
+            let privileges: Array<{ privilegeName: string; module?: string }> = []
+            if (data.user.privileges) {
+              if (Array.isArray(data.user.privileges)) {
+                privileges = data.user.privileges.map((priv: any) => {
+                  if (typeof priv === 'string') {
+                    return { privilegeName: priv }
+                  }
+                  return { privilegeName: priv.privilegeName || priv, module: priv.module }
+                })
+              }
+            }
+            
+            setUser({
+              id: data.user.id.toString(),
+              username: data.user.username,
+              role: data.user.role?.toLowerCase() || 'registration',
+              name: `${data.user.firstName || ''} ${data.user.lastName || ''}`.trim(),
+              email: data.user.email,
+              department: data.user.department || '',
+              privileges: privileges,
+              dashboardCards: data.user.dashboardCards || null,
+              landingConfig: data.user.landingConfig || null,
+            })
               setIsAuthenticated(true)
               return { success: true }
             }

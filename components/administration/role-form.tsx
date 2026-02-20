@@ -21,12 +21,24 @@ import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { DialogFooter } from "@/components/ui/dialog"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Separator } from "@/components/ui/separator"
+import * as LucideIcons from "lucide-react"
+import Link from "next/link"
+import { DASHBOARD_CARDS } from "@/lib/dashboard-cards-config"
 
 const formSchema = z.object({
   roleName: z.string().min(1, "Role name is required"),
   description: z.string().optional(),
   isActive: z.boolean().default(true),
   privileges: z.array(z.number()).optional(),
+  landingPageType: z.enum(['dashboard', 'app_view', 'redirect']).default('dashboard'),
+  landingPageLabel: z.string().nullable().optional(),
+  landingPageUrl: z.string().nullable().optional(),
+  landingPageIcon: z.string().nullable().optional(),
+  landingPageDescription: z.string().nullable().optional(),
+  defaultServicePoint: z.string().nullable().optional(),
+  dashboardCards: z.record(z.boolean()).optional(),
 })
 
 type FormValues = z.infer<typeof formSchema>
@@ -55,6 +67,12 @@ export function RoleForm({ open, onOpenChange, onSuccess, role, privileges }: Ro
       description: "",
       isActive: true,
       privileges: [],
+      landingPageType: 'dashboard',
+      landingPageLabel: null,
+      landingPageUrl: null,
+      landingPageIcon: null,
+      landingPageDescription: null,
+      defaultServicePoint: null,
     },
   })
 
@@ -125,18 +143,56 @@ export function RoleForm({ open, onOpenChange, onSuccess, role, privileges }: Ro
           assignedCount: assignedPrivilegeIds.length
         })
 
+        // Initialize dashboard cards - if role has dashboardCards, use them, otherwise default all to true
+        const dashboardCardsConfig: Record<string, boolean> = {}
+        if (role.dashboardCards && typeof role.dashboardCards === 'object') {
+          // Use existing configuration
+          Object.assign(dashboardCardsConfig, role.dashboardCards)
+          // Ensure all cards from DASHBOARD_CARDS are included (default to true if not in config)
+          DASHBOARD_CARDS.forEach(card => {
+            if (!(card.id in dashboardCardsConfig)) {
+              dashboardCardsConfig[card.id] = true
+            }
+          })
+        } else {
+          // Default all cards to visible (will be filtered by privileges)
+          DASHBOARD_CARDS.forEach(card => {
+            dashboardCardsConfig[card.id] = true
+          })
+        }
+
         form.reset({
           roleName: role.roleName ?? "",
           description: role.description ?? "",
           isActive: role.isActive ?? true,
           privileges: assignedPrivilegeIds,
+          landingPageType: role.landingPageType ?? 'dashboard',
+          landingPageLabel: role.landingPageLabel ?? null,
+          landingPageUrl: role.landingPageUrl ?? null,
+          landingPageIcon: role.landingPageIcon ?? null,
+          landingPageDescription: role.landingPageDescription ?? null,
+          defaultServicePoint: role.defaultServicePoint ?? null,
+          dashboardCards: dashboardCardsConfig,
         })
       } else {
+        // Initialize dashboard cards - default all to true
+        const defaultDashboardCards: Record<string, boolean> = {}
+        DASHBOARD_CARDS.forEach(card => {
+          defaultDashboardCards[card.id] = true
+        })
+        
         form.reset({
           roleName: "",
           description: "",
           isActive: true,
           privileges: [],
+          landingPageType: 'dashboard',
+          landingPageLabel: null,
+          landingPageUrl: null,
+          landingPageIcon: null,
+          landingPageDescription: null,
+          defaultServicePoint: null,
+          dashboardCards: defaultDashboardCards,
         })
       }
     }
@@ -151,6 +207,13 @@ export function RoleForm({ open, onOpenChange, onSuccess, role, privileges }: Ro
         description: data.description || null,
         isActive: data.isActive,
         privileges: data.privileges || [],
+        landingPageType: data.landingPageType,
+        landingPageLabel: data.landingPageType !== 'dashboard' ? data.landingPageLabel : null,
+        landingPageUrl: data.landingPageType !== 'dashboard' ? data.landingPageUrl : null,
+        landingPageIcon: data.landingPageType !== 'dashboard' ? data.landingPageIcon : null,
+        landingPageDescription: data.landingPageType !== 'dashboard' ? data.landingPageDescription : null,
+        defaultServicePoint: data.defaultServicePoint || null,
+        dashboardCards: data.dashboardCards || {},
       }
 
       if (isEditing) {
@@ -406,6 +469,187 @@ export function RoleForm({ open, onOpenChange, onSuccess, role, privileges }: Ro
               )}
             />
 
+            <Separator className="my-4" />
+            <h3 className="text-lg font-semibold">Landing Page Configuration</h3>
+            <p className="text-sm text-muted-foreground">
+              Define what users with this role see immediately after logging in.
+            </p>
+
+            <FormField
+              control={form.control}
+              name="landingPageType"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Landing Page Type</FormLabel>
+                  <Select onValueChange={field.onChange} defaultValue={field.value}>
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select a landing page type" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value="dashboard">Dashboard</SelectItem>
+                      <SelectItem value="app_view">App View (Simplified Card)</SelectItem>
+                      <SelectItem value="redirect">Redirect to URL</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <FormDescription>
+                    Choose how users with this role will land after login.
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            {form.watch('landingPageType') !== 'dashboard' && (
+              <>
+                <FormField
+                  control={form.control}
+                  name="landingPageLabel"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Landing Page Label</FormLabel>
+                      <FormControl>
+                        <Input placeholder="e.g., Triage Service Point" {...field} value={field.value || ''} />
+                      </FormControl>
+                      <FormDescription>
+                        The title displayed on the landing page or redirect button.
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="landingPageUrl"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Landing Page URL</FormLabel>
+                      <FormControl>
+                        <Input placeholder="e.g., /queue/service" {...field} value={field.value || ''} />
+                      </FormControl>
+                      <FormDescription>
+                        The internal path or external URL to redirect to or link to.
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="landingPageIcon"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Landing Page Icon (Lucide Icon Name)</FormLabel>
+                      <FormControl>
+                        <Input placeholder="e.g., Activity, Home" {...field} value={field.value || ''} />
+                      </FormControl>
+                      <FormDescription>
+                        A <Link href="https://lucide.dev/icons/" target="_blank" rel="noopener noreferrer" className="text-primary underline">Lucide icon name</Link> to display (e.g., "Activity"). Defaults to "Home".
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="landingPageDescription"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Landing Page Description</FormLabel>
+                      <FormControl>
+                        <Textarea placeholder="A brief description for the landing page." {...field} value={field.value || ''} />
+                      </FormControl>
+                      <FormDescription>
+                        An optional description for the app view card or redirect message.
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="defaultServicePoint"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Default Service Point</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value || ''}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select a service point (optional)" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="">None</SelectItem>
+                          <SelectItem value="triage">Triage</SelectItem>
+                          <SelectItem value="consultation">Consultation</SelectItem>
+                          <SelectItem value="pharmacy">Pharmacy</SelectItem>
+                          <SelectItem value="laboratory">Laboratory</SelectItem>
+                          <SelectItem value="radiology">Radiology</SelectItem>
+                          <SelectItem value="cashier">Cashier</SelectItem>
+                          <SelectItem value="billing">Billing</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormDescription>
+                        The default service point for this role. If the landing page URL is /queue/service, this will automatically filter to show only this service point.
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </>
+            )}
+
+            <Separator className="my-4" />
+            <h3 className="text-lg font-semibold">Dashboard Cards Configuration</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              Configure which summary cards are visible on the dashboard for users with this role. 
+              Cards are automatically filtered by privileges, but you can override visibility here.
+            </p>
+            
+            <FormField
+              control={form.control}
+              name="dashboardCards"
+              render={({ field }) => (
+                <FormItem>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {DASHBOARD_CARDS.map((card) => (
+                      <Card key={card.id} className="p-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex-1">
+                            <div className="font-medium text-sm">{card.title}</div>
+                            {card.requiredPrivilege && (
+                              <div className="text-xs text-muted-foreground mt-1">
+                                Requires: {card.requiredPrivilege}
+                                {card.requiredPrivilegeModule && ` (${card.requiredPrivilegeModule})`}
+                              </div>
+                            )}
+                          </div>
+                          <Switch
+                            checked={field.value?.[card.id] ?? true}
+                            onCheckedChange={(checked) => {
+                              const current = field.value || {}
+                              field.onChange({
+                                ...current,
+                                [card.id]: checked,
+                              })
+                            }}
+                          />
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
+                  <FormDescription className="mt-2">
+                    Toggle cards on/off. If a card is disabled, it won't appear on the dashboard even if the user has the required privilege.
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <Separator className="my-4" />
+            <h3 className="text-lg font-semibold">Privileges</h3>
+
             <FormField
               control={form.control}
               name="privileges"
@@ -557,6 +801,187 @@ export function RoleForm({ open, onOpenChange, onSuccess, role, privileges }: Ro
                     </FormItem>
                   )}
                 />
+
+                <Separator className="my-4" />
+                <h3 className="text-lg font-semibold">Landing Page Configuration</h3>
+                <p className="text-sm text-muted-foreground">
+                  Define what users with this role see immediately after logging in.
+                </p>
+
+                <FormField
+                  control={form.control}
+                  name="landingPageType"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Landing Page Type</FormLabel>
+                      <Select onValueChange={field.onChange} defaultValue={field.value}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select a landing page type" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="dashboard">Dashboard</SelectItem>
+                          <SelectItem value="app_view">App View (Simplified Card)</SelectItem>
+                          <SelectItem value="redirect">Redirect to URL</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormDescription>
+                        Choose how users with this role will land after login.
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                {form.watch('landingPageType') !== 'dashboard' && (
+                  <>
+                    <FormField
+                      control={form.control}
+                      name="landingPageLabel"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Landing Page Label</FormLabel>
+                          <FormControl>
+                            <Input placeholder="e.g., Triage Service Point" {...field} value={field.value || ''} />
+                          </FormControl>
+                          <FormDescription>
+                            The title displayed on the landing page or redirect button.
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="landingPageUrl"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Landing Page URL</FormLabel>
+                          <FormControl>
+                            <Input placeholder="e.g., /queue/service" {...field} value={field.value || ''} />
+                          </FormControl>
+                          <FormDescription>
+                            The internal path or external URL to redirect to or link to.
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="landingPageIcon"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Landing Page Icon (Lucide Icon Name)</FormLabel>
+                          <FormControl>
+                            <Input placeholder="e.g., Activity, Home" {...field} value={field.value || ''} />
+                          </FormControl>
+                          <FormDescription>
+                            A <Link href="https://lucide.dev/icons/" target="_blank" rel="noopener noreferrer" className="text-primary underline">Lucide icon name</Link> to display (e.g., "Activity"). Defaults to "Home".
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="landingPageDescription"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Landing Page Description</FormLabel>
+                          <FormControl>
+                            <Textarea placeholder="A brief description for the landing page." {...field} value={field.value || ''} />
+                          </FormControl>
+                          <FormDescription>
+                            An optional description for the app view card or redirect message.
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="defaultServicePoint"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Default Service Point</FormLabel>
+                          <Select onValueChange={field.onChange} value={field.value || ''}>
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select a service point (optional)" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="">None</SelectItem>
+                              <SelectItem value="triage">Triage</SelectItem>
+                              <SelectItem value="consultation">Consultation</SelectItem>
+                              <SelectItem value="pharmacy">Pharmacy</SelectItem>
+                              <SelectItem value="laboratory">Laboratory</SelectItem>
+                              <SelectItem value="radiology">Radiology</SelectItem>
+                              <SelectItem value="cashier">Cashier</SelectItem>
+                              <SelectItem value="billing">Billing</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <FormDescription>
+                            The default service point for this role. If the landing page URL is /queue/service, this will automatically filter to show only this service point.
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </>
+                )}
+
+                <Separator className="my-4" />
+                <h3 className="text-lg font-semibold">Dashboard Cards Configuration</h3>
+                <p className="text-sm text-muted-foreground mb-4">
+                  Configure which summary cards are visible on the dashboard for users with this role. 
+                  Cards are automatically filtered by privileges, but you can override visibility here.
+                </p>
+                
+                <FormField
+                  control={form.control}
+                  name="dashboardCards"
+                  render={({ field }) => (
+                    <FormItem>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {DASHBOARD_CARDS.map((card) => (
+                          <Card key={card.id} className="p-3">
+                            <div className="flex items-center justify-between">
+                              <div className="flex-1">
+                                <div className="font-medium text-sm">{card.title}</div>
+                                {card.requiredPrivilege && (
+                                  <div className="text-xs text-muted-foreground mt-1">
+                                    Requires: {card.requiredPrivilege}
+                                    {card.requiredPrivilegeModule && ` (${card.requiredPrivilegeModule})`}
+                                  </div>
+                                )}
+                              </div>
+                              <Switch
+                                checked={field.value?.[card.id] ?? true}
+                                onCheckedChange={(checked) => {
+                                  const current = field.value || {}
+                                  field.onChange({
+                                    ...current,
+                                    [card.id]: checked,
+                                  })
+                                }}
+                              />
+                            </div>
+                          </Card>
+                        ))}
+                      </div>
+                      <FormDescription className="mt-2">
+                        Toggle cards on/off. If a card is disabled, it won't appear on the dashboard even if the user has the required privilege.
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <Separator className="my-4" />
+                <h3 className="text-lg font-semibold">Privileges</h3>
 
                 <FormField
                   control={form.control}

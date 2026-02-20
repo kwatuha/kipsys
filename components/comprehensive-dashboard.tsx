@@ -34,6 +34,8 @@ import {
 import { patientApi, appointmentsApi, employeeApi, inventoryApi, departmentApi, dashboardApi } from "@/lib/api"
 import { formatDate, formatTime } from "@/lib/date-utils"
 import Link from "next/link"
+import { useAuth } from "@/lib/auth/auth-context"
+import { filterDashboardCards } from "@/lib/dashboard-cards-config"
 
 interface DashboardStats {
   totalPatients: number
@@ -50,6 +52,7 @@ interface DashboardStats {
 }
 
 export function ComprehensiveDashboard() {
+  const { user } = useAuth()
   const [loading, setLoading] = useState(true)
   const [stats, setStats] = useState<DashboardStats>({
     totalPatients: 0,
@@ -161,8 +164,9 @@ export function ComprehensiveDashboard() {
     }
   }
 
-  const statCards = [
+  const allStatCards = [
     {
+      id: 'total_patients',
       title: "Total Patients",
       value: stats.totalPatients.toLocaleString(),
       icon: Users,
@@ -172,6 +176,7 @@ export function ComprehensiveDashboard() {
       color: "text-blue-600"
     },
     {
+      id: 'today_appointments',
       title: "Today's Appointments",
       value: stats.todayAppointments.toString(),
       icon: Calendar,
@@ -181,6 +186,7 @@ export function ComprehensiveDashboard() {
       color: "text-green-600"
     },
     {
+      id: 'active_employees',
       title: "Active Employees",
       value: stats.totalEmployees.toString(),
       icon: UserCog,
@@ -190,6 +196,7 @@ export function ComprehensiveDashboard() {
       color: "text-purple-600"
     },
     {
+      id: 'departments',
       title: "Departments",
       value: stats.totalDepartments.toString(),
       icon: Building2,
@@ -199,6 +206,7 @@ export function ComprehensiveDashboard() {
       color: "text-orange-600"
     },
     {
+      id: 'monthly_revenue',
       title: "Monthly Revenue",
       value: `KES ${stats.monthlyRevenue.toLocaleString()}`,
       icon: DollarSign,
@@ -208,6 +216,7 @@ export function ComprehensiveDashboard() {
       color: "text-green-600"
     },
     {
+      id: 'low_stock_items',
       title: "Low Stock Items",
       value: stats.lowStockItems.toString(),
       icon: AlertCircle,
@@ -217,6 +226,7 @@ export function ComprehensiveDashboard() {
       color: "text-red-600"
     },
     {
+      id: 'inpatients',
       title: "Inpatients",
       value: stats.inpatients.toString(),
       icon: BedDouble,
@@ -226,6 +236,7 @@ export function ComprehensiveDashboard() {
       color: "text-indigo-600"
     },
     {
+      id: 'active_queue',
       title: "Active Queue",
       value: stats.activeQueue.toString(),
       icon: Activity,
@@ -235,6 +246,9 @@ export function ComprehensiveDashboard() {
       color: "text-yellow-600"
     },
   ]
+
+  // Filter cards based on user privileges and role-specific card visibility
+  const statCards = filterDashboardCards(allStatCards, user?.privileges, user?.dashboardCards || null)
 
   if (loading) {
     return (

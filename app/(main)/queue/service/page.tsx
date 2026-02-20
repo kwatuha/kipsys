@@ -1,16 +1,32 @@
+"use client"
+
+import { useSearchParams } from "next/navigation"
 import { CallPatientPanel } from "@/components/call-patient-panel"
 import { QueueDisplay } from "@/components/queue-display"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
 import { getServicePointName } from "@/lib/data/queue-data"
 import type { ServicePoint } from "@/lib/data/queue-data"
+import { useAuth } from "@/lib/auth/auth-context"
 
 export default function ServicePointDashboard() {
+  const searchParams = useSearchParams()
+  const { user } = useAuth()
+  
+  // Get service point from URL query params, user's role config, or default
+  const urlServicePoint = searchParams.get('servicePoint')
+  const roleServicePoint = (user?.landingConfig as any)?.servicePoint || null
+  const defaultServicePoint = urlServicePoint || roleServicePoint || "triage"
+  
   // In a real app, this would be determined by the logged-in user's role
   const staffName = "Dr. James Ndiwa"
 
-  // Service points this staff member can serve - make sure triage is first
-  const servicePoints: ServicePoint[] = ["triage", "consultation", "laboratory", "radiology", "pharmacy", "cashier"]
+  // Service points this staff member can serve
+  // If a specific service point is set, show only that one; otherwise show all
+  const allServicePoints: ServicePoint[] = ["triage", "consultation", "laboratory", "radiology", "pharmacy", "cashier"]
+  const servicePoints: ServicePoint[] = defaultServicePoint && defaultServicePoint !== "all" 
+    ? [defaultServicePoint as ServicePoint].filter(sp => allServicePoints.includes(sp))
+    : allServicePoints
 
   return (
     <div className="flex flex-col gap-6">
@@ -19,7 +35,7 @@ export default function ServicePointDashboard() {
         <p className="text-muted-foreground">Manage patient queue and service delivery</p>
       </div>
 
-      <Tabs defaultValue="triage" className="w-full">
+      <Tabs defaultValue={defaultServicePoint || "triage"} className="w-full">
         <div className="relative mb-6">
           <ScrollArea className="w-full whitespace-nowrap">
             <TabsList className="inline-flex h-auto w-full justify-start rounded-none border-b bg-transparent p-0">

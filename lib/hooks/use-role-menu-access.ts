@@ -2,7 +2,7 @@
  * React hook for accessing role-based menu and tab permissions
  */
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { roleMenuApi } from '@/lib/api'
 import { RoleMenuAccess } from '@/lib/role-menu-filter'
 
@@ -11,11 +11,13 @@ export function useRoleMenuAccess(userId?: string) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
-    loadMenuAccess()
-  }, [userId])
+  const loadMenuAccess = useCallback(async () => {
+    if (!userId) {
+      setLoading(false)
+      setMenuAccess(null)
+      return
+    }
 
-  const loadMenuAccess = async () => {
     try {
       setLoading(true)
       setError(null)
@@ -37,7 +39,11 @@ export function useRoleMenuAccess(userId?: string) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [userId])
+
+  useEffect(() => {
+    loadMenuAccess()
+  }, [loadMenuAccess])
 
   return {
     menuAccess,
