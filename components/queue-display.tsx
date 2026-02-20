@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
-import { MoreHorizontal, FileText, PlayCircle } from "lucide-react"
+import { MoreHorizontal, FileText, PlayCircle, Stethoscope, Pill } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   getQueueByServicePoint,
@@ -20,10 +20,35 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { queueApi, medicalRecordsApi } from "@/lib/api"
 import { PatientEncounterForm } from "@/components/patient-encounter-form"
 import { DispenseMedicationDialog } from "@/components/dispense-medication-dialog"
+import { AddTriageForm } from "@/components/add-triage-form"
+import { ViewBillDialog } from "@/components/view-bill-dialog"
+import { AddToQueueForm } from "@/components/add-to-queue-form"
 import { useAuth } from "@/lib/auth/auth-context"
 import { format } from "date-fns"
 import { useRoleMenuAccess } from "@/lib/hooks/use-role-menu-access"
 import { filterQueueServicePoints } from "@/lib/role-menu-filter"
+import { toast } from "@/components/ui/use-toast"
+import { Receipt, Edit, Trash2, ArrowRight } from "lucide-react"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Label } from "@/components/ui/label"
 
 interface QueueDisplayProps {
   initialServicePoint?: ServicePoint
@@ -44,6 +69,7 @@ export function QueueDisplay({ initialServicePoint = "triage" }: QueueDisplayPro
 
   const { user } = useAuth()
   const { menuAccess, loading: menuLoading } = useRoleMenuAccess(user?.id)
+  const [queueCounts, setQueueCounts] = useState<Record<string, number>>({})
 
   // Filter service points based on role access
   const allowedServicePoints = menuLoading || !menuAccess
@@ -88,20 +114,20 @@ export function QueueDisplay({ initialServicePoint = "triage" }: QueueDisplayPro
   }, [screenSize])
 
   // Determine which tabs to show
-  // Priority: 1. Selected tab, 2. Common tabs, 3. Others in order
+  // Priority: 1. Selected tab, 2. Common tabs (if allowed), 3. Others in order
   const visibleTabs = useMemo(() => {
-    // Always include the selected tab
-    // Make sure triage is the first priority tab
+    // Priority tabs (only if they're in allowedServicePoints)
     const priorityTabs: ServicePoint[] = ["triage", "consultation", "pharmacy"]
+    const allowedPriorityTabs = priorityTabs.filter(tab => allowedServicePoints.includes(tab))
 
-    // Start with the selected tab if it's not already in priority tabs
+    // Start with the selected tab if it's allowed
     const result: ServicePoint[] = []
-    if (!priorityTabs.includes(selectedTab)) {
+    if (allowedServicePoints.includes(selectedTab)) {
       result.push(selectedTab)
     }
 
-    // Add priority tabs
-    for (const tab of priorityTabs) {
+    // Add allowed priority tabs (excluding the selected tab if it's already added)
+    for (const tab of allowedPriorityTabs) {
       if (result.length < visibleTabCount) {
         if (!result.includes(tab)) {
           result.push(tab)
@@ -109,10 +135,10 @@ export function QueueDisplay({ initialServicePoint = "triage" }: QueueDisplayPro
       }
     }
 
-    // Fill remaining slots with other allowed tabs
+    // Fill remaining slots with other allowed tabs (excluding priority tabs already added)
     for (const tab of allowedServicePoints) {
       if (result.length < visibleTabCount) {
-        if (!result.includes(tab)) {
+        if (!result.includes(tab) && !allowedPriorityTabs.includes(tab)) {
           result.push(tab)
         }
       }
@@ -129,6 +155,34 @@ export function QueueDisplay({ initialServicePoint = "triage" }: QueueDisplayPro
   // Check if we need to show the "More" dropdown
   const showMoreDropdown = dropdownTabs.length > 0
 
+  // Load queue counts for all allowed service points
+  useEffect(() => {
+    if (menuLoading || !menuAccess || allowedServicePoints.length === 0) return
+
+    const loadQueueCounts = async () => {
+      const counts: Record<string, number> = {}
+      await Promise.all(
+        allowedServicePoints.map(async (servicePoint) => {
+          try {
+            // Fetch queue data without including completed entries (same as detail view)
+            const data = await queueApi.getAll(servicePoint, undefined, 1, 50, false)
+            // Count all entries returned (API already filters out completed/cancelled by default)
+            counts[servicePoint] = data.length
+          } catch (error) {
+            console.error(`Error loading queue count for ${servicePoint}:`, error)
+            counts[servicePoint] = 0
+          }
+        })
+      )
+      setQueueCounts(counts)
+    }
+
+    loadQueueCounts()
+    // Refresh counts periodically (every 30 seconds)
+    const interval = setInterval(loadQueueCounts, 30000)
+    return () => clearInterval(interval)
+  }, [allowedServicePoints, menuLoading, menuAccess])
+
   return (
     <Card className="h-full">
       <CardHeader className="pb-2">
@@ -137,17 +191,17 @@ export function QueueDisplay({ initialServicePoint = "triage" }: QueueDisplayPro
       </CardHeader>
       <CardContent>
         <Tabs
-          defaultValue="triage"
+          defaultValue={validInitialServicePoint}
           value={selectedTab}
           onValueChange={(value) => setSelectedTab(value as ServicePoint)}
           className="w-full"
         >
           <div className="relative mb-4">
             <ScrollArea className="w-full whitespace-nowrap">
-              {visibleTabCount < allServicePoints.length && <QueueTabsIndicator />}
+              {visibleTabCount < allowedServicePoints.length && <QueueTabsIndicator />}
               <TabsList className="inline-flex h-auto w-full justify-start rounded-none border-b bg-transparent p-0">
-                {visibleTabs.map((point) => {
-                  const pointData = getQueueByServicePoint(point)
+                {visibleTabs.filter(tab => allowedServicePoints.includes(tab)).map((point) => {
+                  const count = queueCounts[point] || 0
                   return (
                     <TabsTrigger
                       key={point}
@@ -155,9 +209,9 @@ export function QueueDisplay({ initialServicePoint = "triage" }: QueueDisplayPro
                       className="relative h-10 rounded-none border-b-2 border-b-transparent bg-transparent px-3 pb-3 pt-2 font-medium text-muted-foreground shadow-none transition-none data-[state=active]:border-b-primary data-[state=active]:text-foreground data-[state=active]:shadow-none"
                     >
                       {getServicePointName(point)}
-                      {pointData.length > 0 && (
+                      {count > 0 && (
                         <Badge variant="secondary" className="ml-1">
-                          {pointData.length}
+                          {count}
                         </Badge>
                       )}
                     </TabsTrigger>
@@ -174,7 +228,7 @@ export function QueueDisplay({ initialServicePoint = "triage" }: QueueDisplayPro
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
                       {dropdownTabs.map((point) => {
-                        const pointData = getQueueByServicePoint(point)
+                        const count = queueCounts[point] || 0
                         return (
                           <DropdownMenuItem
                             key={point}
@@ -182,9 +236,9 @@ export function QueueDisplay({ initialServicePoint = "triage" }: QueueDisplayPro
                             className="flex items-center justify-between"
                           >
                             {getServicePointName(point)}
-                            {pointData.length > 0 && (
+                            {count > 0 && (
                               <Badge variant="secondary" className="ml-2">
-                                {pointData.length}
+                                {count}
                               </Badge>
                             )}
                           </DropdownMenuItem>
@@ -198,11 +252,13 @@ export function QueueDisplay({ initialServicePoint = "triage" }: QueueDisplayPro
             </ScrollArea>
           </div>
 
-          <TabsContent value={selectedTab} className="mt-6">
-            <Suspense fallback={<div className="h-64 animate-pulse bg-muted rounded-md" />}>
-              <QueueContent servicePoint={selectedTab} />
-            </Suspense>
-          </TabsContent>
+          {allowedServicePoints.map((point) => (
+            <TabsContent key={point} value={point} className="mt-6">
+              <Suspense fallback={<div className="h-64 animate-pulse bg-muted rounded-md" />}>
+                <QueueContent servicePoint={point} />
+              </Suspense>
+            </TabsContent>
+          ))}
         </Tabs>
       </CardContent>
     </Card>
@@ -219,9 +275,21 @@ function QueueContent({ servicePoint }: { servicePoint: ServicePoint }) {
   const [currentDoctorId, setCurrentDoctorId] = useState<string | undefined>()
   const [dispenseDialogOpen, setDispenseDialogOpen] = useState(false)
   const [selectedPatientForDispense, setSelectedPatientForDispense] = useState<{ patientId: number; patientName: string } | null>(null)
+  const [triageFormOpen, setTriageFormOpen] = useState(false)
+  const [selectedPatientForTriage, setSelectedPatientForTriage] = useState<{ patientId: string; patientName: string; queueId: number } | null>(null)
+  const [viewingBill, setViewingBill] = useState<any>(null)
+  const [editingQueue, setEditingQueue] = useState<any>(null)
+  const [addQueueOpen, setAddQueueOpen] = useState(false)
+  const [deletingQueue, setDeletingQueue] = useState<any>(null)
+  const [deleteLoading, setDeleteLoading] = useState(false)
+  const [changingStatus, setChangingStatus] = useState<any>(null)
+  const [newStatus, setNewStatus] = useState<string>("")
+  const [statusLoading, setStatusLoading] = useState(false)
   const { user } = useAuth()
   const isConsultation = servicePoint === "consultation"
   const isPharmacy = servicePoint === "pharmacy"
+  const isTriage = servicePoint === "triage"
+  const isCashier = servicePoint === "cashier"
 
   // Get current doctor ID
   useEffect(() => {
@@ -246,11 +314,13 @@ function QueueContent({ servicePoint }: { servicePoint: ServicePoint }) {
   const loadQueueData = async () => {
       try {
         setLoading(true)
-        const data = await queueApi.getAll(servicePoint, undefined)
+        // Fetch queue data without including completed entries (same as summary count)
+        const data = await queueApi.getAll(servicePoint, undefined, 1, 50, false)
 
         // Map API response to display format
         const mappedData = data.map((entry: any) => ({
           id: entry.queueId?.toString() || entry.id?.toString() || "",
+          queueId: entry.queueId || entry.id || 0,
           patientId: entry.patientId?.toString() || "",
           patientName: entry.patientFirstName && entry.patientLastName
             ? `${entry.patientFirstName} ${entry.patientLastName}`
@@ -317,10 +387,150 @@ function QueueContent({ servicePoint }: { servicePoint: ServicePoint }) {
     console.log('Encounter form state set to open')
   }
 
+  const handleStartTriage = (patientId: string, patientName: string, queueId: number) => {
+    setSelectedPatientForTriage({ patientId, patientName, queueId })
+    setTriageFormOpen(true)
+  }
+
+  const handleDelete = async () => {
+    if (!deletingQueue) return
+
+    try {
+      setDeleteLoading(true)
+      await queueApi.delete(deletingQueue.queueId.toString())
+      toast({
+        title: "Queue entry deleted",
+        description: "Queue entry has been deleted successfully.",
+      })
+      setDeletingQueue(null)
+      loadQueueData()
+    } catch (error: any) {
+      console.error("Error deleting queue entry:", error)
+      toast({
+        title: "Error deleting queue entry",
+        description: error.message || "Failed to delete queue entry",
+        variant: "destructive",
+      })
+    } finally {
+      setDeleteLoading(false)
+    }
+  }
+
+  const handleStatusChange = async () => {
+    if (!changingStatus || !newStatus) return
+
+    try {
+      setStatusLoading(true)
+      await queueApi.updateStatus(changingStatus.queueId.toString(), newStatus)
+      toast({
+        title: "Status updated",
+        description: `Queue status has been updated to ${newStatus}.`,
+      })
+      setChangingStatus(null)
+      setNewStatus("")
+      loadQueueData()
+    } catch (error: any) {
+      console.error("Error updating status:", error)
+      toast({
+        title: "Error updating status",
+        description: error.message || "Failed to update queue status",
+        variant: "destructive",
+      })
+    } finally {
+      setStatusLoading(false)
+    }
+  }
+
+  const handleEdit = (queue: any) => {
+    setEditingQueue(queue)
+    setAddQueueOpen(true)
+  }
+
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case "waiting":
+        return "secondary"
+      case "called":
+        return "default"
+      case "serving":
+        return "default"
+      case "completed":
+        return "outline"
+      case "cancelled":
+        return "destructive"
+      default:
+        return "secondary"
+    }
+  }
+
+  const statuses = [
+    { value: "waiting", label: "Waiting" },
+    { value: "called", label: "Called" },
+    { value: "serving", label: "Serving" },
+    { value: "completed", label: "Completed" },
+    { value: "cancelled", label: "Cancelled" },
+  ]
+
   return (
     <>
       <div className="rounded-md border">
-        {isConsultation ? (
+        {isTriage ? (
+          <>
+            <div className="grid grid-cols-12 bg-muted/50 p-3 text-sm font-medium">
+              <div className="col-span-1">#</div>
+              <div className="col-span-3">Patient</div>
+              <div className="col-span-2">Priority</div>
+              <div className="col-span-2">Status</div>
+              <div className="col-span-2">Wait Time</div>
+              <div className="col-span-2">Action</div>
+            </div>
+            {loading ? (
+              <div className="p-6 text-center text-muted-foreground">Loading queue data...</div>
+            ) : queueData.length > 0 ? (
+              <div className="divide-y">
+                {queueData.map((entry) => (
+                  <div key={entry.id} className="grid grid-cols-12 p-3 text-sm items-center">
+                    <div className="col-span-1">{entry.ticketNumber || entry.queueNumber}</div>
+                    <div className="col-span-3 font-medium">{entry.patientName}</div>
+                    <div className="col-span-2">
+                      <Badge variant="outline" className={`${getPriorityColor(entry.priority)}`}>
+                        {entry.priority}
+                      </Badge>
+                    </div>
+                    <div className="col-span-2">
+                      <Badge variant={entry.status === "waiting" || entry.status === "called" ? "secondary" : "default"}>
+                        {entry.status === "waiting" ? "Waiting" : entry.status === "called" ? "Called" : "In Service"}
+                      </Badge>
+                    </div>
+                    <div className="col-span-2 text-muted-foreground">
+                      {calculateWaitTime(entry)} min
+                      {entry.estimatedWaitTime && entry.status === "waiting" && (
+                        <span> (Est. {entry.estimatedWaitTime} min)</span>
+                      )}
+                    </div>
+                    <div className="col-span-2">
+                      <Button
+                        variant="default"
+                        size="sm"
+                        onClick={() => {
+                          handleStartTriage(entry.patientId, entry.patientName, entry.queueId || parseInt(entry.id) || 0)
+                        }}
+                        className="w-full"
+                      >
+                        <Stethoscope className="h-3 w-3 mr-1" />
+                        Triage Assessment
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="p-6 text-center text-muted-foreground">
+                No patients in queue for {getServicePointName(servicePoint)}
+              </div>
+            )}
+          </>
+        ) : isConsultation ? (
           <>
             <div className="grid grid-cols-12 bg-muted/50 p-3 text-sm font-medium">
               <div className="col-span-1">#</div>
@@ -448,23 +658,24 @@ function QueueContent({ servicePoint }: { servicePoint: ServicePoint }) {
               </div>
             )}
           </>
-        ) : (
+        ) : isCashier ? (
           <>
             <div className="grid grid-cols-12 bg-muted/50 p-3 text-sm font-medium">
               <div className="col-span-1">#</div>
-              <div className="col-span-4">Patient</div>
+              <div className="col-span-3">Patient</div>
               <div className="col-span-2">Priority</div>
               <div className="col-span-2">Status</div>
-              <div className="col-span-3">Wait Time</div>
+              <div className="col-span-2">Wait Time</div>
+              <div className="col-span-2">Action</div>
             </div>
             {loading ? (
               <div className="p-6 text-center text-muted-foreground">Loading queue data...</div>
             ) : queueData.length > 0 ? (
               <div className="divide-y">
                 {queueData.map((entry) => (
-                  <div key={entry.id} className="grid grid-cols-12 p-3 text-sm">
+                  <div key={entry.id} className="grid grid-cols-12 p-3 text-sm items-center">
                     <div className="col-span-1">{entry.ticketNumber || entry.queueNumber}</div>
-                    <div className="col-span-4 font-medium">{entry.patientName}</div>
+                    <div className="col-span-3 font-medium">{entry.patientName}</div>
                     <div className="col-span-2">
                       <Badge variant="outline" className={`${getPriorityColor(entry.priority)}`}>
                         {entry.priority}
@@ -475,11 +686,102 @@ function QueueContent({ servicePoint }: { servicePoint: ServicePoint }) {
                         {entry.status === "waiting" ? "Waiting" : entry.status === "called" ? "Called" : "In Service"}
                       </Badge>
                     </div>
-                    <div className="col-span-3 text-muted-foreground">
+                    <div className="col-span-2 text-muted-foreground">
                       {calculateWaitTime(entry)} min
                       {entry.estimatedWaitTime && entry.status === "waiting" && (
                         <span> (Est. {entry.estimatedWaitTime} min)</span>
                       )}
+                    </div>
+                    <div className="col-span-2">
+                      <Button
+                        variant="default"
+                        size="sm"
+                        onClick={() => {
+                          setViewingBill({
+                            patientId: parseInt(entry.patientId),
+                            queueId: entry.queueId || parseInt(entry.id) || 0,
+                            notes: entry.notes || ""
+                          })
+                        }}
+                        className="w-full"
+                      >
+                        <Receipt className="h-3 w-3 mr-1" />
+                        View Bill
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="p-6 text-center text-muted-foreground">
+                No patients in queue for {getServicePointName(servicePoint)}
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            <div className="grid grid-cols-12 bg-muted/50 p-3 text-sm font-medium">
+              <div className="col-span-1">#</div>
+              <div className="col-span-3">Patient</div>
+              <div className="col-span-2">Priority</div>
+              <div className="col-span-2">Status</div>
+              <div className="col-span-2">Wait Time</div>
+              <div className="col-span-2">Actions</div>
+            </div>
+            {loading ? (
+              <div className="p-6 text-center text-muted-foreground">Loading queue data...</div>
+            ) : queueData.length > 0 ? (
+              <div className="divide-y">
+                {queueData.map((entry) => (
+                  <div key={entry.id} className="grid grid-cols-12 p-3 text-sm items-center">
+                    <div className="col-span-1">{entry.ticketNumber || entry.queueNumber}</div>
+                    <div className="col-span-3 font-medium">{entry.patientName}</div>
+                    <div className="col-span-2">
+                      <Badge variant="outline" className={`${getPriorityColor(entry.priority)}`}>
+                        {entry.priority}
+                      </Badge>
+                    </div>
+                    <div className="col-span-2">
+                      <Badge variant={entry.status === "waiting" || entry.status === "called" ? "secondary" : "default"}>
+                        {entry.status === "waiting" ? "Waiting" : entry.status === "called" ? "Called" : "In Service"}
+                      </Badge>
+                    </div>
+                    <div className="col-span-2 text-muted-foreground">
+                      {calculateWaitTime(entry)} min
+                      {entry.estimatedWaitTime && entry.status === "waiting" && (
+                        <span> (Est. {entry.estimatedWaitTime} min)</span>
+                      )}
+                    </div>
+                    <div className="col-span-2">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="sm">
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => handleEdit(entry)}>
+                            <Edit className="mr-2 h-4 w-4" />
+                            Edit
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => {
+                              setChangingStatus(entry)
+                              setNewStatus(entry.status || "waiting")
+                            }}
+                          >
+                            <ArrowRight className="mr-2 h-4 w-4" />
+                            Change Status
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => setDeletingQueue(entry)}
+                            className="text-red-600"
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </div>
                   </div>
                 ))}
@@ -540,6 +842,169 @@ function QueueContent({ servicePoint }: { servicePoint: ServicePoint }) {
           }}
         />
       )}
+
+      {/* Triage Assessment Form for triage */}
+      {isTriage && selectedPatientForTriage && (
+        <AddTriageForm
+          open={triageFormOpen}
+          onOpenChange={(open) => {
+            setTriageFormOpen(open)
+            if (!open) {
+              setSelectedPatientForTriage(null)
+            }
+          }}
+          initialPatientId={selectedPatientForTriage.patientId}
+          onSuccess={async () => {
+            // Mark the triage queue entry as completed
+            try {
+              await queueApi.updateStatus(selectedPatientForTriage.queueId.toString(), "completed")
+              toast({
+                title: "Triage Completed",
+                description: `Triage assessment for ${selectedPatientForTriage.patientName} has been completed and patient removed from triage queue.`,
+              })
+              // Refresh queue data
+              loadQueueData()
+            } catch (error: any) {
+              console.error("Error updating triage queue status:", error)
+              toast({
+                title: "Warning",
+                description: "Triage assessment saved, but failed to update queue status. Please update manually.",
+                variant: "destructive",
+              })
+            }
+            setSelectedPatientForTriage(null)
+          }}
+        />
+      )}
+
+      {/* View Bill Dialog for cashier */}
+      {isCashier && viewingBill && (
+        <ViewBillDialog
+          open={!!viewingBill}
+          onOpenChange={(open) => !open && setViewingBill(null)}
+          patientId={viewingBill.patientId}
+          queueId={viewingBill.queueId}
+          queueNotes={viewingBill.notes}
+          onQueueCompleted={() => {
+            loadQueueData()
+            setViewingBill(null)
+          }}
+        />
+      )}
+
+      {/* Add/Edit Queue Form */}
+      <AddToQueueForm
+        open={addQueueOpen}
+        onOpenChange={(open) => {
+          setAddQueueOpen(open)
+          if (!open) {
+            setEditingQueue(null)
+          }
+        }}
+        onSuccess={() => {
+          loadQueueData()
+          setEditingQueue(null)
+        }}
+        queueEntry={editingQueue}
+      />
+
+      {/* Delete Queue Confirmation */}
+      <AlertDialog open={!!deletingQueue} onOpenChange={(open) => !open && setDeletingQueue(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Queue Entry</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this queue entry?
+              {deletingQueue && (
+                <>
+                  <br />
+                  <br />
+                  <strong>Ticket:</strong> {deletingQueue.ticketNumber || deletingQueue.queueNumber}
+                  <br />
+                  <strong>Patient:</strong> {deletingQueue.patientName || "Unknown"}
+                  <br />
+                  <strong>Service Point:</strong> {getServicePointName(servicePoint)}
+                  <br />
+                  <br />
+                  This action cannot be undone.
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteLoading}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDelete}
+              disabled={deleteLoading}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {deleteLoading ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Change Status Dialog */}
+      <Dialog
+        open={!!changingStatus}
+        onOpenChange={(open) => {
+          if (!open) {
+            setChangingStatus(null)
+            setNewStatus("")
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Change Queue Status</DialogTitle>
+            <DialogDescription>
+              Update the status for ticket {changingStatus?.ticketNumber || changingStatus?.queueNumber}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Current Status</Label>
+              <div className="text-sm text-muted-foreground">
+                <Badge variant={getStatusBadge(changingStatus?.status)}>
+                  {changingStatus?.status
+                    ? changingStatus.status.charAt(0).toUpperCase() + changingStatus.status.slice(1)
+                    : "Unknown"}
+                </Badge>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="new-status">New Status</Label>
+              <Select value={newStatus} onValueChange={setNewStatus}>
+                <SelectTrigger id="new-status">
+                  <SelectValue placeholder="Select new status" />
+                </SelectTrigger>
+                <SelectContent>
+                  {statuses.map((status) => (
+                    <SelectItem key={status.value} value={status.value}>
+                      {status.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setChangingStatus(null)
+                setNewStatus("")
+              }}
+              disabled={statusLoading}
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleStatusChange} disabled={statusLoading || !newStatus || newStatus === changingStatus?.status}>
+              {statusLoading ? "Updating..." : "Update Status"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   )
 }

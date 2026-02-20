@@ -248,7 +248,13 @@ export function ComprehensiveDashboard() {
   ]
 
   // Filter cards based on user privileges and role-specific card visibility
-  const statCards = filterDashboardCards(allStatCards, user?.privileges, user?.dashboardCards || null)
+  // Admin users see all cards regardless of privileges or role configuration
+  const statCards = filterDashboardCards(
+    allStatCards, 
+    user?.privileges, 
+    user?.dashboardCards || null,
+    user?.role || null
+  )
 
   if (loading) {
     return (

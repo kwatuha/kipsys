@@ -84,12 +84,14 @@ export function AddTriageForm({
   open,
   onOpenChange,
   onSuccess,
-  triage
+  triage,
+  initialPatientId
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   onSuccess?: () => void
   triage?: any
+  initialPatientId?: string
 }) {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -292,6 +294,37 @@ export function AddTriageForm({
                     'Non-urgent',
           notes: triage.notes || "",
         })
+      } else if (initialPatientId) {
+        // New triage with initial patient ID (e.g., from queue)
+        restoringDraftRef.current = true
+        prevPatientIdRef.current = initialPatientId
+        const savedDraft = loadDraftFromStorage(initialPatientId)
+        const normalizedDraft = savedDraft
+          ? {
+              chiefComplaint: savedDraft.chiefComplaint ?? "",
+              temperature: savedDraft.temperature ?? "",
+              bloodPressure: savedDraft.bloodPressure ?? "",
+              heartRate: savedDraft.heartRate ?? "",
+              respiratoryRate: savedDraft.respiratoryRate ?? "",
+              oxygenSaturation: savedDraft.oxygenSaturation ?? "",
+              painLevel: savedDraft.painLevel ?? "",
+              priority: savedDraft.priority ?? "",
+              assignedToDoctorId: savedDraft.assignedToDoctorId ?? "",
+              assignedToDepartment: savedDraft.assignedToDepartment ?? "",
+              servicePoint: savedDraft.servicePoint ?? "consultation",
+              notes: savedDraft.notes ?? "",
+            }
+          : null
+
+        form.reset({
+          ...defaultValues,
+          patientId: initialPatientId,
+          ...(normalizedDraft || {}),
+        })
+        loadPatientName(initialPatientId)
+        setTimeout(() => {
+          restoringDraftRef.current = false
+        }, 0)
       } else {
         // New triage: always start with a clean form (no cross-patient draft restore)
         restoringDraftRef.current = true
@@ -304,7 +337,7 @@ export function AddTriageForm({
         }, 0)
       }
     }
-  }, [open, isEditing, triage, form])
+  }, [open, isEditing, triage, initialPatientId, form])
 
   // When a patient is selected (or changed), reset non-patient fields and restore that patient's draft (if any)
   useEffect(() => {
@@ -577,7 +610,7 @@ export function AddTriageForm({
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Priority Level</FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value || ""}>
+                  <Select onValueChange={field.onChange} value={field.value || undefined}>
                     <FormControl>
                       <SelectTrigger>
                         <SelectValue placeholder="Select priority level" />
@@ -630,7 +663,7 @@ export function AddTriageForm({
                   <FormLabel>Assigned Doctor/Service *</FormLabel>
                   <Select
                     onValueChange={field.onChange}
-                    value={field.value || ""}
+                    value={field.value || undefined}
                     disabled={loadingDoctors}
                   >
                     <FormControl>

@@ -1,5 +1,5 @@
 "use client"
-import { useState, useEffect } from "react"
+import { useState, useEffect, Suspense, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -7,13 +7,20 @@ import { Textarea } from "@/components/ui/textarea"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
-import { Search, Plus, Download, Loader2, MoreVertical, Eye, CheckCircle, XCircle, FlaskConical, Edit, FileText, AlertTriangle, Trash2, Settings, Printer } from "lucide-react"
+import { Search, Plus, Download, Loader2, MoreVertical, Eye, CheckCircle, XCircle, FlaskConical, Edit, FileText, AlertTriangle, Trash2, Settings, Printer, ArrowRight, MoreHorizontal } from "lucide-react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { AddTestRequestForm } from "@/components/add-test-request-form"
-import { laboratoryApi, doctorsApi } from "@/lib/api"
-import { format } from "date-fns"
-import { toast } from "@/components/ui/use-toast"
-import { printLabOrder, downloadLabOrderPDF, printCombinedLabReport, downloadCombinedLabReportPDF } from "@/lib/lab-results-pdf"
+import { QueueDisplay } from "@/components/queue-display"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,6 +28,10 @@ import {
   DropdownMenuTrigger,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu"
+import { laboratoryApi, doctorsApi } from "@/lib/api"
+import { format } from "date-fns"
+import { toast } from "@/components/ui/use-toast"
+import { printLabOrder, downloadLabOrderPDF, printCombinedLabReport, downloadCombinedLabReportPDF } from "@/lib/lab-results-pdf"
 import {
   Dialog,
   DialogContent,
@@ -61,6 +72,14 @@ export default function LaboratoryPage() {
   const [printingReport, setPrintingReport] = useState(false)
   const [criticalResults, setCriticalResults] = useState<any[]>([])
   const [criticalPatientIds, setCriticalPatientIds] = useState<Set<number>>(new Set())
+  
+  // Context menu state
+  const [contextMenu, setContextMenu] = useState<{
+    order: LabOrder | null
+    x: number
+    y: number
+  } | null>(null)
+  const contextMenuRef = useRef<HTMLDivElement>(null)
 
   // Order actions state
   const [viewOrderOpen, setViewOrderOpen] = useState(false)
@@ -109,6 +128,22 @@ export default function LaboratoryPage() {
     loadCriticalResults()
     loadDoctors()
   }, [statusFilter])
+
+  // Close context menu on outside click
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (contextMenuRef.current && !contextMenuRef.current.contains(event.target as Node)) {
+        setContextMenu(null)
+      }
+    }
+
+    if (contextMenu) {
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside)
+      }
+    }
+  }, [contextMenu])
 
   const loadDoctors = async () => {
     try {
@@ -799,8 +834,9 @@ export default function LaboratoryPage() {
       </div>
 
       <Tabs defaultValue="tests" className="w-full">
-        <TabsList className="grid w-full grid-cols-2">
+        <TabsList className="grid w-full grid-cols-3">
           <TabsTrigger value="tests">Test Requests</TabsTrigger>
+          <TabsTrigger value="queue">Queue</TabsTrigger>
           <TabsTrigger value="catalog">Test Catalog</TabsTrigger>
         </TabsList>
 
@@ -965,6 +1001,14 @@ export default function LaboratoryPage() {
                           <TableRow
                             key={order.orderId}
                             className={hasCriticalResults ? "bg-red-50 hover:bg-red-100 border-l-4 border-l-red-600" : ""}
+                            onContextMenu={(e) => {
+                              e.preventDefault()
+                              setContextMenu({
+                                order,
+                                x: e.clientX,
+                                y: e.clientY,
+                              })
+                            }}
                           >
                             <TableCell className="font-medium">{order.orderNumber}</TableCell>
                             <TableCell>
@@ -1084,6 +1128,101 @@ export default function LaboratoryPage() {
               )}
             </CardContent>
           </Card>
+          
+          {/* Context Menu */}
+          {contextMenu && contextMenu.order && (
+            <div
+              ref={contextMenuRef}
+              className="fixed z-50 min-w-[12rem] overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-md"
+              style={{
+                left: `${contextMenu.x}px`,
+                top: `${contextMenu.y}px`,
+              }}
+              onMouseLeave={() => setContextMenu(null)}
+            >
+              <div
+                className="relative flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
+                onClick={() => {
+                  handleViewOrder(contextMenu.order!)
+                  setContextMenu(null)
+                }}
+              >
+                <Eye className="mr-2 h-4 w-4" />
+                View Details
+              </div>
+              {contextMenu.order.status !== 'completed' && contextMenu.order.status !== 'cancelled' && (
+                <>
+                  <div className="my-1 h-px bg-muted" />
+                  <div
+                    className="relative flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
+                    onClick={() => {
+                      handleEditOrder(contextMenu.order!)
+                      setContextMenu(null)
+                    }}
+                  >
+                    <Edit className="mr-2 h-4 w-4" />
+                    Edit Order
+                  </div>
+                  <div className="my-1 h-px bg-muted" />
+                  {getNextStatus(contextMenu.order.status) && (
+                    <div
+                      className="relative flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
+                      onClick={() => {
+                        handleUpdateOrderStatus(contextMenu.order!.orderId, getNextStatus(contextMenu.order!.status)!)
+                        setContextMenu(null)
+                      }}
+                    >
+                      <FlaskConical className="mr-2 h-4 w-4" />
+                      {getStatusActionLabel(getNextStatus(contextMenu.order.status)!)}
+                    </div>
+                  )}
+                  {contextMenu.order.status !== 'cancelled' && (
+                    <div
+                      className="relative flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
+                      onClick={() => {
+                        handleUpdateOrderStatus(contextMenu.order!.orderId, 'completed')
+                        setContextMenu(null)
+                      }}
+                    >
+                      <CheckCircle className="mr-2 h-4 w-4" />
+                      Mark as Completed
+                    </div>
+                  )}
+                  <div
+                    className="relative flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm text-destructive outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
+                    onClick={() => {
+                      handleUpdateOrderStatus(contextMenu.order!.orderId, 'cancelled')
+                      setContextMenu(null)
+                    }}
+                  >
+                    <XCircle className="mr-2 h-4 w-4" />
+                    Cancel Order
+                  </div>
+                </>
+              )}
+              {(contextMenu.order.status === 'in_progress' || contextMenu.order.status === 'completed') && (
+                <>
+                  <div className="my-1 h-px bg-muted" />
+                  <div
+                    className="relative flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
+                    onClick={() => {
+                      handleAddResults(contextMenu.order!)
+                      setContextMenu(null)
+                    }}
+                  >
+                    <FileText className="mr-2 h-4 w-4" />
+                    Add Results
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </TabsContent>
+
+        <TabsContent value="queue" className="space-y-4 mt-4">
+          <Suspense fallback={<div className="p-4 text-center">Loading queue...</div>}>
+            <QueueDisplay initialServicePoint="laboratory" />
+          </Suspense>
         </TabsContent>
 
         <TabsContent value="catalog" className="space-y-4 mt-4">
@@ -1779,3 +1918,4 @@ function LaboratoryResultsForm({
     </form>
   )
 }
+

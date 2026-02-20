@@ -34,9 +34,10 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
 import { AddToQueueForm } from "@/components/add-to-queue-form"
+import { AddTriageForm } from "@/components/add-triage-form"
 import { queueApi, medicalRecordsApi } from "@/lib/api"
 import { toast } from "@/components/ui/use-toast"
-import { Search, Plus, Edit, Trash2, MoreHorizontal, Loader2, ArrowRight, Monitor, Users, Receipt, FileText, PlayCircle } from "lucide-react"
+import { Search, Plus, Edit, Trash2, MoreHorizontal, Loader2, ArrowRight, Monitor, Users, Receipt, FileText, PlayCircle, Stethoscope } from "lucide-react"
 import Link from "next/link"
 import { ViewBillDialog } from "@/components/view-bill-dialog"
 import { DispenseMedicationDialog } from "@/components/dispense-medication-dialog"
@@ -94,6 +95,8 @@ export default function QueueManagement() {
   const [currentDoctorId, setCurrentDoctorId] = useState<string | undefined>()
   const [dispenseDialogOpen, setDispenseDialogOpen] = useState(false)
   const [selectedPatientForDispense, setSelectedPatientForDispense] = useState<{ patientId: number; patientName: string } | null>(null)
+  const [triageFormOpen, setTriageFormOpen] = useState(false)
+  const [selectedPatientForTriage, setSelectedPatientForTriage] = useState<{ patientId: string; patientName: string; queueId: number } | null>(null)
   const { user } = useAuth()
   const { menuAccess, loading: menuLoading } = useRoleMenuAccess(user?.id)
 
@@ -301,6 +304,16 @@ export default function QueueManagement() {
     console.log('Starting consultation for:', { patientId, patientName })
     setSelectedPatientForEncounter({ patientId, patientName })
     setEncounterFormOpen(true)
+  }
+
+  const handleStartTriage = (queue: any) => {
+    const patientId = queue.patientId?.toString() || ""
+    const patientName = queue.patientFirstName && queue.patientLastName
+      ? `${queue.patientFirstName} ${queue.patientLastName}`
+      : "Unknown Patient"
+
+    setSelectedPatientForTriage({ patientId, patientName, queueId: queue.queueId })
+    setTriageFormOpen(true)
   }
 
   const handleCloseForm = (open: boolean) => {
@@ -572,6 +585,12 @@ export default function QueueManagement() {
                                 </Button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
+                                {queue.servicePoint === "triage" && (
+                                  <DropdownMenuItem onClick={() => handleStartTriage(queue)}>
+                                    <Stethoscope className="mr-2 h-4 w-4" />
+                                    Triage Assessment
+                                  </DropdownMenuItem>
+                                )}
                                 {queue.servicePoint === "consultation" && (
                                   <DropdownMenuItem onClick={() => handleStartConsultation(queue)}>
                                     {encountersToday[queue.patientId?.toString() || ""] ? (
@@ -895,6 +914,41 @@ export default function QueueManagement() {
           patientId={selectedPatientForDispense.patientId}
           onDispensed={() => {
             loadQueues()
+          }}
+        />
+      )}
+
+      {/* Triage Assessment Form */}
+      {selectedPatientForTriage && (
+        <AddTriageForm
+          open={triageFormOpen}
+          onOpenChange={(open) => {
+            setTriageFormOpen(open)
+            if (!open) {
+              setSelectedPatientForTriage(null)
+            }
+          }}
+          initialPatientId={selectedPatientForTriage.patientId}
+          onSuccess={async () => {
+            // Mark the triage queue entry as completed
+            try {
+              await queueApi.updateStatus(selectedPatientForTriage.queueId.toString(), "completed")
+              toast({
+                title: "Triage Completed",
+                description: `Triage assessment for ${selectedPatientForTriage.patientName} has been completed and patient removed from triage queue.`,
+              })
+              // Refresh queue data
+              await loadAllQueues()
+              loadQueues()
+            } catch (error: any) {
+              console.error("Error updating triage queue status:", error)
+              toast({
+                title: "Warning",
+                description: "Triage assessment saved, but failed to update queue status. Please update manually.",
+                variant: "destructive",
+              })
+            }
+            setSelectedPatientForTriage(null)
           }}
         />
       )}

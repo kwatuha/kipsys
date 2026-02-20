@@ -943,6 +943,114 @@ router.post('/invoices/:id/payment', async (req, res) => {
                 }
             }
 
+            // Check if it's a lab test invoice - create laboratory queue entry
+            if (invoice.notes && invoice.notes.includes('Lab payment - Order:')) {
+                try {
+                    // Extract lab order number from notes (format: "Lab payment - Order: LAB-XXXXXX")
+                    const labOrderMatch = invoice.notes.match(/Order:\s*([A-Z0-9-]+)/i);
+                    let labOrderNumber = null;
+                    let labOrder = null;
+
+                    if (labOrderMatch && labOrderMatch[1]) {
+                        labOrderNumber = labOrderMatch[1].trim();
+                        console.log(`[LABORATORY QUEUE] Extracted lab order number from invoice notes: ${labOrderNumber}`);
+
+                        // Find the lab order by order number
+                        const [labOrders] = await connection.execute(
+                            'SELECT orderId, orderNumber, patientId, status FROM lab_test_orders WHERE orderNumber = ?',
+                            [labOrderNumber]
+                        );
+
+                        if (labOrders.length > 0) {
+                            labOrder = labOrders[0];
+                            console.log(`[LABORATORY QUEUE] Found lab order ${labOrderNumber} for patient ${labOrder.patientId}, status: ${labOrder.status}`);
+                        } else {
+                            console.log(`[LABORATORY QUEUE] Lab order ${labOrderNumber} not found by number, trying to find by patient and invoice`);
+                        }
+                    }
+
+                    // Fallback: If lab order not found by number, try to find pending lab orders for this patient
+                    if (!labOrder) {
+                        console.log(`[LABORATORY QUEUE] Attempting fallback: Finding pending lab orders for patient ${invoice.patientId}`);
+                        const [pendingLabOrders] = await connection.execute(
+                            `SELECT lo.orderId, lo.orderNumber, lo.patientId, lo.status
+                             FROM lab_test_orders lo
+                             INNER JOIN invoice_items ii ON ii.description LIKE CONCAT('%Lab Test:%')
+                             INNER JOIN invoices i ON i.invoiceId = ii.invoiceId
+                             WHERE i.invoiceId = ? AND lo.patientId = ? AND lo.status = 'pending'
+                             ORDER BY lo.orderDate DESC
+                             LIMIT 1`,
+                            [id, invoice.patientId]
+                        );
+
+                        if (pendingLabOrders.length > 0) {
+                            labOrder = pendingLabOrders[0];
+                            labOrderNumber = labOrder.orderNumber;
+                            console.log(`[LABORATORY QUEUE] Found lab order via fallback: ${labOrderNumber} for patient ${labOrder.patientId}`);
+                        } else {
+                            // Last resort: Find any pending lab order for this patient
+                            const [anyPending] = await connection.execute(
+                                `SELECT orderId, orderNumber, patientId, status
+                                 FROM lab_test_orders
+                                 WHERE patientId = ? AND status = 'pending'
+                                 ORDER BY orderDate DESC
+                                 LIMIT 1`,
+                                [invoice.patientId]
+                            );
+
+                            if (anyPending.length > 0) {
+                                labOrder = anyPending[0];
+                                labOrderNumber = labOrder.orderNumber;
+                                console.log(`[LABORATORY QUEUE] Found pending lab order via last resort: ${labOrderNumber} for patient ${labOrder.patientId}`);
+                            }
+                        }
+                    }
+
+                    if (labOrder && labOrder.status === 'pending') {
+                        // Check if laboratory queue entry already exists for this patient
+                        const [existingQueue] = await connection.execute(
+                            `SELECT queueId FROM queue_entries
+                             WHERE patientId = ? AND servicePoint = 'laboratory'
+                             AND status NOT IN ('completed', 'cancelled')`,
+                            [labOrder.patientId]
+                        );
+
+                        if (existingQueue.length === 0) {
+                            // Generate ticket number for laboratory queue
+                            const [labCount] = await connection.execute(
+                                'SELECT COUNT(*) as count FROM queue_entries WHERE DATE(arrivalTime) = CURDATE() AND servicePoint = "laboratory"'
+                            );
+                            const labTicketNum = labCount[0].count + 1;
+                            const labTicketNumber = `LAB-${String(labTicketNum).padStart(3, '0')}`;
+
+                            // Create laboratory queue entry
+                            await connection.execute(
+                                `INSERT INTO queue_entries
+                                (patientId, ticketNumber, servicePoint, priority, status, notes, createdBy)
+                                VALUES (?, ?, 'laboratory', 'normal', 'waiting', ?, ?)`,
+                                [
+                                    labOrder.patientId,
+                                    labTicketNumber,
+                                    labOrderNumber ? `Lab Order: ${labOrderNumber}` : `Invoice: ${invoice.invoiceNumber}`,
+                                    userId || null
+                                ]
+                            );
+                            console.log(`[LABORATORY QUEUE] Successfully created laboratory queue entry for patient ${labOrder.patientId} with ticket ${labTicketNumber}`);
+                        } else {
+                            console.log(`[LABORATORY QUEUE] Patient ${labOrder.patientId} already exists in laboratory queue (queueId: ${existingQueue[0].queueId})`);
+                        }
+                    } else if (labOrder) {
+                        console.log(`[LABORATORY QUEUE] Lab order ${labOrderNumber || labOrder.orderId} is not pending (status: ${labOrder.status}) - skipping laboratory queue addition`);
+                    } else {
+                        console.log(`[LABORATORY QUEUE] No pending lab order found for patient ${invoice.patientId} - cannot create laboratory queue entry`);
+                    }
+                } catch (laboratoryQueueError) {
+                    console.error('[LABORATORY QUEUE] Error creating laboratory queue entry:', laboratoryQueueError);
+                    console.error('[LABORATORY QUEUE] Error stack:', laboratoryQueueError.stack);
+                    // Don't fail the payment if laboratory queue creation fails
+                }
+            }
+
             // Check if it's a consultation fee invoice from triage - create consultation queue entry
             if (invoice.notes && invoice.notes.includes('Consultation charge from triage')) {
                 try {

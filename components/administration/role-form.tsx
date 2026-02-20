@@ -38,7 +38,7 @@ const formSchema = z.object({
   landingPageIcon: z.string().nullable().optional(),
   landingPageDescription: z.string().nullable().optional(),
   defaultServicePoint: z.string().nullable().optional(),
-  dashboardCards: z.record(z.boolean()).optional(),
+  dashboardCards: z.record(z.string(), z.boolean()).optional(),
 })
 
 type FormValues = z.infer<typeof formSchema>
@@ -73,6 +73,7 @@ export function RoleForm({ open, onOpenChange, onSuccess, role, privileges }: Ro
       landingPageIcon: null,
       landingPageDescription: null,
       defaultServicePoint: null,
+      dashboardCards: {},
     },
   })
 
@@ -146,8 +147,11 @@ export function RoleForm({ open, onOpenChange, onSuccess, role, privileges }: Ro
         // Initialize dashboard cards - if role has dashboardCards, use them, otherwise default all to true
         const dashboardCardsConfig: Record<string, boolean> = {}
         if (role.dashboardCards && typeof role.dashboardCards === 'object') {
-          // Use existing configuration
-          Object.assign(dashboardCardsConfig, role.dashboardCards)
+          // Use existing configuration and ensure all values are booleans
+          Object.keys(role.dashboardCards).forEach(cardId => {
+            const value = role.dashboardCards[cardId]
+            dashboardCardsConfig[cardId] = Boolean(value === 1 || value === true)
+          })
           // Ensure all cards from DASHBOARD_CARDS are included (default to true if not in config)
           DASHBOARD_CARDS.forEach(card => {
             if (!(card.id in dashboardCardsConfig)) {
@@ -164,7 +168,7 @@ export function RoleForm({ open, onOpenChange, onSuccess, role, privileges }: Ro
         form.reset({
           roleName: role.roleName ?? "",
           description: role.description ?? "",
-          isActive: role.isActive ?? true,
+          isActive: role.isActive === 1 || role.isActive === true || (role.isActive !== 0 && role.isActive !== false),
           privileges: assignedPrivilegeIds,
           landingPageType: role.landingPageType ?? 'dashboard',
           landingPageLabel: role.landingPageLabel ?? null,
@@ -195,6 +199,22 @@ export function RoleForm({ open, onOpenChange, onSuccess, role, privileges }: Ro
           dashboardCards: defaultDashboardCards,
         })
       }
+      
+      // Ensure dashboardCards is always an object, never undefined
+      const currentDashboardCards = form.getValues('dashboardCards')
+      if (!currentDashboardCards || typeof currentDashboardCards !== 'object') {
+        const defaultCards: Record<string, boolean> = {}
+        DASHBOARD_CARDS.forEach(card => {
+          defaultCards[card.id] = true
+        })
+        form.setValue('dashboardCards', defaultCards)
+      }
+      
+      // Ensure isActive is a boolean, not a number
+      const currentIsActive = form.getValues('isActive')
+      if (typeof currentIsActive !== 'boolean') {
+        form.setValue('isActive', Boolean(currentIsActive === 1 || currentIsActive === true))
+      }
     }
   }, [role, open, isMounted, form])
 
@@ -202,6 +222,15 @@ export function RoleForm({ open, onOpenChange, onSuccess, role, privileges }: Ro
   const onSubmit = async (data: FormValues) => {
     try {
       setLoading(true)
+      
+      // Ensure all dashboard cards are included in the payload
+      // Cards not explicitly set should default to true
+      const dashboardCardsConfig: Record<string, boolean> = {}
+      DASHBOARD_CARDS.forEach(card => {
+        // Use the value from form data if set, otherwise default to true
+        dashboardCardsConfig[card.id] = data.dashboardCards?.[card.id] ?? true
+      })
+      
       const payload = {
         roleName: data.roleName,
         description: data.description || null,
@@ -213,7 +242,7 @@ export function RoleForm({ open, onOpenChange, onSuccess, role, privileges }: Ro
         landingPageIcon: data.landingPageType !== 'dashboard' ? data.landingPageIcon : null,
         landingPageDescription: data.landingPageType !== 'dashboard' ? data.landingPageDescription : null,
         defaultServicePoint: data.defaultServicePoint || null,
-        dashboardCards: data.dashboardCards || {},
+        dashboardCards: dashboardCardsConfig,
       }
 
       if (isEditing) {
@@ -573,14 +602,16 @@ export function RoleForm({ open, onOpenChange, onSuccess, role, privileges }: Ro
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Default Service Point</FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value || ''}>
+                      <Select 
+                        onValueChange={(value) => field.onChange(value || undefined)} 
+                        value={field.value || undefined}
+                      >
                         <FormControl>
                           <SelectTrigger>
                             <SelectValue placeholder="Select a service point (optional)" />
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                          <SelectItem value="">None</SelectItem>
                           <SelectItem value="triage">Triage</SelectItem>
                           <SelectItem value="consultation">Consultation</SelectItem>
                           <SelectItem value="pharmacy">Pharmacy</SelectItem>
@@ -591,7 +622,7 @@ export function RoleForm({ open, onOpenChange, onSuccess, role, privileges }: Ro
                         </SelectContent>
                       </Select>
                       <FormDescription>
-                        The default service point for this role. If the landing page URL is /queue/service, this will automatically filter to show only this service point.
+                        The default service point for this role. If the landing page URL is /queue/service, this will automatically filter to show only this service point. Leave empty for no default.
                       </FormDescription>
                       <FormMessage />
                     </FormItem>
@@ -642,7 +673,6 @@ export function RoleForm({ open, onOpenChange, onSuccess, role, privileges }: Ro
                   <FormDescription className="mt-2">
                     Toggle cards on/off. If a card is disabled, it won't appear on the dashboard even if the user has the required privilege.
                   </FormDescription>
-                  <FormMessage />
                 </FormItem>
               )}
             />
@@ -719,26 +749,6 @@ export function RoleForm({ open, onOpenChange, onSuccess, role, privileges }: Ro
                 )
               }}
             />
-            <div className="flex justify-end gap-2 pt-4 border-t mt-4">
-              <Button
-                type="button"
-                onClick={async (e) => {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  console.log("Save Privileges button clicked")
-                  // Validate and submit form
-                  const isValid = await form.trigger()
-                  if (isValid) {
-                    const formData = form.getValues()
-                    await onSubmit(formData)
-                  }
-                }}
-                disabled={loading}
-              >
-                {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Save Privileges
-              </Button>
-            </div>
                   </form>
                 </Form>
               </TabsContent>
@@ -1064,6 +1074,53 @@ export function RoleForm({ open, onOpenChange, onSuccess, role, privileges }: Ro
             type="submit"
             form={isEditing ? "edit-role-form" : "create-role-form"}
             disabled={loading}
+            onClick={async (e) => {
+              // Prevent default to handle validation first
+              e.preventDefault()
+              e.stopPropagation()
+              
+              console.log("Update Role button clicked")
+              
+              // Get current form values to debug
+              const currentValues = form.getValues()
+              console.log("Current form values:", currentValues)
+              console.log("isActive type:", typeof currentValues.isActive, "value:", currentValues.isActive)
+              console.log("dashboardCards type:", typeof currentValues.dashboardCards, "value:", currentValues.dashboardCards)
+              
+              // Trigger form validation
+              const isValid = await form.trigger()
+              console.log("Form validation result:", isValid)
+              
+              if (isValid) {
+                // Get form values and submit
+                const formData = form.getValues()
+                console.log("Submitting form with data:", formData)
+                await onSubmit(formData)
+              } else {
+                // Show validation errors with details
+                const errors = form.formState.errors
+                console.error("Form validation errors:", JSON.stringify(errors, null, 2))
+                console.error("isActive error:", errors.isActive)
+                console.error("dashboardCards error:", errors.dashboardCards)
+                
+                // Build detailed error message
+                const errorMessages: string[] = []
+                if (errors.isActive) {
+                  errorMessages.push(`isActive: ${errors.isActive.message || 'Invalid value'}`)
+                }
+                if (errors.dashboardCards) {
+                  errorMessages.push(`dashboardCards: ${errors.dashboardCards.message || 'Invalid value'}`)
+                }
+                
+                toast({
+                  title: "Validation Error",
+                  description: errorMessages.length > 0 
+                    ? `Please fix the following errors: ${errorMessages.join(', ')}`
+                    : "Please fix the errors in the form before saving.",
+                  variant: "destructive",
+                })
+              }
+            }}
           >
             {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             {isEditing ? "Update Role" : "Create Role"}

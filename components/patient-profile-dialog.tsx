@@ -8,8 +8,9 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { hasPermission } from "@/lib/auth/permissions"
-import { AlertTriangle, FileText, User } from "lucide-react"
-import { patientApi, insuranceApi } from "@/lib/api"
+import { AlertTriangle, FileText, User, Stethoscope } from "lucide-react"
+import { patientApi, insuranceApi, queueApi } from "@/lib/api"
+import { useToast } from "@/hooks/use-toast"
 
 interface PatientProfileDialogProps {
   patientId: string
@@ -18,10 +19,12 @@ interface PatientProfileDialogProps {
 }
 
 export function PatientProfileDialog({ patientId, open, onOpenChange }: PatientProfileDialogProps) {
+  const { toast } = useToast()
   const [loading, setLoading] = useState(false)
   const [patient, setPatient] = useState<any>(null)
   const [insuranceCompanyName, setInsuranceCompanyName] = useState<string | null>(null)
   const [loadingPatient, setLoadingPatient] = useState(false)
+  const [addingToTriage, setAddingToTriage] = useState(false)
 
   useEffect(() => {
     if (open && patientId) {
@@ -80,6 +83,57 @@ export function PatientProfileDialog({ patientId, open, onOpenChange }: PatientP
       setLoading(false)
       alert("Your request to view the full patient profile has been sent to the supervisor.")
     }, 1000)
+  }
+
+  const handleAddToTriage = async () => {
+    if (!patient || !patient.patientId) return
+
+    try {
+      setAddingToTriage(true)
+      
+      // Check if patient is already in triage queue with active status
+      const triageQueues = await queueApi.getAll("triage", undefined, 1, 100, false)
+      const existingEntry = triageQueues.find((entry: any) => 
+        entry.patientId?.toString() === patient.patientId.toString() &&
+        entry.status !== 'completed' &&
+        entry.status !== 'cancelled'
+      )
+
+      if (existingEntry) {
+        toast({
+          title: "Patient Already in Triage Queue",
+          description: `${patient.firstName} ${patient.lastName} is already in the triage queue (Ticket: ${existingEntry.ticketNumber || 'N/A'}).`,
+          variant: "default",
+        })
+        return
+      }
+
+      // Add patient to triage queue
+      const payload = {
+        patientId: parseInt(patient.patientId.toString()),
+        servicePoint: "triage",
+        priority: "normal",
+        status: "waiting",
+        notes: "Returning patient - added to triage queue",
+      }
+
+      await queueApi.create(payload)
+      
+      toast({
+        title: "✅ Patient Added to Triage Queue",
+        description: `${patient.firstName} ${patient.lastName} has been successfully added to the triage queue.`,
+        variant: "default",
+      })
+    } catch (error: any) {
+      console.error("Error adding patient to triage queue:", error)
+      toast({
+        title: "Error",
+        description: error.message || "Failed to add patient to triage queue. Please try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setAddingToTriage(false)
+    }
   }
 
   if (loadingPatient) {
@@ -298,16 +352,26 @@ export function PatientProfileDialog({ patientId, open, onOpenChange }: PatientP
             <Button variant="outline" onClick={() => onOpenChange(false)}>
               Close
             </Button>
-            {!hasPermission("view_patient_full") && (
-              <Button onClick={handleFullProfileRequest} disabled={loading}>
-                {loading ? "Requesting..." : "Request Full Access"}
+            <div className="flex gap-2">
+              <Button 
+                variant="default" 
+                onClick={handleAddToTriage} 
+                disabled={addingToTriage || !patient}
+              >
+                <Stethoscope className="mr-2 h-4 w-4" />
+                {addingToTriage ? "Adding..." : "Add to Triage Queue"}
               </Button>
-            )}
-            {hasPermission("view_patient_full") && (
-              <Button asChild>
-                <a href={`/patients/${patientId}`}>View Full Profile</a>
-              </Button>
-            )}
+              {!hasPermission("view_patient_full") && (
+                <Button onClick={handleFullProfileRequest} disabled={loading}>
+                  {loading ? "Requesting..." : "Request Full Access"}
+                </Button>
+              )}
+              {hasPermission("view_patient_full") && (
+                <Button asChild>
+                  <a href={`/patients/${patientId}`}>View Full Profile</a>
+                </Button>
+              )}
+            </div>
           </div>
         </div>
       </DialogContent>

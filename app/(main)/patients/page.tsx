@@ -16,8 +16,10 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { Trash2, Edit, Plus, Search } from "lucide-react"
+import { Trash2, Edit, Plus, Search, Stethoscope } from "lucide-react"
 import { Input } from "@/components/ui/input"
+import { queueApi } from "@/lib/api"
+import { useToast } from "@/hooks/use-toast"
 
 interface Patient {
   patientId: number
@@ -40,6 +42,7 @@ interface Patient {
 }
 
 export default function PatientsPage() {
+  const { toast } = useToast()
   const [searchQuery, setSearchQuery] = useState("")
   const [patients, setPatients] = useState<Patient[]>([])
   const [loading, setLoading] = useState(true)
@@ -48,6 +51,7 @@ export default function PatientsPage() {
   const [editingPatient, setEditingPatient] = useState<Patient | null>(null)
   const [deletingPatient, setDeletingPatient] = useState<Patient | null>(null)
   const [deleteLoading, setDeleteLoading] = useState(false)
+  const [addingToTriage, setAddingToTriage] = useState<number | null>(null)
 
   useEffect(() => {
     // Debounce search to avoid too many API calls
@@ -113,6 +117,55 @@ export default function PatientsPage() {
   const formatDate = (date?: string): string => {
     if (!date) return 'N/A'
     return new Date(date).toLocaleDateString()
+  }
+
+  const handleAddToTriage = async (patient: Patient) => {
+    try {
+      setAddingToTriage(patient.patientId)
+      
+      // Check if patient is already in triage queue with active status
+      const triageQueues = await queueApi.getAll("triage", undefined, 1, 100, false)
+      const existingEntry = triageQueues.find((entry: any) => 
+        entry.patientId?.toString() === patient.patientId.toString() &&
+        entry.status !== 'completed' &&
+        entry.status !== 'cancelled'
+      )
+
+      if (existingEntry) {
+        toast({
+          title: "Patient Already in Triage Queue",
+          description: `${patient.firstName} ${patient.lastName} is already in the triage queue (Ticket: ${existingEntry.ticketNumber || 'N/A'}).`,
+          variant: "default",
+        })
+        return
+      }
+
+      // Add patient to triage queue
+      const payload = {
+        patientId: patient.patientId,
+        servicePoint: "triage",
+        priority: "normal",
+        status: "waiting",
+        notes: "Returning patient - added to triage queue",
+      }
+
+      await queueApi.create(payload)
+      
+      toast({
+        title: "✅ Patient Added to Triage Queue",
+        description: `${patient.firstName} ${patient.lastName} has been successfully added to the triage queue.`,
+        variant: "default",
+      })
+    } catch (error: any) {
+      console.error("Error adding patient to triage queue:", error)
+      toast({
+        title: "Error",
+        description: error.message || "Failed to add patient to triage queue. Please try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setAddingToTriage(null)
+    }
   }
 
   if (loading) {
@@ -188,6 +241,15 @@ export default function PatientsPage() {
                 <div className="flex gap-2 pt-2">
                   <Button asChild size="sm" variant="outline" className="flex-1">
                     <Link href={`/patients/${patient.patientId}`}>View</Link>
+                  </Button>
+                  <Button 
+                    size="sm" 
+                    variant="default"
+                    onClick={() => handleAddToTriage(patient)}
+                    disabled={addingToTriage === patient.patientId}
+                    title="Add to Triage Queue"
+                  >
+                    <Stethoscope className="h-4 w-4" />
                   </Button>
                   <Button 
                     size="sm" 

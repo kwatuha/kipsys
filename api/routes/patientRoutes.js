@@ -329,6 +329,46 @@ router.post('/', async (req, res) => {
             } else {
                 console.log(`Patient ${patientId} already exists in cashier queue (queueId: ${existingQueue[0].queueId}) - skipping duplicate entry during registration`);
             }
+
+            // Add patient to triage queue after registration
+            try {
+                // Check if patient already exists in triage queue
+                const [existingTriageQueue] = await connection.execute(
+                    `SELECT queueId FROM queue_entries
+                     WHERE patientId = ? AND servicePoint = 'triage'
+                     AND status IN ('waiting', 'called', 'serving')`,
+                    [patientId]
+                );
+
+                if (existingTriageQueue.length === 0) {
+                    // Patient not in triage queue, add them
+                    const [triageCount] = await connection.execute(
+                        'SELECT COUNT(*) as count FROM queue_entries WHERE DATE(arrivalTime) = CURDATE() AND servicePoint = "triage"'
+                    );
+                    const triageTicketNum = triageCount[0].count + 1;
+                    const triageTicketNumber = `T-${String(triageTicketNum).padStart(3, '0')}`;
+
+                    // Create queue entry for triage
+                    await connection.execute(
+                        `INSERT INTO queue_entries
+                        (patientId, ticketNumber, servicePoint, priority, status, notes, createdBy)
+                        VALUES (?, ?, 'triage', 'normal', 'waiting', ?, ?)`,
+                        [
+                            patientId,
+                            triageTicketNumber,
+                            'New patient registration - requires triage',
+                            userId || null
+                        ]
+                    );
+                    console.log(`Patient ${patientId} added to triage queue with ticket ${triageTicketNumber}`);
+                } else {
+                    console.log(`Patient ${patientId} already exists in triage queue (queueId: ${existingTriageQueue[0].queueId}) - skipping duplicate entry during registration`);
+                }
+            } catch (triageQueueError) {
+                // Log error but don't fail patient registration if triage queue creation fails
+                console.error('Error adding patient to triage queue after registration:', triageQueueError);
+                // Continue with patient registration even if triage queue creation fails
+            }
         } catch (queueError) {
             // Log error but don't fail patient registration if queue/invoice creation fails
             console.error('Error creating invoice and cashier queue after patient registration:', queueError);

@@ -114,24 +114,74 @@ SelectLabel.displayName = SelectPrimitive.Label.displayName
 const SelectItem = React.forwardRef<
   React.ElementRef<typeof SelectPrimitive.Item>,
   React.ComponentPropsWithoutRef<typeof SelectPrimitive.Item>
->(({ className, children, ...props }, ref) => (
-  <SelectPrimitive.Item
-    ref={ref}
-    className={cn(
-      "relative flex w-full cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm outline-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
-      className
-    )}
-    {...props}
-  >
-    <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
-      <SelectPrimitive.ItemIndicator>
-        <Check className="h-4 w-4" />
-      </SelectPrimitive.ItemIndicator>
-    </span>
+>(({ className, children, value: propValue, ...props }, ref) => {
+  // Radix UI Select doesn't allow empty string values
+  // Extract value from both direct prop and props object to catch all cases
+  const valueFromProps = (props as any).value
+  const finalValue = propValue !== undefined ? propValue : valueFromProps
+  
+  // Convert to string and validate - must be a non-empty string
+  // Explicitly check for empty string, null, undefined, or whitespace-only strings
+  if (finalValue === undefined || finalValue === null || finalValue === "") {
+    if (process.env.NODE_ENV === "development") {
+      console.error(
+        "SelectItem cannot have an empty string, null, or undefined value.",
+        "Use a non-empty string value instead. This SelectItem will not be rendered.",
+        { 
+          propValue, 
+          valueFromProps, 
+          finalValue,
+          children: typeof children === 'string' ? children.substring(0, 50) : 'ReactNode'
+        }
+      )
+    }
+    // Return null to prevent rendering - this prevents the Radix UI error
+    return null
+  }
+  
+  const stringValue = String(finalValue)
+  
+  // Double-check: Don't render if converted string is empty or whitespace-only
+  if (!stringValue || stringValue.trim() === "") {
+    if (process.env.NODE_ENV === "development") {
+      console.error(
+        "SelectItem value converted to empty or whitespace-only string.",
+        "This should not happen. Original value:",
+        { 
+          propValue, 
+          valueFromProps, 
+          finalValue, 
+          stringValue
+        }
+      )
+    }
+    // Return null to prevent rendering - this prevents the Radix UI error
+    return null
+  }
 
-    <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
-  </SelectPrimitive.Item>
-))
+  // Remove value from props to prevent it from being passed twice
+  const { value: _, ...restProps } = props as any
+
+  return (
+    <SelectPrimitive.Item
+      ref={ref}
+      className={cn(
+        "relative flex w-full cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm outline-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+        className
+      )}
+      value={stringValue}
+      {...restProps}
+    >
+      <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
+        <SelectPrimitive.ItemIndicator>
+          <Check className="h-4 w-4" />
+        </SelectPrimitive.ItemIndicator>
+      </span>
+
+      <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+    </SelectPrimitive.Item>
+  )
+})
 SelectItem.displayName = SelectPrimitive.Item.displayName
 
 const SelectSeparator = React.forwardRef<

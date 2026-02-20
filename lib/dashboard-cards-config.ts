@@ -81,12 +81,14 @@ export function getCardPrivilege(cardId: string): string | undefined {
  * @param cardId - The ID of the dashboard card
  * @param userPrivileges - Array of privilege objects from the user object
  * @param roleCardVisibility - Optional object mapping card IDs to visibility (from role_dashboard_cards table)
+ * @param userRole - Optional user role name (e.g., "admin", "doctor")
  * @returns true if the user can see the card, false otherwise
  */
 export function canViewDashboardCard(
   cardId: string,
   userPrivileges?: Array<{ privilegeName: string; module?: string }> | null,
-  roleCardVisibility?: Record<string, boolean> | null
+  roleCardVisibility?: Record<string, boolean> | null,
+  userRole?: string | null
 ): boolean {
   const card = DASHBOARD_CARDS.find(c => c.id === cardId)
   
@@ -95,9 +97,19 @@ export function canViewDashboardCard(
     return false
   }
   
+  // Admin users can see all cards regardless of privileges or role configuration
+  // Check for common admin role names (case-insensitive)
+  if (userRole) {
+    const roleLower = userRole.toLowerCase()
+    if (roleLower === 'admin' || roleLower === 'administrator') {
+      return true
+    }
+  }
+  
   // First, check role-specific card visibility (overrides privilege-based logic)
+  // If explicitly set in roleCardVisibility, return that value directly (true or false)
   if (roleCardVisibility && cardId in roleCardVisibility) {
-    return roleCardVisibility[cardId] === true
+    return roleCardVisibility[cardId] // Return the value directly - if false, return false immediately
   }
   
   // If card is always visible, show it
@@ -132,12 +144,14 @@ export function canViewDashboardCard(
  * @param cards - Array of card objects (with id property)
  * @param userPrivileges - Array of privilege objects from the user object
  * @param roleCardVisibility - Optional object mapping card IDs to visibility (from role_dashboard_cards table)
+ * @param userRole - Optional user role name (e.g., "admin", "doctor")
  * @returns Filtered array of cards that the user can view
  */
 export function filterDashboardCards<T extends { id: string }>(
   cards: T[],
   userPrivileges?: Array<{ privilegeName: string; module?: string }> | null,
-  roleCardVisibility?: Record<string, boolean> | null
+  roleCardVisibility?: Record<string, boolean> | null,
+  userRole?: string | null
 ): T[] {
-  return cards.filter(card => canViewDashboardCard(card.id, userPrivileges, roleCardVisibility))
+  return cards.filter(card => canViewDashboardCard(card.id, userPrivileges, roleCardVisibility, userRole))
 }
