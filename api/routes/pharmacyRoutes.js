@@ -346,10 +346,29 @@ router.post('/prescriptions', async (req, res) => {
             prescNumber = `PRES-${String(count[0].count + 1).padStart(6, '0')}`;
         }
 
+        // Ensure all values are properly set (no undefined)
+        const prescriptionValues = [
+            prescNumber, 
+            patientId !== undefined ? patientId : null, 
+            doctorId !== undefined ? doctorId : null, 
+            prescriptionDate || new Date(), 
+            status || 'pending', 
+            notes !== undefined && notes !== null ? notes : null, 
+            admissionId !== undefined && admissionId !== null ? admissionId : null
+        ];
+        
+        // Validate no undefined values
+        for (let i = 0; i < prescriptionValues.length; i++) {
+            if (prescriptionValues[i] === undefined) {
+                console.error(`[PRESCRIPTION] Undefined value at index ${i} in prescription INSERT`);
+                throw new Error(`Prescription parameter at index ${i} is undefined`);
+            }
+        }
+
         const [result] = await connection.execute(
             `INSERT INTO prescriptions (prescriptionNumber, patientId, doctorId, prescriptionDate, status, notes, admissionId)
              VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            [prescNumber, patientId, doctorId, prescriptionDate || new Date(), status || 'pending', notes, admissionId || null]
+            prescriptionValues
         );
         const prescriptionId = result.insertId;
 
@@ -380,10 +399,32 @@ router.post('/prescriptions', async (req, res) => {
                 }
 
                 // Save prescription item
+                // Ensure all values are null instead of undefined to avoid SQL errors
+                const itemValues = [
+                    prescriptionId !== undefined ? prescriptionId : null, 
+                    medicationIdNum !== undefined && medicationIdNum !== null ? medicationIdNum : null, 
+                    medicationName !== undefined && medicationName !== null ? medicationName : null, 
+                    item.dosage !== undefined && item.dosage !== null ? item.dosage : null,
+                    item.frequency !== undefined && item.frequency !== null ? item.frequency : null,
+                    item.duration !== undefined && item.duration !== null ? item.duration : null,
+                    quantityNum !== undefined && quantityNum !== null ? quantityNum : null,
+                    item.instructions !== undefined && item.instructions !== null ? item.instructions : null
+                ];
+                
+                // Validate no undefined values before executing
+                for (let i = 0; i < itemValues.length; i++) {
+                    if (itemValues[i] === undefined) {
+                        console.error(`[PRESCRIPTION] Undefined value at index ${i} in prescription_items INSERT`);
+                        console.error(`[PRESCRIPTION] Item data:`, JSON.stringify(item, null, 2));
+                        console.error(`[PRESCRIPTION] Item values:`, JSON.stringify(itemValues, null, 2));
+                        throw new Error(`Prescription item parameter at index ${i} is undefined`);
+                    }
+                }
+                
                 await connection.execute(
                     `INSERT INTO prescription_items (prescriptionId, medicationId, medicationName, dosage, frequency, duration, quantity, instructions)
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-                    [prescriptionId, medicationIdNum, medicationName, item.dosage, item.frequency, item.duration, quantityNum, item.instructions]
+                    itemValues
                 );
 
                 // FIFO Batch Selection (Price Lookup)

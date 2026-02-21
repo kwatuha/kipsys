@@ -23,7 +23,8 @@ import {
   Stethoscope,
   User,
   ChevronDown,
-  Scan
+  Scan,
+  Check
 } from "lucide-react"
 import { format } from "date-fns"
 
@@ -42,6 +43,15 @@ import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command"
+import { cn } from "@/lib/utils"
 import { PatientCombobox } from "@/components/patient-combobox"
 import { MedicationCombobox } from "@/components/medication-combobox"
 import { DiagnosisCombobox } from "@/components/diagnosis-combobox"
@@ -1482,21 +1492,101 @@ export function PatientEncounterForm({
 
       // 4. Create patient procedures if any (only unsaved ones)
       const unsavedProcedures = data.procedures?.filter((proc: any) => !proc.alreadySaved) || []
-      console.log('🏥 Saving procedures:', { total: data.procedures?.length || 0, unsaved: unsavedProcedures.length })
+      console.log('🏥 Saving procedures:', { 
+        total: data.procedures?.length || 0, 
+        unsaved: unsavedProcedures.length,
+        procedures: data.procedures?.map((p: any) => ({ 
+          procedureId: p.procedureId, 
+          alreadySaved: p.alreadySaved,
+          notes: p.notes,
+          complications: p.complications
+        }))
+      })
       if (unsavedProcedures.length > 0) {
-        const procedurePromises = unsavedProcedures.map((procedure: any) => {
-          const procedureData = {
-            patientId: parseInt(data.patientId),
-            procedureId: parseInt(procedure.procedureId),
-            procedureDate: format(data.encounterDate, 'yyyy-MM-dd'),
-            performedBy: parseInt(data.doctorId),
-            notes: procedure.notes || null,
-            complications: procedure.complications || null,
+        // Use Promise.allSettled to ensure all procedures are attempted, even if some fail
+        const procedurePromises = unsavedProcedures.map(async (procedure: any) => {
+          try {
+            // Validate procedureId is present and valid
+            if (!procedure.procedureId) {
+              console.error('❌ Procedure missing procedureId:', procedure)
+              return { success: false, error: 'Procedure ID is required', procedure }
+            }
+            
+            // Validate procedureId can be parsed as integer
+            const procedureIdNum = parseInt(procedure.procedureId)
+            if (isNaN(procedureIdNum)) {
+              console.error('❌ Procedure ID is not a valid number:', procedure.procedureId)
+              return { success: false, error: 'Procedure ID must be a valid number', procedure }
+            }
+            
+            // Validate doctorId is present
+            if (!data.doctorId) {
+              console.error('❌ Doctor ID is required for procedures')
+              return { success: false, error: 'Doctor ID is required', procedure }
+            }
+            
+            const procedureData = {
+              patientId: parseInt(data.patientId),
+              procedureId: procedureIdNum,
+              procedureDate: format(data.encounterDate, 'yyyy-MM-dd'),
+              performedBy: parseInt(data.doctorId),
+              notes: procedure.notes || null,
+              complications: procedure.complications || null,
+            }
+            console.log('🏥 Creating procedure:', procedureData)
+            const result = await proceduresApi.createPatientProcedure(procedureData)
+            console.log('✅ Procedure created successfully:', result)
+            return { success: true, result, procedure }
+          } catch (procError: any) {
+            console.error('❌ Error creating procedure:', procError)
+            console.error('Procedure data:', procedure)
+            return { success: false, error: procError.message || 'Unknown error', procedure, exception: procError }
           }
-           return proceduresApi.createPatientProcedure(procedureData)
         })
-        const procedureResults = await Promise.all(procedurePromises)
-        console.log('✅ Procedures created:', procedureResults.length)
+        
+        // Use allSettled to get results for all procedures, even if some fail
+        const procedureResults = await Promise.allSettled(procedurePromises)
+        const successful = procedureResults.filter((r: any) => r.status === 'fulfilled' && r.value?.success).length
+        const failed = procedureResults.filter((r: any) => r.status === 'rejected' || (r.status === 'fulfilled' && !r.value?.success))
+        
+        console.log('✅ Procedures save summary:', {
+          total: unsavedProcedures.length,
+          successful,
+          failed: failed.length,
+          results: procedureResults.map((r: any) => {
+            if (r.status === 'fulfilled') return r.value
+            return { success: false, error: r.reason?.message || 'Promise rejected', status: 'rejected' }
+          })
+        })
+        
+        // Show error toast if any procedures failed
+        if (failed.length > 0) {
+          const failedDetails = failed.map((f: any) => {
+            if (f.status === 'fulfilled') return f.value?.error || 'Unknown error'
+            return f.reason?.message || 'Unknown error'
+          }).join(', ')
+          toast({
+            title: "Some Procedures Failed to Save",
+            description: `${failed.length} of ${unsavedProcedures.length} procedures failed to save: ${failedDetails}`,
+            variant: "destructive",
+          })
+        } else if (successful > 0) {
+          toast({
+            title: "Procedures Saved",
+            description: `Successfully saved ${successful} procedure(s)`,
+          })
+        }
+        
+        // Reload patient procedures after saving to ensure they appear when form is reopened
+        try {
+          const updatedProcedures = await proceduresApi.getPatientProcedures(data.patientId)
+          setPatientProcedures(updatedProcedures || [])
+          console.log('✅ Reloaded patient procedures:', updatedProcedures?.length || 0, updatedProcedures)
+        } catch (reloadError) {
+          console.error('⚠️ Error reloading procedures after save:', reloadError)
+          // Don't fail the encounter save if reload fails
+        }
+        
         // Note: Invoice creation and cashier queue addition are handled automatically by the API route
         // No need to create invoice here - it's done in api/routes/proceduresRoutes.js
       } else {
@@ -3418,6 +3508,25 @@ const clearDraftFromStorage = (patientId:any) => {
             <div className="flex flex-1 overflow-hidden min-h-0">
               <ScrollArea className="flex-1 px-6">
                 <div className="space-y-4 mt-4 pb-4">
+                  {/* Add New Lab Test Button - Moved to Top */}
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-md font-medium">Order New Lab Tests</h3>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setEditingLabTestIndex(null)
+                        setTempLabTest(defaultLabTest)
+                        setAddTestDialogOpen(true)
+                      }}
+                      disabled={testTypes.length === 0}
+                    >
+                      <Plus className="mr-2 h-4 w-4" />
+                      Add Test
+                    </Button>
+                  </div>
+
                   {/* Existing Lab Orders Section */}
                   {patientLabResults.length > 0 && (
                     <div className="space-y-2">
@@ -3448,14 +3557,22 @@ const clearDraftFromStorage = (patientId:any) => {
                                     <TableCell>
                                       {order.items && order.items.length > 0 ? (
                                         <div className="space-y-1">
-                                          {order.items.slice(0, 2).map((item: any, idx: number) => (
-                                            <div key={idx} className="text-sm">
-                                              {item.testName || item.testType?.testName || 'Test'}
-                                              {item.result?.resultId && (
-                                                <Badge variant="default" className="ml-2 text-xs">Results</Badge>
-                                              )}
-                                            </div>
-                                          ))}
+                                          {order.items.slice(0, 2).map((item: any, idx: number) => {
+                                            // Get test name from various possible sources
+                                            let testName = item.testName || 
+                                                          item.testType?.testName || 
+                                                          (item.testTypeId && testTypes.find((t: any) => t.testTypeId?.toString() === item.testTypeId?.toString())?.testName) ||
+                                                          (item.testTypeId && testTypes.find((t: any) => t.testTypeId === item.testTypeId)?.testName) ||
+                                                          'Test'
+                                            return (
+                                              <div key={idx} className="text-sm">
+                                                {testName}
+                                                {item.result?.resultId && (
+                                                  <Badge variant="default" className="ml-2 text-xs">Results</Badge>
+                                                )}
+                                              </div>
+                                            )
+                                          })}
                                           {order.items.length > 2 && (
                                             <div className="text-xs text-muted-foreground">+{order.items.length - 2} more</div>
                                           )}
@@ -3483,21 +3600,23 @@ const clearDraftFromStorage = (patientId:any) => {
                                       </Badge>
                                     </TableCell>
                                     <TableCell className="text-right">
-                                      {hasResults && (
-                                        <Button
-                                          type="button"
-                                          variant="ghost"
-                                          size="sm"
-                                          onClick={() => {
-                                            setViewingLabOrder(order)
-                                            setViewLabResultsDialogOpen(true)
-                                          }}
-                                          className="h-8"
-                                        >
-                                          <Eye className="h-4 w-4 mr-1" />
-                                          View Results
-                                        </Button>
-                                      )}
+                                      <div className="flex items-center justify-end gap-2">
+                                        {hasResults && (
+                                          <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={() => {
+                                              setViewingLabOrder(order)
+                                              setViewLabResultsDialogOpen(true)
+                                            }}
+                                            className="h-8"
+                                          >
+                                            <Eye className="h-4 w-4 mr-1" />
+                                            View Results
+                                          </Button>
+                                        )}
+                                      </div>
                                     </TableCell>
                                   </TableRow>
                                 )
@@ -3509,109 +3628,12 @@ const clearDraftFromStorage = (patientId:any) => {
                     </div>
                   )}
 
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-md font-medium">Order New Lab Tests</h3>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        setEditingLabTestIndex(null)
-                        setTempLabTest(defaultLabTest)
-                        setAddTestDialogOpen(true)
-                      }}
-                      disabled={testTypes.length === 0}
-                    >
-                      <Plus className="mr-2 h-4 w-4" />
-                      Add Test
-                    </Button>
-                  </div>
-
-                  {labTestFields.length === 0 ? (
+                  {patientLabResults.length === 0 && (
                     <Card>
                       <CardContent className="py-8 text-center text-muted-foreground">
                         No lab tests ordered. Click "Add Test" to order laboratory tests.
                       </CardContent>
                     </Card>
-                  ) : (
-                    <div className="space-y-4">
-                      <div className="rounded-md border">
-                        <Table>
-                          <TableHeader>
-                            <TableRow>
-                              <TableHead className="w-[300px]">Test Name</TableHead>
-                              <TableHead className="w-[120px]">Priority</TableHead>
-                              <TableHead>Clinical Indication</TableHead>
-                              <TableHead className="w-[120px] text-right">Cost</TableHead>
-                              <TableHead className="w-[100px] text-right">Actions</TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {labTestFields.map((field, index) => {
-                              const testData = form.watch(`labTests.${index}`)
-                              const testCost = getTestCost(testData?.testTypeId || "")
-                              return (
-                                <TableRow key={field.id}>
-                                  <TableCell className="font-medium">
-                                    {getTestName(testData?.testTypeId || "")}
-                                  </TableCell>
-                                  <TableCell>
-                                    <Badge variant={
-                                      testData?.priority === "stat" ? "destructive" :
-                                      testData?.priority === "urgent" ? "default" :
-                                      "secondary"
-                                    }>
-                                      {testData?.priority || "routine"}
-                                    </Badge>
-                                  </TableCell>
-                                  <TableCell className="max-w-[300px]">
-                                    <div className="truncate" title={testData?.clinicalIndication || ""}>
-                                      {testData?.clinicalIndication || <span className="text-muted-foreground">-</span>}
-                                    </div>
-                                  </TableCell>
-                                  <TableCell className="text-right font-medium">
-                                    {testCost > 0 ? `KES ${testCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "-"}
-                                  </TableCell>
-                                  <TableCell className="text-right">
-                                    <div className="flex items-center justify-end gap-2">
-                                      <Button
-                                        type="button"
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={() => {
-                                          setEditingLabTestIndex(index)
-                                          const testData = form.getValues(`labTests.${index}`)
-                                          setTempLabTest(testData || defaultLabTest)
-                                          setAddTestDialogOpen(true)
-                                        }}
-                                        className="h-8 w-8 p-0"
-                                      >
-                                        <Eye className="h-4 w-4" />
-                                      </Button>
-                                      <Button
-                                        type="button"
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={() => removeLabTest(index)}
-                                        className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-                                      >
-                                        <Trash2 className="h-4 w-4" />
-                                      </Button>
-                                    </div>
-                                  </TableCell>
-                                </TableRow>
-                              )
-                            })}
-                          </TableBody>
-                        </Table>
-                      </div>
-                      <div className="flex justify-end items-center gap-4 pt-2 border-t">
-                        <div className="text-sm text-muted-foreground">Total Charges:</div>
-                        <div className="text-lg font-semibold">
-                          KES {calculateTotalCharges().toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </div>
-                      </div>
-                    </div>
                   )}
                 </div>
               </ScrollArea>
@@ -4160,75 +4182,7 @@ const clearDraftFromStorage = (patientId:any) => {
             <div className="flex flex-1 overflow-hidden min-h-0">
               <ScrollArea className="flex-1 px-6">
                 <div className="space-y-4 mt-4 pb-4">
-                  {/* Existing Prescriptions Section */}
-                  {patientMedications.length > 0 && (
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <h3 className="text-md font-medium">Existing Prescriptions</h3>
-                        <Badge variant="secondary">{patientMedications.length} prescription(s)</Badge>
-                      </div>
-                      <Card>
-                        <CardContent className="p-0">
-                          <Table>
-                            <TableHeader>
-                              <TableRow>
-                                <TableHead>Date</TableHead>
-                                <TableHead>Prescription #</TableHead>
-                                <TableHead>Medications</TableHead>
-                                <TableHead>Doctor</TableHead>
-                                <TableHead>Status</TableHead>
-                              </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                              {patientMedications.map((prescription: any) => (
-                                <TableRow key={prescription.prescriptionId}>
-                                  <TableCell>{format(new Date(prescription.prescriptionDate), "PP")}</TableCell>
-                                  <TableCell className="font-mono text-sm">{prescription.prescriptionNumber || `#${prescription.prescriptionId}`}</TableCell>
-                                  <TableCell>
-                                    {prescription.items && prescription.items.length > 0 ? (
-                                      <div className="space-y-1">
-                                        {prescription.items.slice(0, 2).map((item: any, idx: number) => (
-                                          <div key={idx} className="text-sm">
-                                            {item.medicationName || item.medicationNameFromCatalog || 'Medication'}
-                                            {item.dosage && (
-                                              <span className="text-xs text-muted-foreground ml-1">
-                                                ({item.dosage} {item.frequency})
-                                              </span>
-                                            )}
-                                          </div>
-                                        ))}
-                                        {prescription.items.length > 2 && (
-                                          <div className="text-xs text-muted-foreground">+{prescription.items.length - 2} more</div>
-                                        )}
-                                      </div>
-                                    ) : (
-                                      <span className="text-muted-foreground">-</span>
-                                    )}
-                                  </TableCell>
-                                  <TableCell>
-                                    {prescription.doctorFirstName && prescription.doctorLastName
-                                      ? `${prescription.doctorFirstName} ${prescription.doctorLastName}`
-                                      : '-'}
-                                  </TableCell>
-                                  <TableCell>
-                                    <Badge variant={
-                                      prescription.status === 'active' ? 'default' :
-                                      prescription.status === 'completed' ? 'secondary' :
-                                      prescription.status === 'dispensed' ? 'default' :
-                                      'outline'
-                                    }>
-                                      {prescription.status || 'pending'}
-                                    </Badge>
-                                  </TableCell>
-                                </TableRow>
-                              ))}
-                            </TableBody>
-                          </Table>
-                        </CardContent>
-                      </Card>
-                    </div>
-                  )}
-
+                  {/* Add New Medication Button - Moved to Top */}
                   <div className="flex items-center justify-between">
                     <h3 className="text-md font-medium">Prescribe New Medications</h3>
                     <Button
@@ -4275,130 +4229,89 @@ const clearDraftFromStorage = (patientId:any) => {
                     </div>
                   )}
 
-                  {medicationFields.length === 0 ? (
+                  {/* Existing Prescriptions Section */}
+                  {patientMedications.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-md font-medium">Existing Prescriptions</h3>
+                        <Badge variant="secondary">{patientMedications.length} prescription(s)</Badge>
+                      </div>
+                      <Card>
+                        <CardContent className="p-0">
+                          <Table>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead>Date</TableHead>
+                                <TableHead>Prescription #</TableHead>
+                                <TableHead>Medications</TableHead>
+                                <TableHead>Doctor</TableHead>
+                                <TableHead>Status</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {patientMedications.map((prescription: any) => (
+                                <TableRow key={prescription.prescriptionId}>
+                                  <TableCell>{format(new Date(prescription.prescriptionDate), "PP")}</TableCell>
+                                  <TableCell className="font-mono text-sm">{prescription.prescriptionNumber || `#${prescription.prescriptionId}`}</TableCell>
+                                  <TableCell>
+                                    {prescription.items && prescription.items.length > 0 ? (
+                                      <div className="space-y-1">
+                                        {prescription.items.slice(0, 2).map((item: any, idx: number) => {
+                                          // Get medication name from various possible sources
+                                          let medicationName = item.medicationName || 
+                                                              item.medicationNameFromCatalog || 
+                                                              (item.medicationId && medications.find((m: any) => m.medicationId?.toString() === item.medicationId?.toString())?.name) ||
+                                                              (item.medicationId && medications.find((m: any) => m.medicationId === item.medicationId)?.name) ||
+                                                              'Medication'
+                                          return (
+                                            <div key={idx} className="text-sm">
+                                              {medicationName}
+                                              {item.dosage && (
+                                                <span className="text-xs text-muted-foreground ml-1">
+                                                  ({item.dosage} {item.frequency})
+                                                </span>
+                                              )}
+                                            </div>
+                                          )
+                                        })}
+                                        {prescription.items.length > 2 && (
+                                          <div className="text-xs text-muted-foreground">+{prescription.items.length - 2} more</div>
+                                        )}
+                                      </div>
+                                    ) : (
+                                      <span className="text-muted-foreground">-</span>
+                                    )}
+                                  </TableCell>
+                                  <TableCell>
+                                    {prescription.doctorFirstName && prescription.doctorLastName
+                                      ? `${prescription.doctorFirstName} ${prescription.doctorLastName}`
+                                      : '-'}
+                                  </TableCell>
+                                  <TableCell>
+                                    <Badge variant={
+                                      prescription.status === 'active' ? 'default' :
+                                      prescription.status === 'completed' ? 'secondary' :
+                                      prescription.status === 'dispensed' ? 'default' :
+                                      'outline'
+                                    }>
+                                      {prescription.status || 'pending'}
+                                    </Badge>
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </CardContent>
+                      </Card>
+                    </div>
+                  )}
+
+                  {patientMedications.length === 0 && medicationFields.length === 0 && (
                     <Card>
                       <CardContent className="py-8 text-center text-muted-foreground">
                         No medications prescribed. Click "Add Medication" to prescribe medications.
                       </CardContent>
                     </Card>
-                  ) : (
-                    <div className="space-y-4">
-                      <div className="rounded-md border">
-                        <Table>
-                          <TableHeader>
-                            <TableRow>
-                              <TableHead className="w-[250px]">Medication</TableHead>
-                              <TableHead className="w-[100px]">Dosage</TableHead>
-                              <TableHead className="w-[120px]">Frequency</TableHead>
-                              <TableHead className="w-[100px]">Duration</TableHead>
-                              <TableHead className="w-[80px]">Qty</TableHead>
-                              <TableHead className="w-[120px] text-right">Cost</TableHead>
-                              <TableHead className="w-[100px] text-right">Actions</TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {medicationFields.map((field, index) => {
-                              const medData = form.watch(`medications.${index}`)
-                              const medicationId = medData?.medicationId || ""
-
-                              // Skip rows with empty medicationId
-                              if (!medicationId || medicationId.trim() === "") {
-                                return null
-                              }
-
-                              const quantity = medData?.quantity || "0"
-                              const medCost = getMedicationCost(medicationId, quantity)
-                              const inventoryStatus = medicationId ? getInventoryStatus(parseInt(medicationId)) : null
-
-                              return (
-                                <TableRow key={field.id}>
-                                  <TableCell className="font-medium">
-                                    <div className="flex flex-col">
-                                      <span>{getMedicationNameById(medicationId)}</span>
-                                      {inventoryStatus && (
-                                        <div className="mt-1">
-                                          {inventoryStatus.hasStock ? (
-                                            <Badge variant="default" className="text-xs">
-                                              <Package className="h-3 w-3 mr-1" />
-                                              {inventoryStatus.quantity} in stock
-                                            </Badge>
-                                          ) : (
-                                            <Badge variant="secondary" className="text-xs">
-                                              <AlertTriangle className="h-3 w-3 mr-1" />
-                                              Out of stock
-                                            </Badge>
-                                          )}
-                                        </div>
-                                      )}
-                                    </div>
-                                  </TableCell>
-                                  <TableCell>{medData?.dosage || "-"}</TableCell>
-                                  <TableCell>{medData?.frequency || "-"}</TableCell>
-                                  <TableCell>{medData?.duration || "-"}</TableCell>
-                                  <TableCell>
-                                    {inventoryStatus?.hasStock ? (
-                                      <span className="font-medium">{quantity || "0"}</span>
-                                    ) : (
-                                      <span className="text-muted-foreground">-</span>
-                                    )}
-                                  </TableCell>
-                                  <TableCell className="text-right font-medium">
-                                    {medCost > 0 ? (
-                                      <div className="flex flex-col items-end">
-                                        <span>KES {medCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                        {inventoryStatus?.sellPrice && (
-                                          <span className="text-xs text-muted-foreground">
-                                            @ {inventoryStatus.sellPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/unit
-                                          </span>
-                                        )}
-                                      </div>
-                                    ) : (
-                                      "-"
-                                    )}
-                                  </TableCell>
-                                  <TableCell className="text-right">
-                                    <div className="flex items-center justify-end gap-2">
-                                      <Button
-                                        type="button"
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={() => {
-                                          setEditingMedicationIndex(index)
-                                          const medData = form.getValues(`medications.${index}`)
-                                          setTempMedication(medData || defaultMedication)
-                                          setIsQuantityManuallyEdited(true) // When editing, treat as manually edited
-                                          setAddMedicationDialogOpen(true)
-                                        }}
-                                        className="h-8 w-8 p-0"
-                                      >
-                                        <Eye className="h-4 w-4" />
-                                      </Button>
-                                      <Button
-                                        type="button"
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={() => {
-                                          removeMedication(index)
-                                        }}
-                                        className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-                                      >
-                                        <Trash2 className="h-4 w-4" />
-                                      </Button>
-                                    </div>
-                                  </TableCell>
-                                </TableRow>
-                              )
-                            })}
-                          </TableBody>
-                        </Table>
-                      </div>
-                      <div className="flex justify-end items-center gap-4 pt-2 border-t">
-                        <div className="text-sm text-muted-foreground">Total Cost:</div>
-                        <div className="text-lg font-semibold">
-                          KES {calculateTotalMedicationCost().toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </div>
-                      </div>
-                    </div>
                   )}
                 </div>
               </ScrollArea>
@@ -4450,6 +4363,24 @@ const clearDraftFromStorage = (patientId:any) => {
           </SheetHeader>
           <ScrollArea className="flex-1 px-6">
             <div className="space-y-4 mt-4 pb-4">
+              {/* Add New Procedure Button - Moved to Top */}
+              <div className="flex items-center justify-between">
+                <h3 className="text-md font-medium">Record New Procedures</h3>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setEditingProcedureIndex(null)
+                    setTempProcedure(defaultProcedure)
+                    setAddProcedureDialogOpen(true)
+                  }}
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Procedure
+                </Button>
+              </div>
+
               {/* Existing Procedures Section */}
               {patientProcedures.length > 0 && (
                 <div className="space-y-2">
@@ -4488,91 +4419,12 @@ const clearDraftFromStorage = (patientId:any) => {
                 </div>
               )}
 
-              <div className="flex items-center justify-between">
-                <h3 className="text-md font-medium">Record New Procedures</h3>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setEditingProcedureIndex(null)
-                    setTempProcedure(defaultProcedure)
-                    setAddProcedureDialogOpen(true)
-                  }}
-                >
-                  <Plus className="h-4 w-4 mr-2" />
-                  Add Procedure
-                </Button>
-              </div>
-              {procedureFields.length === 0 ? (
+              {patientProcedures.length === 0 && (
                 <Card>
                   <CardContent className="py-8 text-center text-muted-foreground">
                     No procedures recorded. Click "Add Procedure" to record a procedure.
                   </CardContent>
                 </Card>
-              ) : (
-                <div className="rounded-md border">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Procedure</TableHead>
-                        <TableHead>Notes</TableHead>
-                        <TableHead>Complications</TableHead>
-                        <TableHead className="text-right">Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {procedureFields.map((field, index) => {
-                        const procedureId = form.watch(`procedures.${index}.procedureId`)
-                        const procedure = procedures.find((p: any) => p.procedureId?.toString() === procedureId)
-                        const procedureName = procedure?.procedureName || "Unknown Procedure"
-                        return (
-                          <TableRow key={field.id}>
-                            <TableCell className="font-medium">{procedureName}</TableCell>
-                            <TableCell>{form.watch(`procedures.${index}.notes`) || "-"}</TableCell>
-                            <TableCell>{form.watch(`procedures.${index}.complications`) || "-"}</TableCell>
-                            <TableCell className="text-right">
-                              <div className="flex items-center justify-end gap-2">
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => {
-                                    setEditingProcedureIndex(index)
-                                    const procData = form.getValues(`procedures.${index}`)
-                                    console.log('Editing procedure at index', index, 'Data:', procData)
-                                    // Ensure all fields are properly set, convert procedureId to string if needed
-                                    setTempProcedure({
-                                      procedureId: procData?.procedureId ? String(procData.procedureId) : "",
-                                      notes: procData?.notes || "",
-                                      complications: procData?.complications || "",
-                                    })
-                                    // Small delay to ensure state is set before opening dialog
-                                    setTimeout(() => {
-                                      setAddProcedureDialogOpen(true)
-                                    }, 0)
-                                  }}
-                                  className="h-8 w-8 p-0"
-                                >
-                                  <Eye className="h-4 w-4" />
-                                </Button>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => removeProcedure(index)}
-                                  className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        )
-                      })}
-                    </TableBody>
-                  </Table>
-                </div>
               )}
             </div>
           </ScrollArea>
@@ -4620,6 +4472,24 @@ const clearDraftFromStorage = (patientId:any) => {
           </SheetHeader>
           <ScrollArea className="flex-1 px-6">
             <div className="space-y-4 mt-4 pb-4">
+              {/* Add New Radiology Order Button - Moved to Top */}
+              <div className="flex items-center justify-between">
+                <h3 className="text-md font-medium">Order New Radiology Examination</h3>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setEditingRadiologyIndex(null)
+                    setTempRadiologyOrder(defaultRadiologyOrder)
+                    setAddRadiologyDialogOpen(true)
+                  }}
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Radiology Order
+                </Button>
+              </div>
+
               {/* Existing Radiology Orders Section */}
               {patientRadiologyResults.length > 0 && (
                 <div className="space-y-2">
@@ -4674,95 +4544,12 @@ const clearDraftFromStorage = (patientId:any) => {
                 </div>
               )}
 
-              <div className="flex items-center justify-between">
-                <h3 className="text-md font-medium">Order New Radiology Examinations</h3>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setEditingRadiologyIndex(null)
-                    setTempRadiologyOrder(defaultRadiologyOrder)
-                    setAddRadiologyDialogOpen(true)
-                  }}
-                >
-                  <Plus className="h-4 w-4 mr-2" />
-                  Add Radiology Order
-                </Button>
-              </div>
-              {radiologyOrderFields.length === 0 ? (
+              {patientRadiologyResults.length === 0 && (
                 <Card>
                   <CardContent className="py-8 text-center text-muted-foreground">
                     No radiology orders recorded. Click "Add Radiology Order" to record an order.
                   </CardContent>
                 </Card>
-              ) : (
-                <div className="rounded-md border">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Examination</TableHead>
-                        <TableHead>Body Part</TableHead>
-                        <TableHead>Clinical Indication</TableHead>
-                        <TableHead>Priority</TableHead>
-                        <TableHead className="text-right">Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {radiologyOrderFields.map((field, index) => {
-                        const examTypeId = form.watch(`radiologyOrders.${index}.examTypeId`)
-                        // Try both string and number comparison
-                        const examType = examTypes.find((e: any) => {
-                          const eId = e.examTypeId?.toString()
-                          const formId = examTypeId?.toString()
-                          return eId === formId ||
-                                 e.examTypeId === parseInt(formId || '0') ||
-                                 parseInt(eId || '0') === parseInt(formId || '0')
-                        })
-                        const examName = examType?.examName || (examTypeId ? `Exam ID: ${examTypeId}` : "No exam selected")
-                        return (
-                          <TableRow key={field.id}>
-                            <TableCell className="font-medium">{examName}</TableCell>
-                            <TableCell>{form.watch(`radiologyOrders.${index}.bodyPart`) || "-"}</TableCell>
-                            <TableCell className="max-w-xs truncate">{form.watch(`radiologyOrders.${index}.clinicalIndication`) || "-"}</TableCell>
-                            <TableCell>
-                              <Badge variant={form.watch(`radiologyOrders.${index}.priority`) === 'stat' || form.watch(`radiologyOrders.${index}.priority`) === 'urgent' ? 'destructive' : 'outline'}>
-                                {form.watch(`radiologyOrders.${index}.priority`)?.toUpperCase() || 'ROUTINE'}
-                              </Badge>
-                            </TableCell>
-                            <TableCell className="text-right">
-                              <div className="flex items-center justify-end gap-2">
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => {
-                                    setEditingRadiologyIndex(index)
-                                    const orderData = form.getValues(`radiologyOrders.${index}`)
-                                    setTempRadiologyOrder(orderData || defaultRadiologyOrder)
-                                    setAddRadiologyDialogOpen(true)
-                                  }}
-                                  className="h-8 w-8 p-0"
-                                >
-                                  <Eye className="h-4 w-4" />
-                                </Button>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => removeRadiologyOrder(index)}
-                                  className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        )
-                      })}
-                    </TableBody>
-                  </Table>
-                </div>
               )}
             </div>
           </ScrollArea>
@@ -4810,8 +4597,9 @@ const clearDraftFromStorage = (patientId:any) => {
           </SheetHeader>
           <ScrollArea className="flex-1 px-6">
             <div className="space-y-4 mt-4 pb-4">
+              {/* Add New Order Button - Already at Top */}
               <div className="flex items-center justify-between">
-                <h3 className="text-md font-medium">Orders</h3>
+                <h3 className="text-md font-medium">Order New Consumables</h3>
                 <Button
                   type="button"
                   variant="outline"
@@ -4826,87 +4614,153 @@ const clearDraftFromStorage = (patientId:any) => {
                   Add Order
                 </Button>
               </div>
-              {orderFields.length === 0 ? (
+
+              {/* Existing Orders Section */}
+              {patientOrders.length > 0 && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-md font-medium">Existing Orders</h3>
+                    <Badge variant="secondary">{patientOrders.length} order(s)</Badge>
+                  </div>
+                  <Card>
+                    <CardContent className="p-0">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Date</TableHead>
+                            <TableHead>Invoice #</TableHead>
+                            <TableHead>Items</TableHead>
+                            <TableHead className="text-right">Total</TableHead>
+                            <TableHead>Status</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {patientOrders.map((invoice: any) => (
+                            <TableRow key={invoice.invoiceId}>
+                              <TableCell>{format(new Date(invoice.invoiceDate), "PP")}</TableCell>
+                              <TableCell className="font-mono text-sm">{invoice.invoiceNumber || `#${invoice.invoiceId}`}</TableCell>
+                              <TableCell>
+                                {invoice.items && invoice.items.length > 0 ? (
+                                  <div className="space-y-1">
+                                    {invoice.items.slice(0, 2).map((item: any, idx: number) => (
+                                      <div key={idx} className="text-sm">
+                                        {item.description || 'Item'} ({item.quantity || 0}x)
+                                      </div>
+                                    ))}
+                                    {invoice.items.length > 2 && (
+                                      <div className="text-xs text-muted-foreground">+{invoice.items.length - 2} more</div>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span className="text-muted-foreground">-</span>
+                                )}
+                              </TableCell>
+                              <TableCell className="text-right font-medium">
+                                KES {parseFloat(invoice.totalAmount || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </TableCell>
+                              <TableCell>
+                                <Badge variant={
+                                  invoice.status === 'paid' ? 'default' :
+                                  invoice.status === 'pending' ? 'outline' :
+                                  'secondary'
+                                }>
+                                  {invoice.status || 'pending'}
+                                </Badge>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
+
+              {/* Unsaved Orders in Form */}
+              {orderFields.length > 0 && (
+                <div className="space-y-2">
+                  <h3 className="text-md font-medium">Pending Orders (Not Saved)</h3>
+                  <div className="rounded-md border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Item</TableHead>
+                          <TableHead>Quantity</TableHead>
+                          <TableHead>Unit Price</TableHead>
+                          <TableHead className="text-right">Total</TableHead>
+                          <TableHead className="text-right">Actions</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {orderFields.map((field, index) => {
+                          const chargeId = form.watch(`orders.${index}.chargeId`)
+                          const quantity = form.watch(`orders.${index}.quantity`) || 1
+                          const consumable = consumables.find((c: any) => c.chargeId?.toString() === chargeId)
+                          const itemName = consumable?.name || "Unknown Item"
+                          const unitPrice = consumable?.cost ? parseFloat(consumable.cost) : 0
+                          const total = unitPrice * quantity
+                          return (
+                            <TableRow key={field.id}>
+                              <TableCell className="font-medium">{itemName}</TableCell>
+                              <TableCell>{quantity}</TableCell>
+                              <TableCell>KES {unitPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
+                              <TableCell className="text-right font-medium">
+                                KES {total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </TableCell>
+                              <TableCell className="text-right">
+                                <div className="flex items-center justify-end gap-2">
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => {
+                                      setEditingOrderIndex(index)
+                                      const orderData = form.getValues(`orders.${index}`)
+                                      setTempOrder(orderData || defaultOrder)
+                                      setAddOrderDialogOpen(true)
+                                    }}
+                                    className="h-8 w-8 p-0"
+                                  >
+                                    <Eye className="h-4 w-4" />
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => removeOrder(index)}
+                                    className="h-8 w-8 p-0 text-destructive hover:text-destructive"
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          )
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                  <div className="flex justify-end items-center gap-4 pt-2 border-t">
+                    <div className="text-sm text-muted-foreground">Total Cost:</div>
+                    <div className="text-lg font-semibold">
+                      KES {orderFields.reduce((sum, field, index) => {
+                        const chargeId = form.watch(`orders.${index}.chargeId`)
+                        const quantity = form.watch(`orders.${index}.quantity`) || 1
+                        const consumable = consumables.find((c: any) => c.chargeId?.toString() === chargeId)
+                        const unitPrice = consumable?.cost ? parseFloat(consumable.cost) : 0
+                        return sum + (unitPrice * quantity)
+                      }, 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {patientOrders.length === 0 && orderFields.length === 0 && (
                 <Card>
                   <CardContent className="py-8 text-center text-muted-foreground">
                     No orders placed. Click "Add Order" to order consumables.
                   </CardContent>
                 </Card>
-              ) : (
-                <div className="rounded-md border">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Item</TableHead>
-                        <TableHead>Quantity</TableHead>
-                        <TableHead>Unit Price</TableHead>
-                        <TableHead className="text-right">Total</TableHead>
-                        <TableHead className="text-right">Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {orderFields.map((field, index) => {
-                        const chargeId = form.watch(`orders.${index}.chargeId`)
-                        const quantity = form.watch(`orders.${index}.quantity`) || 1
-                        const consumable = consumables.find((c: any) => c.chargeId?.toString() === chargeId)
-                        const itemName = consumable?.name || "Unknown Item"
-                        const unitPrice = consumable?.cost ? parseFloat(consumable.cost) : 0
-                        const total = unitPrice * quantity
-                        return (
-                          <TableRow key={field.id}>
-                            <TableCell className="font-medium">{itemName}</TableCell>
-                            <TableCell>{quantity}</TableCell>
-                            <TableCell>KES {unitPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
-                            <TableCell className="text-right font-medium">
-                              KES {total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                            </TableCell>
-                            <TableCell className="text-right">
-                              <div className="flex items-center justify-end gap-2">
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => {
-                                    setEditingOrderIndex(index)
-                                    const orderData = form.getValues(`orders.${index}`)
-                                    setTempOrder(orderData || defaultOrder)
-                                    setAddOrderDialogOpen(true)
-                                  }}
-                                  className="h-8 w-8 p-0"
-                                >
-                                  <Eye className="h-4 w-4" />
-                                </Button>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => removeOrder(index)}
-                                  className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        )
-                      })}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-              {orderFields.length > 0 && (
-                <div className="flex justify-end items-center gap-4 pt-2 border-t">
-                  <div className="text-sm text-muted-foreground">Total Cost:</div>
-                  <div className="text-lg font-semibold">
-                    KES {orderFields.reduce((sum, field, index) => {
-                      const chargeId = form.watch(`orders.${index}.chargeId`)
-                      const quantity = form.watch(`orders.${index}.quantity`) || 1
-                      const consumable = consumables.find((c: any) => c.chargeId?.toString() === chargeId)
-                      const unitPrice = consumable?.cost ? parseFloat(consumable.cost) : 0
-                      return sum + (unitPrice * quantity)
-                    }, 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </div>
-                </div>
               )}
             </div>
           </ScrollArea>
@@ -5254,7 +5108,7 @@ const clearDraftFromStorage = (patientId:any) => {
             </Button>
             <Button
               type="button"
-              onClick={() => {
+              onClick={async () => {
                 if (!tempMedication.medicationId || !tempMedication.dosage || !tempMedication.frequency || !tempMedication.duration) {
                   return
                 }
@@ -5268,18 +5122,107 @@ const clearDraftFromStorage = (patientId:any) => {
                 if (inventoryStatus?.hasStock && (!tempMedication.quantity || tempMedication.quantity.trim() === '')) {
                   return // Quantity required for in-stock medications
                 }
-                if (editingMedicationIndex !== null) {
-                  // Update existing medication
-                  form.setValue(`medications.${editingMedicationIndex}`, tempMedication)
-                } else {
-                  // Add new medication (ensure alreadySaved is not set)
-                  const newMedication = { ...tempMedication, alreadySaved: false }
-                  console.log('➕ Adding medication to form:', newMedication)
-                  appendMedication(newMedication)
+                
+                // Get current form values
+                const formData = form.getValues()
+                const patientId = formData.patientId
+                const doctorId = formData.doctorId
+                const encounterDate = formData.encounterDate
+                
+                if (!patientId || !doctorId || !encounterDate) {
+                  toast({
+                    title: "Missing Information",
+                    description: "Please ensure patient, doctor, and encounter date are set before adding medications.",
+                    variant: "destructive",
+                  })
+                  return
                 }
-                setAddMedicationDialogOpen(false)
-                setEditingMedicationIndex(null)
-                setTempMedication(defaultMedication)
+                
+                if (editingMedicationIndex !== null) {
+                  // Update existing medication in form
+                  form.setValue(`medications.${editingMedicationIndex}`, tempMedication)
+                  setAddMedicationDialogOpen(false)
+                  setEditingMedicationIndex(null)
+                  setTempMedication(defaultMedication)
+                } else {
+                  // Save prescription immediately when adding
+                  try {
+                    // Ensure all fields are properly set (no undefined values)
+                    // Convert empty strings to null to avoid SQL errors
+                    const item = {
+                      medicationId: parseInt(tempMedication.medicationId),
+                      dosage: (tempMedication.dosage && typeof tempMedication.dosage === 'string' && tempMedication.dosage.trim()) ? tempMedication.dosage.trim() : (tempMedication.dosage || null),
+                      frequency: (tempMedication.frequency && typeof tempMedication.frequency === 'string' && tempMedication.frequency.trim()) ? tempMedication.frequency.trim() : (tempMedication.frequency || null),
+                      duration: (tempMedication.duration && typeof tempMedication.duration === 'string' && tempMedication.duration.trim()) ? tempMedication.duration.trim() : (tempMedication.duration || null),
+                      quantity: (tempMedication.quantity && tempMedication.quantity.toString().trim()) ? parseInt(tempMedication.quantity.toString().trim()) : null,
+                      instructions: (tempMedication.instructions && typeof tempMedication.instructions === 'string' && tempMedication.instructions.trim()) ? tempMedication.instructions.trim() : null,
+                    }
+                    
+                    // Ensure no undefined values - convert to null
+                    Object.keys(item).forEach(key => {
+                      if (item[key as keyof typeof item] === undefined) {
+                        item[key as keyof typeof item] = null as any
+                      }
+                    })
+                    
+                    const prescriptionData = {
+                      patientId: parseInt(patientId),
+                      doctorId: parseInt(doctorId),
+                      prescriptionDate: format(encounterDate, 'yyyy-MM-dd'),
+                      items: [item],
+                    }
+                    
+                    // Validate that required fields are not null
+                    if (!prescriptionData.items[0].dosage || !prescriptionData.items[0].frequency || !prescriptionData.items[0].duration) {
+                      toast({
+                        title: "Validation Error",
+                        description: "Dosage, frequency, and duration are required fields.",
+                        variant: "destructive",
+                      })
+                      return
+                    }
+                    
+                    console.log('💊 Saving prescription immediately:', JSON.stringify(prescriptionData, null, 2))
+                    console.log('💊 Item details:', JSON.stringify(item, null, 2))
+                    const result = await pharmacyApi.createPrescription(prescriptionData)
+                    console.log('✅ Prescription saved successfully:', result)
+                    
+                    // Mark as already saved and add to form
+                    const newMedication = { 
+                      ...tempMedication, 
+                      alreadySaved: true,
+                      prescriptionId: result.prescriptionId
+                    }
+                    console.log('➕ Adding saved medication to form:', newMedication)
+                    appendMedication(newMedication)
+                    
+                    // Reload patient prescriptions to update the "Existing Prescriptions" section
+                    try {
+                      const updatedPrescriptions = await pharmacyApi.getPrescriptions(patientId)
+                      setPatientMedications(updatedPrescriptions || [])
+                      console.log('✅ Reloaded patient prescriptions:', updatedPrescriptions?.length || 0)
+                    } catch (reloadError) {
+                      console.error('⚠️ Error reloading prescriptions:', reloadError)
+                    }
+                    
+                    toast({
+                      title: "Prescription Saved",
+                      description: "Prescription has been saved successfully.",
+                    })
+                    
+                    setAddMedicationDialogOpen(false)
+                    setEditingMedicationIndex(null)
+                    setTempMedication(defaultMedication)
+                  } catch (error: any) {
+                    console.error('❌ Error saving prescription:', error)
+                    toast({
+                      title: "Error Saving Prescription",
+                      description: error.message || "Failed to save prescription. Please try again.",
+                      variant: "destructive",
+                    })
+                    // Don't close dialog on error so user can retry
+                  }
+                }
               }}
               disabled={
                 !tempMedication.medicationId ||
@@ -5294,7 +5237,7 @@ const clearDraftFromStorage = (patientId:any) => {
                 })())
               }
             >
-              {editingMedicationIndex !== null ? "Update" : "Add"} Medication
+              {editingMedicationIndex !== null ? "Update" : "Add & Save"} Medication
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -5393,7 +5336,7 @@ const clearDraftFromStorage = (patientId:any) => {
                 </Button>
                 <Button
                   type="button"
-                  onClick={() => {
+                  onClick={async () => {
                     if (!tempLabTest.testTypeId) {
                       return
                     }
@@ -5401,22 +5344,86 @@ const clearDraftFromStorage = (patientId:any) => {
                     if (editingLabTestIndex === null && isTestTypeAlreadyAdded(tempLabTest.testTypeId)) {
                       return // Prevent adding duplicate
                     }
-                    if (editingLabTestIndex !== null) {
-                      // Update existing test
-                      form.setValue(`labTests.${editingLabTestIndex}`, tempLabTest)
-                    } else {
-                      // Add new test (ensure alreadySaved is not set)
-                      const newTest = { ...tempLabTest, alreadySaved: false }
-                      console.log('➕ Adding lab test to form:', newTest)
-                      appendLabTest(newTest)
+                    
+                    // Get current form values
+                    const formData = form.getValues()
+                    const patientId = formData.patientId
+                    const doctorId = formData.doctorId
+                    const encounterDate = formData.encounterDate
+                    
+                    if (!patientId || !doctorId || !encounterDate) {
+                      toast({
+                        title: "Missing Information",
+                        description: "Please ensure patient, doctor, and encounter date are set before adding lab tests.",
+                        variant: "destructive",
+                      })
+                      return
                     }
-                    setAddTestDialogOpen(false)
-                    setEditingLabTestIndex(null)
-                    setTempLabTest(defaultLabTest)
+                    
+                    if (editingLabTestIndex !== null) {
+                      // Update existing test in form
+                      form.setValue(`labTests.${editingLabTestIndex}`, tempLabTest)
+                      setAddTestDialogOpen(false)
+                      setEditingLabTestIndex(null)
+                      setTempLabTest(defaultLabTest)
+                    } else {
+                      // Save lab test order immediately when adding
+                      try {
+                        const orderData = {
+                          patientId: parseInt(patientId),
+                          orderedBy: parseInt(doctorId),
+                          orderDate: format(encounterDate, 'yyyy-MM-dd'),
+                          priority: tempLabTest.priority || 'routine',
+                          status: 'pending',
+                          items: [{
+                            testTypeId: parseInt(tempLabTest.testTypeId),
+                            clinicalIndication: tempLabTest.clinicalIndication || null,
+                          }],
+                        }
+                        
+                        console.log('🧪 Saving lab test order immediately:', orderData)
+                        const result = await laboratoryApi.createOrder(orderData)
+                        console.log('✅ Lab test order saved successfully:', result)
+                        
+                        // Mark as already saved and add to form
+                        const newTest = { 
+                          ...tempLabTest, 
+                          alreadySaved: true,
+                          orderId: result.orderId || result.orderId
+                        }
+                        console.log('➕ Adding saved lab test to form:', newTest)
+                        appendLabTest(newTest)
+                        
+                        // Reload patient lab orders to update the "Existing Lab Orders" section
+                        try {
+                          const updatedOrders = await laboratoryApi.getOrders(patientId)
+                          setPatientLabResults(updatedOrders || [])
+                          console.log('✅ Reloaded patient lab orders:', updatedOrders?.length || 0)
+                        } catch (reloadError) {
+                          console.error('⚠️ Error reloading lab orders:', reloadError)
+                        }
+                        
+                        toast({
+                          title: "Lab Test Order Saved",
+                          description: "Lab test order has been saved successfully.",
+                        })
+                        
+                        setAddTestDialogOpen(false)
+                        setTempLabTest(defaultLabTest)
+                      } catch (error: any) {
+                        console.error('❌ Error saving lab test order:', error)
+                        toast({
+                          title: "Error Saving Lab Test Order",
+                          description: error.message || "Failed to save lab test order. Please try again.",
+                          variant: "destructive",
+                        })
+                        // Don't close dialog on error so user can retry
+                      }
+                    }
                   }}
                   disabled={!tempLabTest.testTypeId || (editingLabTestIndex === null && isTestTypeAlreadyAdded(tempLabTest.testTypeId))}
                 >
-                  {editingLabTestIndex !== null ? "Update" : "Add"} Test
+                  {editingLabTestIndex !== null ? "Update" : "Add & Save"} Test
                 </Button>
               </DialogFooter>
         </DialogContent>
@@ -5424,7 +5431,7 @@ const clearDraftFromStorage = (patientId:any) => {
 
       {/* Add/Edit Radiology Order Dialog */}
       <Dialog open={addRadiologyDialogOpen} onOpenChange={setAddRadiologyDialogOpen}>
-        <DialogContent className="sm:max-w-[600px] z-[121]" overlayClassName="z-[120]">
+        <DialogContent className="sm:max-w-[700px] z-[121]" overlayClassName="z-[120]">
           <DialogHeader>
             <DialogTitle>
               {editingRadiologyIndex !== null ? "Edit Radiology Order" : "Add Radiology Order"}
@@ -5434,6 +5441,7 @@ const clearDraftFromStorage = (patientId:any) => {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
+            {/* Examination Type - Full Width */}
             <div className="space-y-2">
               <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
                 Examination Type *
@@ -5462,46 +5470,41 @@ const clearDraftFromStorage = (patientId:any) => {
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                Body Part
-              </label>
-              <Input
-                placeholder="e.g., Chest, Abdomen, Head"
-                value={tempRadiologyOrder.bodyPart || ""}
-                onChange={(e) => setTempRadiologyOrder({ ...tempRadiologyOrder, bodyPart: e.target.value })}
-              />
-              <p className="text-sm text-muted-foreground">Optional</p>
+
+            {/* Body Part and Priority in a row */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                  Body Part
+                </label>
+                <Input
+                  placeholder="e.g., Chest, Abdomen, Head"
+                  value={tempRadiologyOrder.bodyPart || ""}
+                  onChange={(e) => setTempRadiologyOrder({ ...tempRadiologyOrder, bodyPart: e.target.value })}
+                />
+                <p className="text-xs text-muted-foreground">Optional</p>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                  Priority *
+                </label>
+                <Select
+                  onValueChange={(value: "routine" | "urgent" | "stat") => setTempRadiologyOrder({ ...tempRadiologyOrder, priority: value })}
+                  value={tempRadiologyOrder.priority || "routine"}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select priority" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="routine">Routine</SelectItem>
+                    <SelectItem value="urgent">Urgent</SelectItem>
+                    <SelectItem value="stat">STAT</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                Clinical Indication
-              </label>
-              <Textarea
-                placeholder="Reason for ordering this examination"
-                value={tempRadiologyOrder.clinicalIndication || ""}
-                onChange={(e) => setTempRadiologyOrder({ ...tempRadiologyOrder, clinicalIndication: e.target.value })}
-              />
-              <p className="text-sm text-muted-foreground">Optional</p>
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                Priority *
-              </label>
-              <Select
-                onValueChange={(value: "routine" | "urgent" | "stat") => setTempRadiologyOrder({ ...tempRadiologyOrder, priority: value })}
-                value={tempRadiologyOrder.priority || "routine"}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select priority" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="routine">Routine</SelectItem>
-                  <SelectItem value="urgent">Urgent</SelectItem>
-                  <SelectItem value="stat">STAT</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+
+            {/* Scheduled Date - Full Width but compact */}
             <div className="space-y-2">
               <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
                 Scheduled Date
@@ -5511,8 +5514,24 @@ const clearDraftFromStorage = (patientId:any) => {
                 value={tempRadiologyOrder.scheduledDate || ""}
                 onChange={(e) => setTempRadiologyOrder({ ...tempRadiologyOrder, scheduledDate: e.target.value })}
               />
-              <p className="text-sm text-muted-foreground">Optional</p>
+              <p className="text-xs text-muted-foreground">Optional - Leave blank for immediate scheduling</p>
             </div>
+
+            {/* Clinical Indication - Full Width */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                Clinical Indication
+              </label>
+              <Textarea
+                placeholder="Reason for ordering this examination"
+                value={tempRadiologyOrder.clinicalIndication || ""}
+                onChange={(e) => setTempRadiologyOrder({ ...tempRadiologyOrder, clinicalIndication: e.target.value })}
+                className="min-h-[80px]"
+              />
+              <p className="text-xs text-muted-foreground">Optional</p>
+            </div>
+
+            {/* Notes - Full Width */}
             <div className="space-y-2">
               <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
                 Notes
@@ -5521,8 +5540,9 @@ const clearDraftFromStorage = (patientId:any) => {
                 placeholder="Additional notes"
                 value={tempRadiologyOrder.notes || ""}
                 onChange={(e) => setTempRadiologyOrder({ ...tempRadiologyOrder, notes: e.target.value })}
+                className="min-h-[80px]"
               />
-              <p className="text-sm text-muted-foreground">Optional</p>
+              <p className="text-xs text-muted-foreground">Optional</p>
             </div>
           </div>
           <DialogFooter>
@@ -5539,24 +5559,91 @@ const clearDraftFromStorage = (patientId:any) => {
             </Button>
             <Button
               type="button"
-              onClick={() => {
+              onClick={async () => {
                 if (!tempRadiologyOrder.examTypeId) {
                   return
                 }
-                if (editingRadiologyIndex !== null) {
-                  form.setValue(`radiologyOrders.${editingRadiologyIndex}`, tempRadiologyOrder)
-                } else {
-                  const newOrder = { ...tempRadiologyOrder, alreadySaved: false }
-                  console.log('➕ Adding radiology order to form:', newOrder)
-                  appendRadiologyOrder(newOrder)
+                
+                // Get current form values
+                const formData = form.getValues()
+                const patientId = formData.patientId
+                const doctorId = formData.doctorId
+                const encounterDate = formData.encounterDate
+                
+                if (!patientId || !doctorId || !encounterDate) {
+                  toast({
+                    title: "Missing Information",
+                    description: "Please ensure patient, doctor, and encounter date are set before adding radiology orders.",
+                    variant: "destructive",
+                  })
+                  return
                 }
-                setAddRadiologyDialogOpen(false)
-                setEditingRadiologyIndex(null)
-                setTempRadiologyOrder(defaultRadiologyOrder)
+                
+                if (editingRadiologyIndex !== null) {
+                  // Update existing order in form
+                  form.setValue(`radiologyOrders.${editingRadiologyIndex}`, tempRadiologyOrder)
+                  setAddRadiologyDialogOpen(false)
+                  setEditingRadiologyIndex(null)
+                  setTempRadiologyOrder(defaultRadiologyOrder)
+                } else {
+                  // Save radiology order immediately when adding
+                  try {
+                    const orderData = {
+                      patientId: parseInt(patientId),
+                      orderedBy: parseInt(doctorId),
+                      examTypeId: parseInt(tempRadiologyOrder.examTypeId),
+                      orderDate: format(encounterDate, 'yyyy-MM-dd'),
+                      bodyPart: tempRadiologyOrder.bodyPart || null,
+                      clinicalIndication: tempRadiologyOrder.clinicalIndication || null,
+                      priority: tempRadiologyOrder.priority || 'routine',
+                      status: 'pending',
+                      scheduledDate: tempRadiologyOrder.scheduledDate || null,
+                      notes: tempRadiologyOrder.notes || null,
+                    }
+                    
+                    console.log('📷 Saving radiology order immediately:', orderData)
+                    const result = await radiologyApi.createOrder(orderData)
+                    console.log('✅ Radiology order saved successfully:', result)
+                    
+                    // Mark as already saved and add to form
+                    const newOrder = { 
+                      ...tempRadiologyOrder, 
+                      alreadySaved: true,
+                      orderId: result.orderId || result.orderId
+                    }
+                    console.log('➕ Adding saved radiology order to form:', newOrder)
+                    appendRadiologyOrder(newOrder)
+                    
+                    // Reload patient radiology orders to update the "Existing Radiology Orders" section
+                    try {
+                      const updatedOrders = await radiologyApi.getOrders(patientId)
+                      setPatientRadiologyResults(updatedOrders || [])
+                      console.log('✅ Reloaded patient radiology orders:', updatedOrders?.length || 0)
+                    } catch (reloadError) {
+                      console.error('⚠️ Error reloading radiology orders:', reloadError)
+                    }
+                    
+                    toast({
+                      title: "Radiology Order Saved",
+                      description: "Radiology order has been saved successfully.",
+                    })
+                    
+                    setAddRadiologyDialogOpen(false)
+                    setTempRadiologyOrder(defaultRadiologyOrder)
+                  } catch (error: any) {
+                    console.error('❌ Error saving radiology order:', error)
+                    toast({
+                      title: "Error Saving Radiology Order",
+                      description: error.message || "Failed to save radiology order. Please try again.",
+                      variant: "destructive",
+                    })
+                    // Don't close dialog on error so user can retry
+                  }
+                }
               }}
               disabled={!tempRadiologyOrder.examTypeId}
             >
-              {editingRadiologyIndex !== null ? "Update" : "Add"} Order
+              {editingRadiologyIndex !== null ? "Update" : "Add & Save"} Order
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -5634,25 +5721,87 @@ const clearDraftFromStorage = (patientId:any) => {
             </Button>
             <Button
               type="button"
-              onClick={() => {
+              onClick={async () => {
                 if (!tempProcedure.procedureId) {
                   return
                 }
-                if (editingProcedureIndex !== null) {
-                  form.setValue(`procedures.${editingProcedureIndex}`, tempProcedure)
-                } else {
-                  // Add new procedure (ensure alreadySaved is not set)
-                  const newProcedure = { ...tempProcedure, alreadySaved: false }
-                  console.log('➕ Adding procedure to form:', newProcedure)
-                  appendProcedure(newProcedure)
+                
+                // Get current form values
+                const formData = form.getValues()
+                const patientId = formData.patientId
+                const doctorId = formData.doctorId
+                const encounterDate = formData.encounterDate
+                
+                if (!patientId || !doctorId || !encounterDate) {
+                  toast({
+                    title: "Missing Information",
+                    description: "Please ensure patient, doctor, and encounter date are set before adding procedures.",
+                    variant: "destructive",
+                  })
+                  return
                 }
-                setAddProcedureDialogOpen(false)
-                setEditingProcedureIndex(null)
-                setTempProcedure(defaultProcedure)
+                
+                if (editingProcedureIndex !== null) {
+                  // Update existing procedure in form
+                  form.setValue(`procedures.${editingProcedureIndex}`, tempProcedure)
+                  setAddProcedureDialogOpen(false)
+                  setEditingProcedureIndex(null)
+                  setTempProcedure(defaultProcedure)
+                } else {
+                  // Save procedure immediately when adding
+                  try {
+                    const procedureData = {
+                      patientId: parseInt(patientId),
+                      procedureId: parseInt(tempProcedure.procedureId),
+                      procedureDate: format(encounterDate, 'yyyy-MM-dd'),
+                      performedBy: parseInt(doctorId),
+                      notes: tempProcedure.notes || null,
+                      complications: tempProcedure.complications || null,
+                    }
+                    
+                    console.log('🏥 Saving procedure immediately:', procedureData)
+                    const result = await proceduresApi.createPatientProcedure(procedureData)
+                    console.log('✅ Procedure saved successfully:', result)
+                    
+                    // Mark as already saved and add to form
+                    const newProcedure = { 
+                      ...tempProcedure, 
+                      alreadySaved: true,
+                      patientProcedureId: result.patientProcedureId || result.patientProcedureId
+                    }
+                    console.log('➕ Adding saved procedure to form:', newProcedure)
+                    appendProcedure(newProcedure)
+                    
+                    // Reload patient procedures to update the "Existing Procedures" section
+                    try {
+                      const updatedProcedures = await proceduresApi.getPatientProcedures(patientId)
+                      setPatientProcedures(updatedProcedures || [])
+                      console.log('✅ Reloaded patient procedures:', updatedProcedures?.length || 0)
+                    } catch (reloadError) {
+                      console.error('⚠️ Error reloading procedures:', reloadError)
+                    }
+                    
+                    toast({
+                      title: "Procedure Saved",
+                      description: "Procedure has been saved successfully.",
+                    })
+                    
+                    setAddProcedureDialogOpen(false)
+                    setTempProcedure(defaultProcedure)
+                  } catch (error: any) {
+                    console.error('❌ Error saving procedure:', error)
+                    toast({
+                      title: "Error Saving Procedure",
+                      description: error.message || "Failed to save procedure. Please try again.",
+                      variant: "destructive",
+                    })
+                    // Don't close dialog on error so user can retry
+                  }
+                }
               }}
               disabled={!tempProcedure.procedureId}
             >
-              {editingProcedureIndex !== null ? "Update" : "Add"} Procedure
+              {editingProcedureIndex !== null ? "Update" : "Add & Save"} Procedure
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -5892,29 +6041,67 @@ const clearDraftFromStorage = (patientId:any) => {
               <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
                 Consumable/Item *
               </label>
-              <Select
-                onValueChange={(value) => setTempOrder({ ...tempOrder, chargeId: value })}
-                value={tempOrder.chargeId || ""}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select consumable" />
-                </SelectTrigger>
-                <SelectContent>
-                  {consumables.length > 0 ? (
-                    consumables.map((consumable: any) => (
-                      <SelectItem key={consumable.chargeId} value={consumable.chargeId.toString()}>
-                        {consumable.name}
-                        {consumable.unit && ` (${consumable.unit})`}
-                        {consumable.cost && ` - KES ${parseFloat(consumable.cost).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                      </SelectItem>
-                    ))
-                  ) : (
-                    <div className="px-2 py-1.5 text-sm text-muted-foreground">
-                      No consumables available
-                    </div>
-                  )}
-                </SelectContent>
-              </Select>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    role="combobox"
+                    className="w-full justify-between"
+                    disabled={consumables.length === 0}
+                  >
+                    {tempOrder.chargeId
+                      ? (() => {
+                          const selected = consumables.find((c: any) => c.chargeId?.toString() === tempOrder.chargeId)
+                          return selected
+                            ? `${selected.name}${selected.unit ? ` (${selected.unit})` : ''}${selected.cost ? ` - KES ${parseFloat(selected.cost).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}`
+                            : "Select consumable"
+                        })()
+                      : "Select consumable"}
+                    <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start" onOpenAutoFocus={(e) => e.preventDefault()}>
+                  <Command>
+                    <CommandInput placeholder="Search consumables by name..." />
+                    <CommandList>
+                      <CommandEmpty>No consumables found.</CommandEmpty>
+                      <CommandGroup>
+                        {consumables.map((consumable: any) => (
+                          <CommandItem
+                            key={consumable.chargeId}
+                            value={`${consumable.name} ${consumable.unit || ''} ${consumable.chargeCode || ''}`}
+                            onSelect={(currentValue) => {
+                              const selected = consumables.find((c: any) => 
+                                `${c.name} ${c.unit || ''} ${c.chargeCode || ''}`.toLowerCase() === currentValue.toLowerCase()
+                              )
+                              if (selected) {
+                                setTempOrder({ ...tempOrder, chargeId: selected.chargeId.toString() })
+                              }
+                            }}
+                          >
+                            <Check
+                              className={cn(
+                                "mr-2 h-4 w-4",
+                                tempOrder.chargeId === consumable.chargeId?.toString() ? "opacity-100" : "opacity-0"
+                              )}
+                            />
+                            <div className="flex-1">
+                              <div className="font-medium">{consumable.name}</div>
+                              <div className="text-xs text-muted-foreground">
+                                {consumable.unit && `${consumable.unit} • `}
+                                {consumable.cost && `KES ${parseFloat(consumable.cost).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                              </div>
+                            </div>
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
+              {consumables.length === 0 && (
+                <p className="text-xs text-muted-foreground">No consumables available</p>
+              )}
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
@@ -5954,25 +6141,124 @@ const clearDraftFromStorage = (patientId:any) => {
             </Button>
             <Button
               type="button"
-              onClick={() => {
+              onClick={async () => {
                 if (!tempOrder.chargeId || !tempOrder.quantity || tempOrder.quantity < 1) {
                   return
                 }
-                if (editingOrderIndex !== null) {
-                  form.setValue(`orders.${editingOrderIndex}`, tempOrder)
-                } else {
-                  // Add new order (ensure alreadySaved is not set)
-                  const newOrder = { ...tempOrder, alreadySaved: false }
-                  console.log('➕ Adding order to form:', newOrder)
-                  appendOrder(newOrder)
+                
+                // Get current form values
+                const formData = form.getValues()
+                const patientId = formData.patientId
+                const encounterDate = formData.encounterDate
+                
+                if (!patientId || !encounterDate) {
+                  toast({
+                    title: "Missing Information",
+                    description: "Please ensure patient and encounter date are set before adding orders.",
+                    variant: "destructive",
+                  })
+                  return
                 }
-                setAddOrderDialogOpen(false)
-                setEditingOrderIndex(null)
-                setTempOrder(defaultOrder)
+                
+                if (editingOrderIndex !== null) {
+                  // Update existing order in form
+                  form.setValue(`orders.${editingOrderIndex}`, tempOrder)
+                  setAddOrderDialogOpen(false)
+                  setEditingOrderIndex(null)
+                  setTempOrder(defaultOrder)
+                } else {
+                  // Save consumables order immediately when adding
+                  try {
+                    const consumable = consumables.find((c: any) => c.chargeId?.toString() === tempOrder.chargeId)
+                    const unitPrice = consumable?.cost ? parseFloat(consumable.cost) : 0
+                    const quantity = tempOrder.quantity || 1
+                    const totalPrice = unitPrice * quantity
+                    const itemName = consumable?.name || 'Consumable'
+
+                    if (unitPrice <= 0) {
+                      toast({
+                        title: "Invalid Item",
+                        description: "Selected consumable does not have a valid price. Please select a different item.",
+                        variant: "destructive",
+                      })
+                      return
+                    }
+
+                    const invoiceData = {
+                      patientId: parseInt(patientId),
+                      invoiceDate: format(encounterDate, 'yyyy-MM-dd'),
+                      dueDate: format(new Date(encounterDate.getTime() + 30 * 24 * 60 * 60 * 1000), 'yyyy-MM-dd'),
+                      status: 'pending',
+                      items: [{
+                        description: itemName,
+                        quantity: quantity,
+                        unitPrice: unitPrice,
+                        totalPrice: totalPrice,
+                        chargeId: consumable?.chargeId || null,
+                      }],
+                      notes: `Consumables ordered during encounter on ${format(encounterDate, 'PPP')}.`,
+                    }
+                    
+                    console.log('📦 Saving consumables order immediately:', invoiceData)
+                    const invoiceResult = await billingApi.createInvoice(invoiceData)
+                    console.log('✅ Invoice created for order:', invoiceResult)
+                    
+                    // Add patient to cashier queue for consumables payment
+                    try {
+                      await queueApi.create({
+                        patientId: parseInt(patientId),
+                        servicePoint: 'cashier',
+                        priority: 'normal',
+                        notes: `Consumables payment - Encounter: ${format(encounterDate, 'PPP')}`
+                      })
+                      console.log('✅ Added patient to cashier queue')
+                    } catch (queueError: any) {
+                      // Queue API already handles duplicate checking
+                      console.log('Queue entry for consumables:', queueError?.response?.isDuplicate ? 'Patient already in queue' : queueError.message)
+                    }
+                    
+                    // Mark as already saved and add to form
+                    const newOrder = { 
+                      ...tempOrder, 
+                      alreadySaved: true,
+                      invoiceId: invoiceResult.invoiceId || invoiceResult.invoiceId
+                    }
+                    console.log('➕ Adding saved order to form:', newOrder)
+                    appendOrder(newOrder)
+                    
+                    // Reload patient orders/invoices to update the display
+                    try {
+                      const updatedInvoices = await billingApi.getInvoices(patientId)
+                      const consumablesInvoices = (updatedInvoices || []).filter((invoice: any) => 
+                        invoice.notes && invoice.notes.toLowerCase().includes('consumables ordered')
+                      )
+                      setPatientOrders(consumablesInvoices || [])
+                      console.log('✅ Reloaded patient orders:', consumablesInvoices?.length || 0)
+                    } catch (reloadError) {
+                      console.error('⚠️ Error reloading orders:', reloadError)
+                    }
+                    
+                    toast({
+                      title: "Order Saved",
+                      description: "Consumables order has been saved and patient added to cashier queue.",
+                    })
+                    
+                    setAddOrderDialogOpen(false)
+                    setTempOrder(defaultOrder)
+                  } catch (error: any) {
+                    console.error('❌ Error saving order:', error)
+                    toast({
+                      title: "Error Saving Order",
+                      description: error.message || "Failed to save order. Please try again.",
+                      variant: "destructive",
+                    })
+                    // Don't close dialog on error so user can retry
+                  }
+                }
               }}
               disabled={!tempOrder.chargeId || !tempOrder.quantity || tempOrder.quantity < 1}
             >
-              {editingOrderIndex !== null ? "Update" : "Add"} Order
+              {editingOrderIndex !== null ? "Update" : "Add & Save"} Order
             </Button>
           </DialogFooter>
         </DialogContent>
