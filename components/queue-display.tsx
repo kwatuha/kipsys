@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo, Suspense, useEffect } from "react"
+import { useState, useMemo, Suspense, useEffect, useCallback, startTransition } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
@@ -70,6 +70,7 @@ export function QueueDisplay({ initialServicePoint = "triage" }: QueueDisplayPro
   const { user } = useAuth()
   const { menuAccess, loading: menuLoading } = useRoleMenuAccess(user?.id)
   const [queueCounts, setQueueCounts] = useState<Record<string, number>>({})
+  const [queueCountsLoading, setQueueCountsLoading] = useState(false)
 
   // Filter service points based on role access
   const allowedServicePoints = menuLoading || !menuAccess
@@ -160,26 +161,42 @@ export function QueueDisplay({ initialServicePoint = "triage" }: QueueDisplayPro
     if (menuLoading || !menuAccess || allowedServicePoints.length === 0) return
 
     const loadQueueCounts = async () => {
-      const counts: Record<string, number> = {}
-      await Promise.all(
-        allowedServicePoints.map(async (servicePoint) => {
-          try {
-            // Fetch queue data without including completed entries (same as detail view)
-            const data = await queueApi.getAll(servicePoint, undefined, 1, 50, false)
-            // Count all entries returned (API already filters out completed/cancelled by default)
-            counts[servicePoint] = data.length
-          } catch (error) {
-            console.error(`Error loading queue count for ${servicePoint}:`, error)
-            counts[servicePoint] = 0
-          }
+      // Prevent flickering by only updating if counts actually changed
+      setQueueCountsLoading(true)
+      try {
+        const counts: Record<string, number> = {}
+        await Promise.all(
+          allowedServicePoints.map(async (servicePoint) => {
+            try {
+              // Fetch queue data without including completed entries (same as detail view)
+              const data = await queueApi.getAll(servicePoint, undefined, 1, 50, false)
+              // Count all entries returned (API already filters out completed/cancelled by default)
+              counts[servicePoint] = data.length
+            } catch (error) {
+              console.error(`Error loading queue count for ${servicePoint}:`, error)
+              // Preserve previous count on error instead of setting to 0
+              counts[servicePoint] = queueCounts[servicePoint] || 0
+            }
+          })
+        )
+        // Only update if counts actually changed to prevent unnecessary re-renders
+        setQueueCounts(prevCounts => {
+          const hasChanged = Object.keys(counts).some(
+            key => prevCounts[key] !== counts[key]
+          ) || Object.keys(prevCounts).some(
+              key => !counts.hasOwnProperty(key)
+            )
+          return hasChanged ? counts : prevCounts
         })
-      )
-      setQueueCounts(counts)
+      } finally {
+        setQueueCountsLoading(false)
+      }
     }
 
     loadQueueCounts()
-    // Refresh counts periodically (every 30 seconds)
-    const interval = setInterval(loadQueueCounts, 30000)
+    // Refresh counts periodically (every 10 minutes) - only to get queue changes, not for time updates
+    // Waiting time is calculated client-side using arrivalTime, so frequent polling is unnecessary
+    const interval = setInterval(loadQueueCounts, 600000)
     return () => clearInterval(interval)
   }, [allowedServicePoints, menuLoading, menuAccess])
 
@@ -310,8 +327,8 @@ function QueueContent({ servicePoint }: { servicePoint: ServicePoint }) {
     }
   }, [user])
 
-  // Fetch queue data from API
-  const loadQueueData = async () => {
+  // Fetch queue data from API - memoized to prevent unnecessary calls
+  const loadQueueData = useCallback(async () => {
       try {
         setLoading(true)
         // Fetch queue data without including completed entries (same as summary count)
@@ -335,36 +352,54 @@ function QueueContent({ servicePoint }: { servicePoint: ServicePoint }) {
 
         setQueueData(mappedData)
 
-        // Check for encounters today for each patient
-        if (servicePoint === "consultation") {
-          const today = format(new Date(), 'yyyy-MM-dd')
-          const encounterChecks: Record<string, boolean> = {}
+                // Check for encounters today for each patient - LAZY LOAD (non-blocking)
+                if (servicePoint === "consultation" && mappedData.length > 0) {
+                  const today = format(new Date(), 'yyyy-MM-dd')
+                  const encounterChecks: Record<string, boolean> = {}
 
-          await Promise.all(
-            mappedData.map(async (entry: any) => {
-              try {
-                const records = await medicalRecordsApi.getAll(
-                  undefined,
-                  entry.patientId,
-                  undefined,
-                  undefined,
-                  undefined,
-                  1,
-                  10
-                )
-                const hasEncounterToday = records.some((record: any) => {
-                  const recordDate = record.visitDate ? format(new Date(record.visitDate), 'yyyy-MM-dd') : null
-                  return recordDate === today
-                })
-                encounterChecks[entry.patientId] = hasEncounterToday
-              } catch (error) {
-                console.error(`Error checking encounters for patient ${entry.patientId}:`, error)
-                encounterChecks[entry.patientId] = false
-              }
-            })
-          )
+                  // Moved to background to prevent UI freezing
+                  startTransition(() => {
+                    const checkEncountersAsync = async () => {
+                      const batchSize = 3
+                      for (let i = 0; i < mappedData.length; i += batchSize) {
+                        const batch = mappedData.slice(i, i + batchSize)
 
-          setEncountersToday(encounterChecks)
+                        await Promise.all(
+                          batch.map(async (entry: any) => {
+                            try {
+                              const records = await medicalRecordsApi.getAll(
+                                undefined,
+                                entry.patientId,
+                                undefined,
+                                undefined,
+                                undefined,
+                                undefined,
+                                1,
+                                10
+                              )
+                              const hasEncounterToday = records.some((record: any) => {
+                                const recordDate = record.visitDate ? format(new Date(record.visitDate), 'yyyy-MM-dd') : null
+                                return recordDate === today
+                              })
+                              encounterChecks[entry.patientId] = hasEncounterToday
+                            } catch (error) {
+                              encounterChecks[entry.patientId] = false
+                            }
+                          })
+                        )
+
+                        // Update incrementally
+                        if (Object.keys(encounterChecks).length > 0) {
+                          setEncountersToday(prev => ({ ...prev, ...encounterChecks }))
+                        }
+
+                        // Yield to browser
+                        await new Promise(resolve => setTimeout(resolve, 10))
+                      }
+                    }
+                    checkEncountersAsync()
+                  })
+                }
         }
       } catch (error) {
         console.error('Error loading queue data:', error)
@@ -375,10 +410,11 @@ function QueueContent({ servicePoint }: { servicePoint: ServicePoint }) {
         setLoading(false)
       }
     }
+  }, [servicePoint])
 
   useEffect(() => {
     loadQueueData()
-  }, [servicePoint])
+  }, [loadQueueData])
 
   const handleStartConsultation = (patientId: string, patientName: string) => {
     console.log('handleStartConsultation called:', { patientId, patientName, currentDoctorId })
