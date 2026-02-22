@@ -202,8 +202,7 @@ export default function TriagingPage() {
       (record.firstName && record.firstName.toLowerCase().includes(searchQuery.toLowerCase())) ||
       (record.lastName && record.lastName.toLowerCase().includes(searchQuery.toLowerCase())) ||
       (record.patientNumber && record.patientNumber.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      (record.triageNumber && record.triageNumber.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      (record.chiefComplaint && record.chiefComplaint.toLowerCase().includes(searchQuery.toLowerCase()))
+      (record.triageNumber && record.triageNumber.toLowerCase().includes(searchQuery.toLowerCase()))
 
     // Map triage category to priority for filtering
     let priority = "Non-urgent"
@@ -227,14 +226,14 @@ export default function TriagingPage() {
     // Normalize both filter and priority for case-insensitive comparison
     const normalizedFilter = priorityFilter ? priorityFilter.toLowerCase() : null
     const normalizedPriority = priority.toLowerCase()
-    
-    const matchesPriority = !priorityFilter || 
+
+    const matchesPriority = !priorityFilter ||
       (normalizedFilter === "emergency" && normalizedPriority === "emergency") ||
       (normalizedFilter === "urgent" && normalizedPriority === "urgent") ||
       (normalizedFilter === "semi-urgent" && normalizedPriority === "semi-urgent") ||
       (normalizedFilter === "non-urgent" && normalizedPriority === "non-urgent")
 
-    const matchesStatus = !statusFilter || 
+    const matchesStatus = !statusFilter ||
       (record.status && record.status.toLowerCase() === statusFilter.toLowerCase())
 
     return matchesSearch && matchesPriority && matchesStatus
@@ -251,6 +250,12 @@ export default function TriagingPage() {
     }
     if (record.temperature) {
       parts.push(`Temp: ${record.temperature}°C`)
+    }
+    if (record.weight) {
+      parts.push(`Wt: ${record.weight}kg`)
+    }
+    if (record.height) {
+      parts.push(`Ht: ${record.height}cm`)
     }
     return parts.length > 0 ? parts.join(", ") : "N/A"
   }
@@ -326,8 +331,8 @@ export default function TriagingPage() {
                 </TabsTrigger>
               </TabsList>
               <div className="flex items-center gap-2">
-                <Button 
-                  variant={statusFilter === "pending" ? "default" : "outline"} 
+                <Button
+                  variant={statusFilter === "pending" ? "default" : "outline"}
                   size="sm"
                   onClick={() => {
                     setStatusFilter("pending")
@@ -336,8 +341,8 @@ export default function TriagingPage() {
                 >
                   Pending
                 </Button>
-                <Button 
-                  variant={statusFilter === "in_progress" ? "default" : "outline"} 
+                <Button
+                  variant={statusFilter === "in_progress" ? "default" : "outline"}
                   size="sm"
                   onClick={() => {
                     setStatusFilter("in_progress")
@@ -346,8 +351,8 @@ export default function TriagingPage() {
                 >
                   In Progress
                 </Button>
-                <Button 
-                  variant={statusFilter === "completed" ? "default" : "outline"} 
+                <Button
+                  variant={statusFilter === "completed" ? "default" : "outline"}
                   size="sm"
                   onClick={() => {
                     setStatusFilter("completed")
@@ -356,8 +361,8 @@ export default function TriagingPage() {
                 >
                   Completed
                 </Button>
-                <Button 
-                  variant={statusFilter === "cancelled" ? "default" : "outline"} 
+                <Button
+                  variant={statusFilter === "cancelled" ? "default" : "outline"}
                   size="sm"
                   onClick={() => {
                     setStatusFilter("cancelled")
@@ -369,9 +374,9 @@ export default function TriagingPage() {
               </div>
               <div className="relative w-64">
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input 
-                  type="search" 
-                  placeholder="Search patients..." 
+                <Input
+                  type="search"
+                  placeholder="Search patients..."
                   className="w-full pl-8"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
@@ -388,7 +393,6 @@ export default function TriagingPage() {
                       <TableHead>Name</TableHead>
                       <TableHead>Patient Number</TableHead>
                       <TableHead>Arrival Time</TableHead>
-                      <TableHead>Chief Complaint</TableHead>
                       <TableHead>Vital Signs</TableHead>
                       <TableHead>Priority</TableHead>
                       <TableHead>Status</TableHead>
@@ -398,7 +402,7 @@ export default function TriagingPage() {
                   <TableBody>
                     {loading ? (
                       <TableRow>
-                        <TableCell colSpan={9} className="text-center py-8">
+                        <TableCell colSpan={8} className="text-center py-8">
                           <Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" />
                           <p className="text-sm text-muted-foreground mt-2">Loading triage records...</p>
                         </TableCell>
@@ -417,13 +421,12 @@ export default function TriagingPage() {
                           <TableRow key={record.triageId}>
                             <TableCell className="font-medium">{record.triageNumber || `TRI-${record.triageId}`}</TableCell>
                             <TableCell>
-                              {record.firstName && record.lastName 
+                              {record.firstName && record.lastName
                                 ? `${record.firstName} ${record.lastName}`
                                 : "Unknown Patient"}
                             </TableCell>
                             <TableCell>{record.patientNumber || "-"}</TableCell>
                             <TableCell>{formatArrivalTime(record.triageDate)}</TableCell>
-                            <TableCell>{record.chiefComplaint || "-"}</TableCell>
                             <TableCell>{formatVitalSigns(record)}</TableCell>
                             <TableCell>
                               <Badge
@@ -479,7 +482,7 @@ export default function TriagingPage() {
                                     <FileText className="mr-2 h-4 w-4" />
                                     View Records
                                   </DropdownMenuItem>
-                                  <DropdownMenuItem 
+                                  <DropdownMenuItem
                                     onClick={() => setDeletingTriage(record)}
                                     className="text-red-600"
                                   >
@@ -507,7 +510,6 @@ export default function TriagingPage() {
                       <TableHead>Name</TableHead>
                       <TableHead>Patient Number</TableHead>
                       <TableHead>Arrival Time</TableHead>
-                      <TableHead>Chief Complaint</TableHead>
                       <TableHead>Vital Signs</TableHead>
                       <TableHead>Priority</TableHead>
                       <TableHead>Status</TableHead>
@@ -517,7 +519,7 @@ export default function TriagingPage() {
                   <TableBody>
                     {loading ? (
                       <TableRow>
-                        <TableCell colSpan={9} className="text-center py-8">
+                        <TableCell colSpan={8} className="text-center py-8">
                           <Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" />
                           <p className="text-sm text-muted-foreground mt-2">Loading triage records...</p>
                         </TableCell>
@@ -536,13 +538,12 @@ export default function TriagingPage() {
                           <TableRow key={record.triageId}>
                             <TableCell className="font-medium">{record.triageNumber || `TRI-${record.triageId}`}</TableCell>
                             <TableCell>
-                              {record.firstName && record.lastName 
+                              {record.firstName && record.lastName
                                 ? `${record.firstName} ${record.lastName}`
                                 : "Unknown Patient"}
                             </TableCell>
                             <TableCell>{record.patientNumber || "-"}</TableCell>
                             <TableCell>{formatArrivalTime(record.triageDate)}</TableCell>
-                            <TableCell>{record.chiefComplaint || "-"}</TableCell>
                             <TableCell>{formatVitalSigns(record)}</TableCell>
                             <TableCell>
                               <Badge
@@ -598,7 +599,7 @@ export default function TriagingPage() {
                                     <FileText className="mr-2 h-4 w-4" />
                                     View Records
                                   </DropdownMenuItem>
-                                  <DropdownMenuItem 
+                                  <DropdownMenuItem
                                     onClick={() => setDeletingTriage(record)}
                                     className="text-red-600"
                                   >
@@ -626,7 +627,6 @@ export default function TriagingPage() {
                       <TableHead>Name</TableHead>
                       <TableHead>Patient Number</TableHead>
                       <TableHead>Arrival Time</TableHead>
-                      <TableHead>Chief Complaint</TableHead>
                       <TableHead>Vital Signs</TableHead>
                       <TableHead>Priority</TableHead>
                       <TableHead>Status</TableHead>
@@ -636,7 +636,7 @@ export default function TriagingPage() {
                   <TableBody>
                     {loading ? (
                       <TableRow>
-                        <TableCell colSpan={9} className="text-center py-8">
+                        <TableCell colSpan={8} className="text-center py-8">
                           <Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" />
                           <p className="text-sm text-muted-foreground mt-2">Loading triage records...</p>
                         </TableCell>
@@ -655,13 +655,12 @@ export default function TriagingPage() {
                           <TableRow key={record.triageId}>
                             <TableCell className="font-medium">{record.triageNumber || `TRI-${record.triageId}`}</TableCell>
                             <TableCell>
-                              {record.firstName && record.lastName 
+                              {record.firstName && record.lastName
                                 ? `${record.firstName} ${record.lastName}`
                                 : "Unknown Patient"}
                             </TableCell>
                             <TableCell>{record.patientNumber || "-"}</TableCell>
                             <TableCell>{formatArrivalTime(record.triageDate)}</TableCell>
-                            <TableCell>{record.chiefComplaint || "-"}</TableCell>
                             <TableCell>{formatVitalSigns(record)}</TableCell>
                             <TableCell>
                               <Badge
@@ -717,7 +716,7 @@ export default function TriagingPage() {
                                     <FileText className="mr-2 h-4 w-4" />
                                     View Records
                                   </DropdownMenuItem>
-                                  <DropdownMenuItem 
+                                  <DropdownMenuItem
                                     onClick={() => setDeletingTriage(record)}
                                     className="text-red-600"
                                   >
@@ -745,7 +744,6 @@ export default function TriagingPage() {
                       <TableHead>Name</TableHead>
                       <TableHead>Patient Number</TableHead>
                       <TableHead>Arrival Time</TableHead>
-                      <TableHead>Chief Complaint</TableHead>
                       <TableHead>Vital Signs</TableHead>
                       <TableHead>Priority</TableHead>
                       <TableHead>Status</TableHead>
@@ -755,7 +753,7 @@ export default function TriagingPage() {
                   <TableBody>
                     {loading ? (
                       <TableRow>
-                        <TableCell colSpan={9} className="text-center py-8">
+                        <TableCell colSpan={8} className="text-center py-8">
                           <Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" />
                           <p className="text-sm text-muted-foreground mt-2">Loading triage records...</p>
                         </TableCell>
@@ -774,13 +772,12 @@ export default function TriagingPage() {
                           <TableRow key={record.triageId}>
                             <TableCell className="font-medium">{record.triageNumber || `TRI-${record.triageId}`}</TableCell>
                             <TableCell>
-                              {record.firstName && record.lastName 
+                              {record.firstName && record.lastName
                                 ? `${record.firstName} ${record.lastName}`
                                 : "Unknown Patient"}
                             </TableCell>
                             <TableCell>{record.patientNumber || "-"}</TableCell>
                             <TableCell>{formatArrivalTime(record.triageDate)}</TableCell>
-                            <TableCell>{record.chiefComplaint || "-"}</TableCell>
                             <TableCell>{formatVitalSigns(record)}</TableCell>
                             <TableCell>
                               <Badge
@@ -836,7 +833,7 @@ export default function TriagingPage() {
                                     <FileText className="mr-2 h-4 w-4" />
                                     View Records
                                   </DropdownMenuItem>
-                                  <DropdownMenuItem 
+                                  <DropdownMenuItem
                                     onClick={() => setDeletingTriage(record)}
                                     className="text-red-600"
                                   >
@@ -864,7 +861,6 @@ export default function TriagingPage() {
                       <TableHead>Name</TableHead>
                       <TableHead>Patient Number</TableHead>
                       <TableHead>Arrival Time</TableHead>
-                      <TableHead>Chief Complaint</TableHead>
                       <TableHead>Vital Signs</TableHead>
                       <TableHead>Priority</TableHead>
                       <TableHead>Status</TableHead>
@@ -874,7 +870,7 @@ export default function TriagingPage() {
                   <TableBody>
                     {loading ? (
                       <TableRow>
-                        <TableCell colSpan={9} className="text-center py-8">
+                        <TableCell colSpan={8} className="text-center py-8">
                           <Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" />
                           <p className="text-sm text-muted-foreground mt-2">Loading triage records...</p>
                         </TableCell>
@@ -893,13 +889,12 @@ export default function TriagingPage() {
                           <TableRow key={record.triageId}>
                             <TableCell className="font-medium">{record.triageNumber || `TRI-${record.triageId}`}</TableCell>
                             <TableCell>
-                              {record.firstName && record.lastName 
+                              {record.firstName && record.lastName
                                 ? `${record.firstName} ${record.lastName}`
                                 : "Unknown Patient"}
                             </TableCell>
                             <TableCell>{record.patientNumber || "-"}</TableCell>
                             <TableCell>{formatArrivalTime(record.triageDate)}</TableCell>
-                            <TableCell>{record.chiefComplaint || "-"}</TableCell>
                             <TableCell>{formatVitalSigns(record)}</TableCell>
                             <TableCell>
                               <Badge
@@ -955,7 +950,7 @@ export default function TriagingPage() {
                                     <FileText className="mr-2 h-4 w-4" />
                                     View Records
                                   </DropdownMenuItem>
-                                  <DropdownMenuItem 
+                                  <DropdownMenuItem
                                     onClick={() => setDeletingTriage(record)}
                                     className="text-red-600"
                                   >
@@ -977,8 +972,8 @@ export default function TriagingPage() {
         </CardContent>
       </Card>
 
-      <AddTriageForm 
-        open={addTriageOpen} 
+      <AddTriageForm
+        open={addTriageOpen}
         onOpenChange={handleCloseForm}
         onSuccess={() => {
           loadTriageRecords()
@@ -992,7 +987,7 @@ export default function TriagingPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Triage Record</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete this triage record? 
+              Are you sure you want to delete this triage record?
               {deletingTriage && (
                 <>
                   <br />
@@ -1000,8 +995,6 @@ export default function TriagingPage() {
                   <strong>Patient:</strong> {deletingTriage.firstName} {deletingTriage.lastName}
                   <br />
                   <strong>Triage Number:</strong> {deletingTriage.triageNumber || `TRI-${deletingTriage.triageId}`}
-                  <br />
-                  <strong>Chief Complaint:</strong> {deletingTriage.chiefComplaint || "N/A"}
                   <br />
                   <br />
                   This action cannot be undone.

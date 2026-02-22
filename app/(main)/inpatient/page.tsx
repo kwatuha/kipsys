@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -78,6 +78,8 @@ export default function InpatientPage() {
   const [statusFilter, setStatusFilter] = useState<string>("")
   const [wardFilter, setWardFilter] = useState<string>("")
   const [bedStatusFilter, setBedStatusFilter] = useState<string>("")
+  const [bedWardTypeFilter, setBedWardTypeFilter] = useState<string>("") // Ward Type filter for Bed Management
+  const [bedWardFilter, setBedWardFilter] = useState<string>("") // Ward filter for Bed Management
   const [search, setSearch] = useState("")
   const [bedSearch, setBedSearch] = useState("")
 
@@ -98,6 +100,7 @@ export default function InpatientPage() {
   const [deleteBedOpen, setDeleteBedOpen] = useState(false)
   const [deletingBed, setDeletingBed] = useState<any | null>(null)
   const [deletingBedLoading, setDeletingBedLoading] = useState(false)
+  const [showBedForm, setShowBedForm] = useState(false)
 
   // Ward Management state
   const [loadingWards, setLoadingWards] = useState(false)
@@ -197,7 +200,93 @@ export default function InpatientPage() {
     return true
   })
 
+  // Filter wards by ward type for Bed Management
+  const filteredWardsForBeds = useMemo(() => {
+    if (!bedWardTypeFilter || !bedWardTypeFilter.trim()) {
+      return wards
+    }
+
+    const filterType = String(bedWardTypeFilter).trim()
+    const filterTypeLower = filterType.toLowerCase()
+
+    // Debug: Log the filter type to help diagnose issues
+    if (filterTypeLower === "male") {
+      console.log("[Bed Filter] Filtering for Male wards only. Filter value:", filterType)
+    }
+
+    return wards.filter((ward: any) => {
+      const wardType = String(ward.wardType || "").trim()
+
+      // Exact match only - "Male" should NOT match "Female"
+      // Exclude wards with no ward type
+      if (!wardType || wardType.length === 0) {
+        return false
+      }
+
+      const wardTypeLower = wardType.toLowerCase()
+
+      // Strict case-insensitive exact match
+      // "male" !== "female" - this should never match
+      const matches = wardTypeLower === filterTypeLower
+
+      // Debug logging for Male filter
+      if (filterTypeLower === "male" && matches) {
+        console.log("[Bed Filter] Ward matches Male filter:", ward.wardName, "Type:", wardType)
+      }
+      if (filterTypeLower === "male" && wardTypeLower === "female") {
+        console.warn("[Bed Filter] ERROR: Male filter matched Female ward!", ward.wardName, wardType)
+      }
+
+      return matches
+    })
+  }, [wards, bedWardTypeFilter])
+
   const filteredBeds = beds.filter((bed) => {
+    // Filter by ward type (through ward) - exact match only
+    if (bedWardTypeFilter && bedWardTypeFilter.trim()) {
+      const bedWardType = String(bed.wardType || "").trim()
+      const filterType = String(bedWardTypeFilter).trim()
+
+      // Exact match only - "Male" should NOT match "Female"
+      // Exclude beds with no ward type or empty ward type
+      if (!bedWardType || bedWardType.length === 0) {
+        return false
+      }
+
+      const bedWardTypeLower = bedWardType.toLowerCase()
+      const filterTypeLower = filterType.toLowerCase()
+
+      // Strict case-insensitive exact match
+      // "male" !== "female" - this should never match
+      if (bedWardTypeLower !== filterTypeLower) {
+        // Debug logging for Male filter
+        if (filterTypeLower === "male" && bedWardTypeLower === "female") {
+          console.warn("[Bed Filter] ERROR: Male filter matched Female bed!", bed.bedNumber, bed.wardName, "Bed Ward Type:", bedWardType)
+        }
+        return false
+      }
+
+      // Debug logging for successful Male filter match
+      if (filterTypeLower === "male") {
+        console.log("[Bed Filter] Bed matches Male filter:", bed.bedNumber, bed.wardName, "Bed Ward Type:", bedWardType)
+      }
+    }
+
+    // Filter by ward
+    if (bedWardFilter) {
+      if (bed.wardId?.toString() !== bedWardFilter) {
+        return false
+      }
+    }
+
+    // Filter by status
+    if (bedStatusFilter) {
+      if (bed.status !== bedStatusFilter) {
+        return false
+      }
+    }
+
+    // Filter by search
     if (bedSearch) {
       const searchLower = bedSearch.toLowerCase()
       return (
@@ -332,7 +421,7 @@ export default function InpatientPage() {
     try {
       const fullBed = await inpatientApi.getBed(bed.bedId.toString())
       setEditingBed(fullBed)
-      setEditBedOpen(true)
+      setShowBedForm(true) // Use the unified form dialog
     } catch (err: any) {
       toast({
         title: "Error loading bed",
@@ -342,18 +431,27 @@ export default function InpatientPage() {
     }
   }
 
-  const handleSaveBed = async (bedData: any) => {
-    if (!editingBed) return
+  const handleSaveBed = async (bedId: string, bedData: any) => {
+    if (!bedId) {
+      console.error("handleSaveBed: No bedId provided for update.")
+      toast({
+        title: "Error",
+        description: "No bed ID provided for update.",
+        variant: "destructive",
+      })
+      return
+    }
 
     setSavingBed(true)
     try {
       setError(null)
-      await inpatientApi.updateBed(editingBed.bedId.toString(), bedData)
+      await inpatientApi.updateBed(bedId, bedData)
       toast({
         title: "Bed updated",
-        description: `Bed ${editingBed.bedNumber} has been updated successfully.`,
+        description: `Bed has been updated successfully.`,
       })
-      setEditBedOpen(false)
+      setEditBedOpen(false) // Close edit dialog
+      setShowBedForm(false) // Close create/edit dialog
       setEditingBed(null)
       await loadBeds()
     } catch (err: any) {
@@ -365,6 +463,33 @@ export default function InpatientPage() {
         variant: "destructive",
       })
       console.error('Error updating bed:', err)
+    } finally {
+      setSavingBed(false)
+    }
+  }
+
+  const handleCreateBed = async (bedData: any) => {
+    setSavingBed(true)
+    try {
+      setError(null)
+      await inpatientApi.createBed(bedData)
+      toast({
+        title: "Bed created",
+        description: `Bed has been created successfully.`,
+      })
+      setShowBedForm(false)
+      setEditingBed(null)
+      await loadBeds()
+    } catch (err: any) {
+      const errorMessage = err.message || 'Failed to create bed'
+      setError(errorMessage)
+      toast({
+        title: "Error creating bed",
+        description: errorMessage,
+        variant: "destructive",
+      })
+      console.error('Error creating bed:', err)
+      throw err // Re-throw to let form handle it
     } finally {
       setSavingBed(false)
     }
@@ -403,7 +528,7 @@ export default function InpatientPage() {
     try {
       const fullWard = await inpatientApi.getWard(ward.wardId.toString())
       setEditingWard(fullWard)
-      setEditWardOpen(true)
+      setShowWardForm(true) // Use the unified form dialog
     } catch (err: any) {
       toast({
         title: "Error loading ward",
@@ -414,22 +539,33 @@ export default function InpatientPage() {
   }
 
   const handleSaveWard = async (wardData: any) => {
-    if (!editingWard) return
+    if (!editingWard || !editingWard.wardId) {
+      console.error('Cannot save ward: editingWard is not set or missing wardId', editingWard)
+      toast({
+        title: "Error",
+        description: "Cannot save ward: ward information is missing",
+        variant: "destructive",
+      })
+      return
+    }
 
     setSavingWard(true)
     try {
       setError(null)
+      console.log('Saving ward:', { wardId: editingWard.wardId, wardData })
       await inpatientApi.updateWard(editingWard.wardId.toString(), wardData)
       toast({
         title: "Ward updated",
-        description: `Ward ${editingWard.wardName} has been updated successfully.`,
+        description: `Ward ${editingWard.wardName || 'Unknown'} has been updated successfully.`,
       })
+      // Close both dialogs in case either is open
       setEditWardOpen(false)
+      setShowWardForm(false)
       setEditingWard(null)
       await loadWards()
       await loadBeds() // Reload beds to refresh ward names
     } catch (err: any) {
-      const errorMessage = err.message || 'Failed to update ward'
+      const errorMessage = err.message || err.response?.message || 'Failed to update ward'
       setError(errorMessage)
       toast({
         title: "Error updating ward",
@@ -472,6 +608,7 @@ export default function InpatientPage() {
   }
 
   const handleCreateWard = async (wardData: any) => {
+    setSavingWard(true)
     try {
       setError(null)
       await inpatientApi.createWard(wardData)
@@ -480,6 +617,7 @@ export default function InpatientPage() {
         description: `Ward has been created successfully.`,
       })
       setShowWardForm(false)
+      setEditingWard(null)
       await loadWards()
       await loadBeds() // Reload beds to refresh ward names
     } catch (err: any) {
@@ -492,6 +630,8 @@ export default function InpatientPage() {
       })
       console.error('Error creating ward:', err)
       throw err // Re-throw to let form handle it
+    } finally {
+      setSavingWard(false)
     }
   }
 
@@ -761,43 +901,110 @@ export default function InpatientPage() {
         <TabsContent value="beds" className="space-y-4 mt-4">
           <Card>
             <CardHeader>
-              <CardTitle>Bed Management</CardTitle>
-              <CardDescription>View and manage hospital beds</CardDescription>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Bed Management</CardTitle>
+                  <CardDescription>View and manage hospital beds</CardDescription>
+                </div>
+                <Button onClick={() => {
+                  setEditingBed(null)
+                  setShowBedForm(true)
+                }}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  New Bed
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex gap-2 flex-wrap">
-                  <Button
-                    variant={bedStatusFilter === "" ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setBedStatusFilter("")}
-                  >
-                    All Beds
-                  </Button>
-                  <Button
-                    variant={bedStatusFilter === "available" ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setBedStatusFilter("available")}
-                  >
-                    Available
-                  </Button>
-                  <Button
-                    variant={bedStatusFilter === "occupied" ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setBedStatusFilter("occupied")}
-                  >
-                    Occupied
-                  </Button>
+              <div className="space-y-4 mb-4">
+                {/* Cascading Filters: Ward Type -> Ward -> Beds */}
+                <div className="flex items-center gap-4 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="bedWardTypeFilter" className="text-sm font-medium whitespace-nowrap">
+                      Ward Type:
+                    </Label>
+                    <Select
+                      value={bedWardTypeFilter || "all"}
+                      onValueChange={(value) => {
+                        // Ensure we're setting the exact value, not a combined string
+                        const newFilter = value === "all" ? "" : String(value).trim()
+                        setBedWardTypeFilter(newFilter)
+                        setBedWardFilter("") // Clear ward filter when type changes
+                      }}
+                    >
+                      <SelectTrigger id="bedWardTypeFilter" className="w-[180px]">
+                        <SelectValue placeholder="All Types" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Types</SelectItem>
+                        {Array.from(new Set(wards.map((w: any) => w.wardType).filter(Boolean))).map((type: string) => (
+                          <SelectItem key={type} value={String(type).trim()}>
+                            {type}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="bedWardFilter" className="text-sm font-medium whitespace-nowrap">
+                      Ward:
+                    </Label>
+                    <Select
+                      value={bedWardFilter || "all"}
+                      onValueChange={(value) => setBedWardFilter(value === "all" ? "" : value)}
+                      disabled={filteredWardsForBeds.length === 0 && bedWardTypeFilter !== ""}
+                    >
+                      <SelectTrigger id="bedWardFilter" className="w-[200px]">
+                        <SelectValue placeholder="All Wards" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Wards</SelectItem>
+                        {filteredWardsForBeds.map((ward: any) => (
+                          <SelectItem key={ward.wardId} value={ward.wardId.toString()}>
+                            {ward.wardName}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
-                <div className="relative w-64">
-                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    type="search"
-                    placeholder="Search beds..."
-                    className="w-full pl-8"
-                    value={bedSearch}
-                    onChange={(e) => setBedSearch(e.target.value)}
-                  />
+
+                {/* Status Filters and Search */}
+                <div className="flex items-center justify-between">
+                  <div className="flex gap-2 flex-wrap">
+                    <Button
+                      variant={bedStatusFilter === "" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setBedStatusFilter("")}
+                    >
+                      All Beds
+                    </Button>
+                    <Button
+                      variant={bedStatusFilter === "available" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setBedStatusFilter("available")}
+                    >
+                      Available
+                    </Button>
+                    <Button
+                      variant={bedStatusFilter === "occupied" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setBedStatusFilter("occupied")}
+                    >
+                      Occupied
+                    </Button>
+                  </div>
+                  <div className="relative w-64">
+                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      type="search"
+                      placeholder="Search beds..."
+                      className="w-full pl-8"
+                      value={bedSearch}
+                      onChange={(e) => setBedSearch(e.target.value)}
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -1276,7 +1483,7 @@ export default function InpatientPage() {
             <EditBedForm
               bed={editingBed}
               wards={wards}
-              onSave={handleSaveBed}
+              onSave={(data) => handleSaveBed(editingBed.bedId.toString(), data)}
               onCancel={() => {
                 setEditBedOpen(false)
                 setEditingBed(null)
@@ -1284,6 +1491,37 @@ export default function InpatientPage() {
               saving={savingBed}
             />
           ) : null}
+        </DialogContent>
+      </Dialog>
+
+      {/* Create/Edit Bed Form Dialog */}
+      <Dialog open={showBedForm} onOpenChange={(open) => {
+        setShowBedForm(open)
+        if (!open) setEditingBed(null)
+      }}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>{editingBed ? 'Edit Bed' : 'New Bed'}</DialogTitle>
+            <DialogDescription>
+              {editingBed ? `Update bed details for ${editingBed.bedNumber}` : 'Create a new hospital bed'}
+            </DialogDescription>
+          </DialogHeader>
+          <EditBedForm
+            bed={editingBed}
+            wards={wards}
+            onSave={async (data) => {
+              if (editingBed) {
+                await handleSaveBed(editingBed.bedId.toString(), data)
+              } else {
+                await handleCreateBed(data)
+              }
+            }}
+            onCancel={() => {
+              setShowBedForm(false)
+              setEditingBed(null)
+            }}
+            saving={savingBed}
+          />
         </DialogContent>
       </Dialog>
 
@@ -1503,7 +1741,7 @@ function EditBedForm({
   onCancel,
   saving
 }: {
-  bed: any
+  bed: any | null
   wards: any[]
   onSave: (data: any) => void
   onCancel: () => void
@@ -1526,6 +1764,15 @@ function EditBedForm({
         status: bed.status || 'available',
         notes: bed.notes || '',
       })
+    } else {
+      // Reset form for new bed
+      setFormData({
+        bedNumber: '',
+        wardId: '',
+        bedType: 'general',
+        status: 'available',
+        notes: '',
+      })
     }
   }, [bed])
 
@@ -1539,8 +1786,6 @@ function EditBedForm({
       notes: formData.notes || null,
     })
   }
-
-  if (!bed) return null
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
@@ -1632,7 +1877,7 @@ function EditBedForm({
               Saving...
             </>
           ) : (
-            'Save Changes'
+            bed ? 'Save Changes' : 'Create Bed'
           )}
         </Button>
       </div>
@@ -1721,12 +1966,22 @@ function EditWardForm({
 
       <div>
         <Label htmlFor="wardType" className="text-sm font-medium mb-2 block">Ward Type (Optional)</Label>
-        <Input
-          id="wardType"
-          value={formData.wardType}
-          onChange={(e) => setFormData({ ...formData, wardType: e.target.value })}
-          placeholder="e.g., General, Surgical, Pediatric"
-        />
+        <Select
+          value={formData.wardType || "none"}
+          onValueChange={(value) => setFormData({ ...formData, wardType: value === "none" ? "" : value })}
+        >
+          <SelectTrigger id="wardType">
+            <SelectValue placeholder="Select ward type" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="none">None</SelectItem>
+            <SelectItem value="Female">Female</SelectItem>
+            <SelectItem value="Male">Male</SelectItem>
+            <SelectItem value="Maternity">Maternity</SelectItem>
+            <SelectItem value="Pediatric">Pediatric</SelectItem>
+            <SelectItem value="Other">Other</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       <div>

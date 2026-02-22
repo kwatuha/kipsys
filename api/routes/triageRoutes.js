@@ -17,7 +17,7 @@ router.get('/', async (req, res) => {
                    p.patientId, p.firstName, p.lastName, p.patientNumber,
                    u.firstName as triagedByFirstName, u.lastName as triagedByLastName,
                    vs.systolicBP, vs.diastolicBP, vs.heartRate, vs.respiratoryRate,
-                   vs.temperature, vs.oxygenSaturation, vs.painScore as painLevel
+                   vs.temperature, vs.oxygenSaturation, vs.painScore as painLevel, vs.weight, vs.height
             FROM triage_assessments t
             LEFT JOIN patients p ON t.patientId = p.patientId
             LEFT JOIN users u ON t.triagedBy = u.userId
@@ -82,7 +82,7 @@ router.get('/:id', async (req, res) => {
                     p.patientId, p.firstName, p.lastName, p.patientNumber,
                     u.firstName as triagedByFirstName, u.lastName as triagedByLastName,
                     vs.systolicBP, vs.diastolicBP, vs.heartRate, vs.respiratoryRate,
-                    vs.temperature, vs.oxygenSaturation, vs.painScore as painLevel
+                    vs.temperature, vs.oxygenSaturation, vs.painScore as painLevel, vs.weight, vs.height
              FROM triage_assessments t
              LEFT JOIN patients p ON t.patientId = p.patientId
              LEFT JOIN users u ON t.triagedBy = u.userId
@@ -113,14 +113,14 @@ router.post('/', async (req, res) => {
 
         const {
             patientId, chiefComplaint, temperature, bloodPressure, heartRate,
-            respiratoryRate, oxygenSaturation, painLevel, priority, notes, triagedBy,
+            respiratoryRate, oxygenSaturation, painLevel, weight, height, priority, notes, triagedBy,
             assignedToDoctorId, assignedToDepartment, servicePoint
         } = req.body;
 
         // Validate required fields
-        if (!patientId || !chiefComplaint) {
+        if (!patientId) {
             await connection.rollback();
-            return res.status(400).json({ message: 'Missing required fields: patientId, chiefComplaint' });
+            return res.status(400).json({ message: 'Missing required field: patientId' });
         }
 
         // triagedBy is required - use provided value or default to user 1 (system/admin)
@@ -217,7 +217,7 @@ router.post('/', async (req, res) => {
                 [
                     triageNumber,
                     patientId,
-                    chiefComplaint,
+                    chiefComplaint || "",
                     triageCategory,
                     priorityLevel,
                     notes || null,
@@ -285,7 +285,7 @@ router.post('/', async (req, res) => {
                         [
                             triageNumber,
                             patientId,
-                            chiefComplaint,
+                            chiefComplaint || "",
                             triageCategory,
                             priorityLevel,
                             notes || null,
@@ -324,14 +324,14 @@ router.post('/', async (req, res) => {
             return !isNaN(parsed) ? parsed : null;
         };
 
-        if (temperature || systolicBP || heartRate || respiratoryRate || oxygenSaturation || painLevel) {
+        if (temperature || systolicBP || heartRate || respiratoryRate || oxygenSaturation || painLevel || weight || height) {
             await connection.query(
                 `INSERT INTO vital_signs (
                     patientId, recordedDate, systolicBP, diastolicBP, heartRate,
-                    respiratoryRate, temperature, oxygenSaturation, painScore,
+                    respiratoryRate, temperature, oxygenSaturation, painScore, weight, height,
                     context, triageId, recordedBy
                 )
-                VALUES (?, NOW(), ?, ?, ?, ?, ?, ?, ?, 'triage', ?, ?)`,
+                VALUES (?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, 'triage', ?, ?)`,
                 [
                     patientId,
                     systolicBP,
@@ -341,6 +341,8 @@ router.post('/', async (req, res) => {
                     safeParseFloat(temperature),
                     safeParseFloat(oxygenSaturation),
                     safeParseInt(painLevel),
+                    safeParseFloat(weight),
+                    safeParseFloat(height),
                     triageId,
                     triagedByUserId
                 ]
@@ -783,7 +785,7 @@ router.post('/', async (req, res) => {
                     p.patientId, p.firstName, p.lastName, p.patientNumber,
                     u.firstName as triagedByFirstName, u.lastName as triagedByLastName,
                     vs.systolicBP, vs.diastolicBP, vs.heartRate, vs.respiratoryRate,
-                    vs.temperature, vs.oxygenSaturation, vs.painScore as painLevel
+                    vs.temperature, vs.oxygenSaturation, vs.painScore as painLevel, vs.weight, vs.height
              FROM triage_assessments t
              LEFT JOIN patients p ON t.patientId = p.patientId
              LEFT JOIN users u ON t.triagedBy = u.userId
@@ -814,7 +816,7 @@ router.put('/:id', async (req, res) => {
         const { id } = req.params;
         const {
             chiefComplaint, temperature, bloodPressure, heartRate,
-            respiratoryRate, oxygenSaturation, painLevel, priority, status, notes
+            respiratoryRate, oxygenSaturation, painLevel, weight, height, priority, status, notes
         } = req.body;
 
         // Check if triage exists
@@ -858,7 +860,7 @@ router.put('/:id', async (req, res) => {
 
         // Update vital signs if provided
         if (temperature !== undefined || bloodPressure !== undefined || heartRate !== undefined ||
-            respiratoryRate !== undefined || oxygenSaturation !== undefined || painLevel !== undefined) {
+            respiratoryRate !== undefined || oxygenSaturation !== undefined || painLevel !== undefined || weight !== undefined || height !== undefined) {
             const [vitalExists] = await connection.query(
                 'SELECT vitalSignId FROM vital_signs WHERE triageId = ?',
                 [id]
@@ -905,6 +907,14 @@ router.put('/:id', async (req, res) => {
                     vitalUpdates.push('painScore = ?');
                     vitalValues.push(safeParseInt(painLevel));
                 }
+                if (weight !== undefined) {
+                    vitalUpdates.push('weight = ?');
+                    vitalValues.push(safeParseFloat(weight));
+                }
+                if (height !== undefined) {
+                    vitalUpdates.push('height = ?');
+                    vitalValues.push(safeParseFloat(height));
+                }
                 if (vitalUpdates.length > 0) {
                     vitalValues.push(id);
                     await connection.query(
@@ -930,10 +940,10 @@ router.put('/:id', async (req, res) => {
                 await connection.query(
                     `INSERT INTO vital_signs (
                         patientId, recordedDate, systolicBP, diastolicBP, heartRate,
-                        respiratoryRate, temperature, oxygenSaturation, painScore,
+                        respiratoryRate, temperature, oxygenSaturation, painScore, weight, height,
                         context, triageId, recordedBy
                     )
-                    VALUES (?, NOW(), ?, ?, ?, ?, ?, ?, ?, 'triage', ?, ?)`,
+                    VALUES (?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, 'triage', ?, ?)`,
                     [
                         existing[0].patientId,
                         systolicBP,
@@ -943,6 +953,8 @@ router.put('/:id', async (req, res) => {
                         safeParseFloat(temperature),
                         safeParseFloat(oxygenSaturation),
                         safeParseInt(painLevel),
+                        safeParseFloat(weight),
+                        safeParseFloat(height),
                         id,
                         existing[0].triagedBy
                     ]
@@ -987,7 +999,7 @@ router.put('/:id', async (req, res) => {
                     p.patientId, p.firstName, p.lastName, p.patientNumber,
                     u.firstName as triagedByFirstName, u.lastName as triagedByLastName,
                     vs.systolicBP, vs.diastolicBP, vs.heartRate, vs.respiratoryRate,
-                    vs.temperature, vs.oxygenSaturation, vs.painScore as painLevel
+                    vs.temperature, vs.oxygenSaturation, vs.painScore as painLevel, vs.weight, vs.height
              FROM triage_assessments t
              LEFT JOIN patients p ON t.patientId = p.patientId
              LEFT JOIN users u ON t.triagedBy = u.userId

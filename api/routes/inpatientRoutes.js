@@ -435,6 +435,76 @@ router.get('/beds/:id', async (req, res) => {
 });
 
 /**
+ * @route POST /api/inpatient/beds
+ * @description Create a new bed
+ */
+router.post('/beds', async (req, res) => {
+    try {
+        const { bedNumber, wardId, bedType, status, notes } = req.body;
+
+        if (!bedNumber) {
+            return res.status(400).json({ message: 'Bed number is required' });
+        }
+
+        // Check if ward exists (if provided)
+        if (wardId) {
+            const [wardCheck] = await pool.execute(
+                'SELECT wardId FROM wards WHERE wardId = ? AND isActive = 1',
+                [wardId]
+            );
+            if (wardCheck.length === 0) {
+                return res.status(400).json({ message: 'Ward not found' });
+            }
+        }
+
+        // Check if bed number already exists in the same ward (if ward is provided)
+        if (wardId) {
+            const [existingBed] = await pool.execute(
+                'SELECT bedId FROM beds WHERE bedNumber = ? AND wardId = ? AND isActive = 1',
+                [bedNumber, wardId]
+            );
+            if (existingBed.length > 0) {
+                return res.status(400).json({ message: 'Bed number already exists in this ward' });
+            }
+        }
+
+        const [result] = await pool.execute(
+            `INSERT INTO beds (bedNumber, wardId, bedType, status, notes)
+             VALUES (?, ?, ?, ?, ?)`,
+            [
+                bedNumber,
+                wardId || null,
+                bedType || 'general',
+                status || 'available',
+                notes || null
+            ]
+        );
+
+        // Fetch created bed
+        const [newBed] = await pool.execute(
+            `SELECT b.*,
+                   w.wardName, w.wardType,
+                   a.admissionId, a.admissionNumber, a.admissionDate,
+                   pt.firstName, pt.lastName, pt.patientNumber
+            FROM beds b
+            LEFT JOIN wards w ON b.wardId = w.wardId
+            LEFT JOIN admissions a ON b.bedId = a.bedId AND a.status = 'admitted'
+            LEFT JOIN patients pt ON a.patientId = pt.patientId
+            WHERE b.bedId = ?`,
+            [result.insertId]
+        );
+
+        res.status(201).json(newBed[0]);
+    } catch (error) {
+        console.error('Error creating bed:', error);
+        if (error.code === 'ER_DUP_ENTRY') {
+            return res.status(400).json({ message: 'Bed number already exists' });
+        }
+        res.status(500).json({ message: 'Error creating bed', error: error.message });
+    }
+});
+
+/**
  * @route PUT /api/inpatient/beds/:id
  * @description Update a bed
  */
@@ -637,17 +707,67 @@ router.get('/wards/:id', async (req, res) => {
  */
 router.post('/wards', async (req, res) => {
     try {
-        const { wardCode, wardName, wardType, capacity, location, description } = req.body;
+        let { wardCode, wardName, wardType, capacity, location, description } = req.body;
 
         if (!wardName || !capacity) {
             return res.status(400).json({ message: 'Ward name and capacity are required' });
+        }
+
+        // Auto-generate ward code if blank
+        if (!wardCode || wardCode.trim() === '') {
+            // Generate ward code based on ward name and type
+            // Format: First 3 letters of ward name + first letter of type + sequential number
+            const namePrefix = wardName.substring(0, 3).toUpperCase().replace(/[^A-Z]/g, '');
+            const typePrefix = wardType ? wardType.substring(0, 1).toUpperCase() : 'G';
+
+            // Find the next available number for this prefix
+            const [existingCodes] = await pool.execute(
+                `SELECT wardCode FROM wards
+                 WHERE wardCode LIKE ? AND wardCode REGEXP '^[A-Z]{3}[A-Z]-[0-9]+$'
+                 ORDER BY CAST(SUBSTRING(wardCode, LOCATE('-', wardCode) + 1) AS UNSIGNED) DESC
+                 LIMIT 1`,
+                [`${namePrefix}${typePrefix}-%`]
+            );
+
+            let nextNum = 1;
+            if (existingCodes.length > 0) {
+                const lastCode = existingCodes[0].wardCode;
+                const lastNum = parseInt(lastCode.split('-')[1]) || 0;
+                nextNum = lastNum + 1;
+            }
+
+            wardCode = `${namePrefix}${typePrefix}-${String(nextNum).padStart(3, '0')}`;
+        }
+
+        // Check if generated code already exists (safety check)
+        const [duplicateCheck] = await pool.execute(
+            'SELECT wardId FROM wards WHERE wardCode = ? AND isActive = 1',
+            [wardCode]
+        );
+        if (duplicateCheck.length > 0) {
+            // If duplicate found, append a suffix
+            let suffix = 1;
+            let finalCode = wardCode;
+            while (true) {
+                const [check] = await pool.execute(
+                    'SELECT wardId FROM wards WHERE wardCode = ? AND isActive = 1',
+                    [finalCode]
+                );
+                if (check.length === 0) break;
+                finalCode = `${wardCode}-${suffix}`;
+                suffix++;
+                if (suffix > 999) {
+                    return res.status(500).json({ message: 'Failed to generate unique ward code' });
+                }
+            }
+            wardCode = finalCode;
         }
 
         const [result] = await pool.execute(
             `INSERT INTO wards (wardCode, wardName, wardType, capacity, location, description)
              VALUES (?, ?, ?, ?, ?, ?)`,
             [
-                wardCode || null,
+                wardCode,
                 wardName,
                 wardType || null,
                 capacity,
@@ -682,12 +802,91 @@ router.put('/wards/:id', async (req, res) => {
 
         // Check if ward exists
         const [existing] = await pool.execute(
-            'SELECT wardId FROM wards WHERE wardId = ? AND isActive = 1',
+            'SELECT wardId, wardCode FROM wards WHERE wardId = ? AND isActive = 1',
             [id]
         );
 
         if (existing.length === 0) {
             return res.status(404).json({ message: 'Ward not found' });
+        }
+
+        // Auto-generate ward code if blank or being cleared
+        let finalWardCode = wardCode;
+        const currentWard = existing[0];
+
+        if (wardCode === undefined || wardCode === null || wardCode === '' || (typeof wardCode === 'string' && wardCode.trim() === '')) {
+            // Only generate if currently null/empty
+            if (!currentWard.wardCode || currentWard.wardCode.trim() === '') {
+                // Get current ward name and type (use updated values if provided)
+                const [currentWardData] = await pool.execute(
+                    'SELECT wardName, wardType FROM wards WHERE wardId = ?',
+                    [id]
+                );
+                const wardNameValue = wardName !== undefined ? wardName : currentWardData[0].wardName;
+                const wardTypeValue = wardType !== undefined ? wardType : currentWardData[0].wardType;
+
+                // Generate ward code based on ward name and type
+                const namePrefix = wardNameValue.substring(0, 3).toUpperCase().replace(/[^A-Z]/g, '');
+                const typePrefix = wardTypeValue ? wardTypeValue.substring(0, 1).toUpperCase() : 'G';
+
+                // Find the next available number for this prefix
+                const [existingCodes] = await pool.execute(
+                    `SELECT wardCode FROM wards
+                     WHERE wardCode LIKE ? AND wardCode REGEXP '^[A-Z]{3}[A-Z]-[0-9]+$'
+                     ORDER BY CAST(SUBSTRING(wardCode, LOCATE('-', wardCode) + 1) AS UNSIGNED) DESC
+                     LIMIT 1`,
+                    [`${namePrefix}${typePrefix}-%`]
+                );
+
+                let nextNum = 1;
+                if (existingCodes.length > 0) {
+                    const lastCode = existingCodes[0].wardCode;
+                    const lastNum = parseInt(lastCode.split('-')[1]) || 0;
+                    nextNum = lastNum + 1;
+                }
+
+                finalWardCode = `${namePrefix}${typePrefix}-${String(nextNum).padStart(3, '0')}`;
+
+                // Check if generated code already exists (safety check)
+                const [duplicateCheck] = await pool.execute(
+                    'SELECT wardId FROM wards WHERE wardCode = ? AND wardId != ? AND isActive = 1',
+                    [finalWardCode, id]
+                );
+                if (duplicateCheck.length > 0) {
+                    // If duplicate found, append a suffix
+                    let suffix = 1;
+                    let tempCode = finalWardCode;
+                    while (true) {
+                        const [check] = await pool.execute(
+                            'SELECT wardId FROM wards WHERE wardCode = ? AND wardId != ? AND isActive = 1',
+                            [tempCode, id]
+                        );
+                        if (check.length === 0) break;
+                        tempCode = `${finalWardCode}-${suffix}`;
+                        suffix++;
+                        if (suffix > 999) {
+                            return res.status(500).json({ message: 'Failed to generate unique ward code' });
+                        }
+                    }
+                    finalWardCode = tempCode;
+                }
+            } else {
+                // Keep existing code if not being changed
+                finalWardCode = currentWard.wardCode;
+            }
+        } else {
+            // If wardCode is being updated, check if it already exists in another ward
+            const currentWardCode = currentWard.wardCode;
+            // Only check for duplicates if the code is actually changing
+            if (wardCode !== currentWardCode) {
+                const [duplicateCheck] = await pool.execute(
+                    'SELECT wardId FROM wards WHERE wardCode = ? AND wardId != ? AND isActive = 1',
+                    [wardCode, id]
+                );
+                if (duplicateCheck.length > 0) {
+                    return res.status(400).json({ message: 'Ward code already exists' });
+                }
+            }
         }
 
         // Build update query
@@ -696,7 +895,7 @@ router.put('/wards/:id', async (req, res) => {
 
         if (wardCode !== undefined) {
             updates.push('wardCode = ?');
-            values.push(wardCode || null);
+            values.push(finalWardCode || null);
         }
 
         if (wardName !== undefined) {

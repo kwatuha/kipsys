@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useForm } from "react-hook-form"
 import * as z from "zod"
@@ -19,8 +19,24 @@ import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "@/components/ui/use-toast"
 import { PatientCombobox } from "@/components/patient-combobox"
+import { DiagnosisCombobox } from "@/components/diagnosis-combobox"
 import { patientApi, icuApi, doctorsApi, inpatientApi } from "@/lib/api"
-import { Loader2 } from "lucide-react"
+import { Loader2, Check, ChevronsUpDown, Search } from "lucide-react"
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
+import { cn } from "@/lib/utils"
+import { ScrollArea } from "@/components/ui/scroll-area"
 
 // Create a dynamic schema based on admission type
 const createFormSchema = (isEditing: boolean, admissionType: "inpatient" | "icu" = "icu") => {
@@ -59,10 +75,98 @@ export function AddAdmissionForm({ open, onOpenChange, onSuccess, admission, adm
   const [doctors, setDoctors] = useState<any[]>([])
   const [icuBeds, setIcuBeds] = useState<any[]>([])
   const [beds, setBeds] = useState<any[]>([])
+  const [allBeds, setAllBeds] = useState<any[]>([]) // Store all beds before filtering
+  const [wards, setWards] = useState<any[]>([])
+  const [selectedWardId, setSelectedWardId] = useState<string>("")
+  const [selectedWardType, setSelectedWardType] = useState<string>("") // Filter by ward type: Female, Male, Pediatric, Other
+  const [wardOpen, setWardOpen] = useState(false)
+  const [wardSearch, setWardSearch] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [isMounted, setIsMounted] = useState(false)
+  const [selectedDiagnosis, setSelectedDiagnosis] = useState<{ diagnosisId: number; icd10Code?: string; diagnosisName: string } | null>(null)
   const isEditing = !!admission
   const isICU = admissionType === "icu"
+
+  // Ward Combobox component (inline for simplicity)
+  const WardCombobox = ({ value, onValueChange, wards }: { value: string; onValueChange: (value: string) => void; wards: any[] }) => {
+    const [open, setOpen] = useState(false)
+    const [search, setSearch] = useState("")
+
+    const filteredWards = wards.filter((ward) => {
+      if (!search) return true
+      const searchLower = search.toLowerCase()
+      return (
+        ward.wardName?.toLowerCase().includes(searchLower) ||
+        ward.wardType?.toLowerCase().includes(searchLower) ||
+        ward.wardCode?.toLowerCase().includes(searchLower)
+      )
+    })
+
+    const selectedWard = wards.find((w) => w.wardId?.toString() === value)
+
+    return (
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <Button
+            variant="outline"
+            role="combobox"
+            aria-expanded={open}
+            className="w-full justify-between"
+            type="button"
+          >
+            {selectedWard
+              ? `${selectedWard.wardName}${selectedWard.wardType ? ` (${selectedWard.wardType})` : ""}`
+              : "Select ward (optional)..."}
+            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+          <Command>
+            <CommandInput
+              placeholder="Search ward by name or type..."
+              value={search}
+              onValueChange={setSearch}
+            />
+            <CommandList>
+              <CommandEmpty>No ward found.</CommandEmpty>
+              <CommandGroup>
+                <CommandItem
+                  value=""
+                  onSelect={() => {
+                    onValueChange("")
+                    setOpen(false)
+                    setSearch("")
+                  }}
+                >
+                  <Check className={cn("mr-2 h-4 w-4", !value ? "opacity-100" : "opacity-0")} />
+                  All Wards
+                </CommandItem>
+                {filteredWards.map((ward) => (
+                  <CommandItem
+                    key={ward.wardId}
+                    value={ward.wardId.toString()}
+                    onSelect={() => {
+                      onValueChange(ward.wardId.toString())
+                      setOpen(false)
+                      setSearch("")
+                    }}
+                  >
+                    <Check
+                      className={cn("mr-2 h-4 w-4", value === ward.wardId.toString() ? "opacity-100" : "opacity-0")}
+                    />
+                    <div className="flex flex-col">
+                      <span className="font-medium">{ward.wardName}</span>
+                      {ward.wardType && <span className="text-xs text-muted-foreground">{ward.wardType}</span>}
+                    </div>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            </CommandList>
+          </Command>
+        </PopoverContent>
+      </Popover>
+    )
+  }
 
   const getDefaultValues = () => {
     if (isICU) {
@@ -184,6 +288,15 @@ export function AddAdmissionForm({ open, onOpenChange, onSuccess, admission, adm
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [patientId])
 
+  // Filter beds based on selected ward only (no age/gender filtering)
+  const getFilteredBeds = (bedsList: any[]): any[] => {
+    // Filter by selected ward only
+    if (selectedWardId) {
+      return bedsList.filter((bed) => bed.wardId?.toString() === selectedWardId)
+    }
+    return bedsList
+  }
+
   // Load doctors and beds when dialog opens, and set dates client-side only
   useEffect(() => {
     if (open && isMounted) {
@@ -196,13 +309,98 @@ export function AddAdmissionForm({ open, onOpenChange, onSuccess, admission, adm
           admissionDate: now.toISOString().split("T")[0],
           admissionTime: now.toTimeString().split(" ")[0].substring(0, 5),
         })
+        setSelectedDiagnosis(null)
       }
     } else if (!open) {
       // Reset form when dialog closes
       form.reset(getDefaultValues())
+      setSelectedDiagnosis(null)
+      setSelectedWardId("")
+      setSelectedWardType("")
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, isMounted, admissionType])
+
+  // Re-filter beds when ward selection changes
+  useEffect(() => {
+    if (allBeds.length > 0) {
+      setBeds(getFilteredBeds(allBeds))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allBeds, selectedWardId])
+
+  // Calculate available bed counts per ward (for display in ward dropdown)
+  // Count beds from allBeds for wards that match the selected ward type
+  const wardBedCounts = useMemo(() => {
+    const counts: Record<number, number> = {}
+
+    // If ward type is selected, only count beds for wards that match the filter
+    // Otherwise, count all beds
+    if (selectedWardType) {
+      const filterType = String(selectedWardType).trim().toLowerCase()
+
+      // First, get the list of ward IDs that match the ward type filter
+      const matchingWardIds = new Set<number>()
+      wards.forEach((ward) => {
+        const wardType = String(ward.wardType || "").trim()
+        if (wardType && wardType.toLowerCase() === filterType) {
+          matchingWardIds.add(ward.wardId)
+        }
+      })
+
+      // Count available beds only for wards that match the filter
+      allBeds.forEach((bed) => {
+        if (bed.wardId && bed.status === "available" && matchingWardIds.has(bed.wardId)) {
+          counts[bed.wardId] = (counts[bed.wardId] || 0) + 1
+        }
+      })
+    } else {
+      // No ward type filter - count all available beds
+      allBeds.forEach((bed) => {
+        if (bed.wardId && bed.status === "available") {
+          counts[bed.wardId] = (counts[bed.wardId] || 0) + 1
+        }
+      })
+    }
+
+    return counts
+  }, [allBeds, selectedWardType, wards])
+
+  // Filter wards by selected ward type and search term
+  const filteredWards = useMemo(() => {
+    return wards.filter((ward) => {
+      // Filter by selected ward type - use exact matching to prevent "Male" matching "Female"
+      if (selectedWardType) {
+        const wardType = String(ward.wardType || "").trim()
+        const filterType = String(selectedWardType).trim()
+
+        // Exclude wards with no ward type
+        if (!wardType || wardType.length === 0) {
+          return false
+        }
+
+        const wardTypeLower = wardType.toLowerCase()
+        const filterTypeLower = filterType.toLowerCase()
+
+        // Exact case-insensitive match - "male" should NOT match "female"
+        // This ensures "Male" only matches "Male", not "Female"
+        if (wardTypeLower !== filterTypeLower) {
+          return false
+        }
+      }
+
+      // Filter by search term
+      if (!wardSearch) return true
+      const search = wardSearch.toLowerCase()
+      return (
+        ward.wardName?.toLowerCase().includes(search) ||
+        ward.wardType?.toLowerCase().includes(search) ||
+        ward.wardCode?.toLowerCase().includes(search)
+      )
+    })
+  }, [wards, selectedWardType, wardSearch])
+
+  const selectedWard = wards.find((w) => w.wardId?.toString() === selectedWardId)
 
   const loadFormData = async () => {
     try {
@@ -241,8 +439,9 @@ export function AddAdmissionForm({ open, onOpenChange, onSuccess, admission, adm
         }
       } else {
         // Inpatient
-        const [doctorsResult, bedsResult] = await Promise.allSettled([
+        const [doctorsResult, wardsResult, bedsResult] = await Promise.allSettled([
           doctorsApi.getAll(),
+          inpatientApi.getWards(),
           inpatientApi.getBeds(undefined, bedsStatus, 1, 100),
         ])
 
@@ -257,8 +456,28 @@ export function AddAdmissionForm({ open, onOpenChange, onSuccess, admission, adm
           })
         }
 
+        if (wardsResult.status === "fulfilled") {
+          const loadedWards = wardsResult.value || []
+          // Deduplicate wards by wardName and wardType combination
+          // Use a Map to track unique wards, keeping the first occurrence
+          const uniqueWardsMap = new Map<string, any>()
+          loadedWards.forEach((ward: any) => {
+            const key = `${ward.wardName || ""}_${ward.wardType || ""}`.toLowerCase()
+            if (!uniqueWardsMap.has(key)) {
+              uniqueWardsMap.set(key, ward)
+            }
+          })
+          const uniqueWards = Array.from(uniqueWardsMap.values())
+          setWards(uniqueWards)
+        } else {
+          console.error("Error loading wards:", wardsResult.reason)
+        }
+
         if (bedsResult.status === "fulfilled") {
-          setBeds(bedsResult.value || [])
+          const loadedBeds = bedsResult.value || []
+          setAllBeds(loadedBeds) // Store all beds
+          // Filter beds based on patient data and ward selection if available
+          setBeds(getFilteredBeds(loadedBeds))
         } else {
           console.error("Error loading beds:", bedsResult.reason)
           toast({
@@ -508,28 +727,32 @@ export function AddAdmissionForm({ open, onOpenChange, onSuccess, admission, adm
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[600px]">
-        <DialogHeader>
-          <DialogTitle>{isEditing ? `Edit ${isICU ? "ICU" : "Inpatient"} Admission` : `New ${isICU ? "ICU" : "Inpatient"} Admission`}</DialogTitle>
-          <DialogDescription>
-            {isEditing
-              ? `Update the details for this ${isICU ? "ICU" : "inpatient"} admission. Click save when you're done.`
-              : `Enter the details for a new ${isICU ? "ICU" : "inpatient"} admission. Click save when you're done.`}
-          </DialogDescription>
-        </DialogHeader>
-        {error && (
-          <div className="p-3 text-sm text-red-500 bg-red-50 rounded-md">
-            {error}
-          </div>
-        )}
+      <DialogContent className="sm:max-w-[600px] max-h-[90vh] flex flex-col p-0 overflow-hidden">
+        <div className="flex-shrink-0 px-6 pt-6 pb-4 border-b">
+          <DialogHeader>
+            <DialogTitle>{isEditing ? `Edit ${isICU ? "ICU" : "Inpatient"} Admission` : `New ${isICU ? "ICU" : "Inpatient"} Admission`}</DialogTitle>
+            <DialogDescription>
+              {isEditing
+                ? `Update the details for this ${isICU ? "ICU" : "inpatient"} admission. Click save when you're done.`
+                : `Enter the details for a new ${isICU ? "ICU" : "inpatient"} admission. Click save when you're done.`}
+            </DialogDescription>
+          </DialogHeader>
+          {error && (
+            <div className="mt-4 p-3 text-sm text-red-500 bg-red-50 rounded-md">
+              {error}
+            </div>
+          )}
+        </div>
         {loading ? (
-          <div className="flex items-center justify-center py-8">
+          <div className="flex items-center justify-center py-8 flex-1">
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             <span className="ml-2 text-sm text-muted-foreground">Loading form data...</span>
           </div>
         ) : (
           <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+            <form onSubmit={form.handleSubmit(onSubmit)} className="flex flex-col flex-1 min-h-0">
+              <div className="flex-1 overflow-y-auto px-6">
+                <div className="space-y-4 py-4">
             <FormField
               control={form.control}
               name="patientId"
@@ -596,97 +819,300 @@ export function AddAdmissionForm({ open, onOpenChange, onSuccess, admission, adm
                 <FormItem>
                   <FormLabel>Diagnosis</FormLabel>
                   <FormControl>
-                    <Input placeholder="Primary diagnosis" {...field} />
+                    <div className="space-y-3">
+                      <DiagnosisCombobox
+                        value={selectedDiagnosis?.diagnosisId.toString() || ""}
+                        onValueChange={(value, diagnosis) => {
+                          if (diagnosis) {
+                            setSelectedDiagnosis(diagnosis)
+                            const diagnosisText = diagnosis.icd10Code
+                              ? `${diagnosis.icd10Code} - ${diagnosis.diagnosisName}`
+                              : diagnosis.diagnosisName
+                            field.onChange(diagnosisText)
+                          }
+                        }}
+                        placeholder="Search ICD-10 diagnosis code or name..."
+                        disabled={isSubmitting}
+                        allowMultiple={false}
+                      />
+                      <Textarea
+                        placeholder="Or enter diagnosis manually (e.g., 'Primary: Migraine headache')"
+                        className="min-h-[80px]"
+                        value={field.value || ""}
+                        onChange={(e) => {
+                          field.onChange(e.target.value)
+                          // Clear selected diagnosis if user types manually
+                          if (e.target.value && selectedDiagnosis) {
+                            setSelectedDiagnosis(null)
+                          }
+                        }}
+                      />
+                    </div>
                   </FormControl>
                   <FormMessage />
                 </FormItem>
               )}
             />
 
-            <div className="grid grid-cols-2 gap-4">
+            <FormField
+              control={form.control}
+              name="doctorId"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>
+                    Attending Physician {isEditing && <span className="text-muted-foreground font-normal">(Read-only)</span>}
+                  </FormLabel>
+                  <Select onValueChange={field.onChange} value={field.value || ""} disabled={isEditing}>
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select doctor" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {doctors.map((doctor) => (
+                        <SelectItem key={doctor.userId} value={doctor.userId.toString()}>
+                          {doctor.firstName} {doctor.lastName}
+                          {doctor.specialization && ` - ${doctor.specialization}`}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {isEditing && (
+                    <p className="text-xs text-muted-foreground">Doctor cannot be changed after admission. This field is for display only.</p>
+                  )}
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            {isICU ? (
               <FormField
                 control={form.control}
-                name="doctorId"
+                name="icuBedId"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>
-                      Attending Physician {isEditing && <span className="text-muted-foreground font-normal">(Read-only)</span>}
-                    </FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value || ""} disabled={isEditing}>
+                    <FormLabel>ICU Bed</FormLabel>
+                    <Select onValueChange={field.onChange} value={field.value || ""}>
                       <FormControl>
                         <SelectTrigger>
-                          <SelectValue placeholder="Select doctor" />
+                          <SelectValue placeholder="Select bed" />
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        {doctors.map((doctor) => (
-                          <SelectItem key={doctor.userId} value={doctor.userId.toString()}>
-                            {doctor.firstName} {doctor.lastName}
-                            {doctor.specialization && ` - ${doctor.specialization}`}
+                        {icuBeds.map((bed) => (
+                          <SelectItem key={bed.icuBedId} value={bed.icuBedId.toString()}>
+                            {bed.bedNumber} ({bed.status === "available" ? "Available" : bed.status})
+                            {bed.equipmentList && ` - ${bed.equipmentList}`}
                           </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
-                    {isEditing && (
-                      <p className="text-xs text-muted-foreground">Doctor cannot be changed after admission. This field is for display only.</p>
-                    )}
                     <FormMessage />
                   </FormItem>
                 )}
               />
-              {isICU ? (
-                <FormField
-                  control={form.control}
-                  name="icuBedId"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>ICU Bed</FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value || ""}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select bed" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {icuBeds.map((bed) => (
-                            <SelectItem key={bed.icuBedId} value={bed.icuBedId.toString()}>
-                              {bed.bedNumber} ({bed.status === "available" ? "Available" : bed.status})
-                              {bed.equipmentList && ` - ${bed.equipmentList}`}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              ) : (
+            ) : (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <FormItem className="flex flex-col">
+                    <FormLabel>Ward Type (Optional)</FormLabel>
+                    <Select
+                      value={selectedWardType || "all"}
+                      onValueChange={(value) => {
+                        setSelectedWardType(value === "all" ? "" : value)
+                        // Clear ward selection when type changes
+                        setSelectedWardId("")
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="All types" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Types</SelectItem>
+                        <SelectItem value="Female">Female</SelectItem>
+                        <SelectItem value="Male">Male</SelectItem>
+                        <SelectItem value="Maternity">Maternity</SelectItem>
+                        <SelectItem value="Pediatric">Pediatric</SelectItem>
+                        <SelectItem value="Other">Other</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </FormItem>
+                  <FormItem className="flex flex-col">
+                    <FormLabel>Ward (Optional)</FormLabel>
+                    <Popover open={wardOpen} onOpenChange={setWardOpen}>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          role="combobox"
+                          aria-expanded={wardOpen}
+                          className="w-full justify-between"
+                          type="button"
+                        >
+                          {selectedWard
+                            ? `${selectedWard.wardName}${selectedWard.wardType ? ` (${selectedWard.wardType})` : ""}${wardBedCounts[selectedWard.wardId] !== undefined ? ` - ${wardBedCounts[selectedWard.wardId]} bed${wardBedCounts[selectedWard.wardId] !== 1 ? 's' : ''} available` : " - 0 beds available"}`
+                            : "Select ward (optional)..."}
+                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                        <Command>
+                          <CommandInput
+                            placeholder="Search ward by name or type..."
+                            value={wardSearch}
+                            onValueChange={setWardSearch}
+                          />
+                          <CommandList>
+                            <CommandEmpty>No ward found.</CommandEmpty>
+                            <CommandGroup>
+                              <CommandItem
+                                value=""
+                                onSelect={() => {
+                                  setSelectedWardId("")
+                                  setWardOpen(false)
+                                  setWardSearch("")
+                                }}
+                              >
+                                <Check
+                                  className={cn(
+                                    "mr-2 h-4 w-4",
+                                    !selectedWardId ? "opacity-100" : "opacity-0"
+                                  )}
+                                />
+                                All Wards
+                              </CommandItem>
+                              {filteredWards.map((ward) => {
+                                const availableCount = wardBedCounts[ward.wardId] || 0
+                                return (
+                                  <CommandItem
+                                    key={ward.wardId}
+                                    value={ward.wardId.toString()}
+                                    onSelect={() => {
+                                      setSelectedWardId(ward.wardId.toString())
+                                      setWardOpen(false)
+                                      setWardSearch("")
+                                    }}
+                                  >
+                                    <Check
+                                      className={cn(
+                                        "mr-2 h-4 w-4",
+                                        selectedWardId === ward.wardId.toString() ? "opacity-100" : "opacity-0"
+                                      )}
+                                    />
+                                    <div className="flex flex-col flex-1">
+                                      <div className="flex items-center justify-between gap-2">
+                                        <span className="font-medium">{ward.wardName}</span>
+                                        <span className="text-xs text-muted-foreground font-medium">
+                                          {availableCount} bed{availableCount !== 1 ? 's' : ''} available
+                                        </span>
+                                      </div>
+                                      {ward.wardType && (
+                                        <span className="text-xs text-muted-foreground">{ward.wardType}</span>
+                                      )}
+                                    </div>
+                                  </CommandItem>
+                                )
+                              })}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
+                  </FormItem>
+                </div>
                 <FormField
                   control={form.control}
                   name="bedId"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Bed</FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value || ""}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select bed" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {beds.map((bed) => (
-                            <SelectItem key={bed.bedId} value={bed.bedId.toString()}>
-                              {bed.bedNumber} - {bed.wardName} ({bed.status === "available" ? "Available" : bed.status})
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
+                  render={({ field }) => {
+                    const [bedOpen, setBedOpen] = useState(false)
+                    const [bedSearch, setBedSearch] = useState("")
+
+                    const filteredBeds = beds.filter((bed) => {
+                      if (!bedSearch) return true
+                      const search = bedSearch.toLowerCase()
+                      return (
+                        bed.bedNumber?.toLowerCase().includes(search) ||
+                        bed.wardName?.toLowerCase().includes(search) ||
+                        bed.wardType?.toLowerCase().includes(search)
+                      )
+                    })
+
+                    const selectedBed = beds.find((b) => b.bedId?.toString() === field.value)
+
+                    return (
+                      <FormItem className="flex flex-col">
+                        <FormLabel>Bed</FormLabel>
+                        <Popover open={bedOpen} onOpenChange={setBedOpen}>
+                          <PopoverTrigger asChild>
+                            <FormControl>
+                              <Button
+                                variant="outline"
+                                role="combobox"
+                                aria-expanded={bedOpen}
+                                className="w-full justify-between"
+                                type="button"
+                                disabled={isSubmitting}
+                              >
+                                {selectedBed
+                                  ? `${selectedBed.bedNumber} - ${selectedBed.wardName} (${selectedBed.status === "available" ? "Available" : selectedBed.status})`
+                                  : "Select bed..."}
+                                <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                              </Button>
+                            </FormControl>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                            <Command>
+                              <CommandInput
+                                placeholder="Search bed by number, ward, or type..."
+                                value={bedSearch}
+                                onValueChange={setBedSearch}
+                              />
+                              <CommandList>
+                                <CommandEmpty>
+                                  {beds.length === 0
+                                    ? selectedWardId
+                                      ? "No beds available in selected ward"
+                                      : "No beds available"
+                                    : "No bed found matching search"}
+                                </CommandEmpty>
+                                <CommandGroup>
+                                  {filteredBeds.map((bed) => (
+                                    <CommandItem
+                                      key={bed.bedId}
+                                      value={bed.bedId.toString()}
+                                      onSelect={() => {
+                                        field.onChange(bed.bedId.toString())
+                                        setBedOpen(false)
+                                        setBedSearch("")
+                                      }}
+                                    >
+                                      <Check
+                                        className={cn(
+                                          "mr-2 h-4 w-4",
+                                          field.value === bed.bedId.toString() ? "opacity-100" : "opacity-0"
+                                        )}
+                                      />
+                                      <div className="flex flex-col">
+                                        <span className="font-medium">
+                                          {bed.bedNumber} - {bed.wardName}
+                                        </span>
+                                        <span className="text-xs text-muted-foreground">
+                                          {bed.wardType || "General"} • {bed.status === "available" ? "Available" : bed.status}
+                                        </span>
+                                      </div>
+                                    </CommandItem>
+                                  ))}
+                                </CommandGroup>
+                              </CommandList>
+                            </Command>
+                          </PopoverContent>
+                        </Popover>
+                        <FormMessage />
+                      </FormItem>
+                    )
+                  }}
                 />
-              )}
-            </div>
+              </div>
+            )}
 
             {isICU && (
               <div className="grid grid-cols-2 gap-4">
@@ -771,16 +1197,20 @@ export function AddAdmissionForm({ open, onOpenChange, onSuccess, admission, adm
               )}
             />
 
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={isSubmitting}>
-                {isSubmitting ? "Saving..." : isEditing ? "Update Admission" : "Save Admission"}
-              </Button>
-            </DialogFooter>
-          </form>
-        </Form>
+                </div>
+              </div>
+              <div className="flex-shrink-0 px-6 py-4 border-t bg-background">
+                <DialogFooter>
+                  <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+                    Cancel
+                  </Button>
+                  <Button type="submit" disabled={isSubmitting}>
+                    {isSubmitting ? "Saving..." : isEditing ? "Update Admission" : "Save Admission"}
+                  </Button>
+                </DialogFooter>
+              </div>
+            </form>
+          </Form>
         )}
       </DialogContent>
     </Dialog>

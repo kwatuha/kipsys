@@ -20,7 +20,6 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { PatientCombobox } from "@/components/patient-combobox"
-import { ChiefComplaintCombobox } from "@/components/chief-complaint-combobox"
 import { triageApi, doctorsApi, patientApi } from "@/lib/api"
 import { toast } from "@/components/ui/use-toast"
 import { useAuth } from "@/lib/auth/auth-context"
@@ -31,15 +30,14 @@ const triageFormSchema = z.object({
   patientId: z.string({
     required_error: "Please select a patient.",
   }),
-  chiefComplaint: z.string().min(2, {
-    message: "Chief complaint must be at least 2 characters.",
-  }),
   temperature: z.string().optional().or(z.literal("")),
   bloodPressure: z.string().optional().or(z.literal("")),
   heartRate: z.string().optional().or(z.literal("")),
   respiratoryRate: z.string().optional().or(z.literal("")),
   oxygenSaturation: z.string().optional().or(z.literal("")),
   painLevel: z.string().optional().or(z.literal("")),
+  weight: z.string().optional().or(z.literal("")),
+  height: z.string().optional().or(z.literal("")),
   priority: z.string({
     required_error: "Please select a priority level.",
   }),
@@ -66,13 +64,14 @@ const SERVICE_POINTS = [
 
 const defaultValues: Partial<TriageFormValues> = {
   patientId: "",
-  chiefComplaint: "",
   temperature: "",
   bloodPressure: "",
   heartRate: "",
   respiratoryRate: "",
   oxygenSaturation: "",
   painLevel: "",
+  weight: "",
+  height: "",
   priority: "",
   assignedToDoctorId: "",
   assignedToDepartment: "",
@@ -110,13 +109,14 @@ export function AddTriageForm({
       ...defaultValues,
       // Ensure all values are explicitly set to empty strings, not undefined
       patientId: "",
-      chiefComplaint: "",
       temperature: "",
       bloodPressure: "",
       heartRate: "",
       respiratoryRate: "",
       oxygenSaturation: "",
       painLevel: "",
+      weight: "",
+      height: "",
       priority: "",
       assignedToDoctorId: "",
       assignedToDepartment: "",
@@ -180,9 +180,9 @@ export function AddTriageForm({
       // Skip auto-save while we're restoring/resetting values
       if (restoringDraftRef.current) return
 
-      const hasData = value.patientId || value.chiefComplaint ||
+      const hasData = value.patientId ||
                       value.temperature || value.bloodPressure || value.heartRate ||
-                      value.respiratoryRate || value.oxygenSaturation || value.painLevel ||
+                      value.respiratoryRate || value.oxygenSaturation || value.painLevel || value.weight || value.height ||
                       value.priority || value.assignedToDoctorId || value.notes
 
       // Only save drafts once a patient is selected (drafts are scoped per patient)
@@ -282,13 +282,14 @@ export function AddTriageForm({
           : ""
         form.reset({
           patientId: triage.patientId?.toString() || "",
-          chiefComplaint: triage.chiefComplaint || "",
           temperature: triage.temperature?.toString() || "",
           bloodPressure: bloodPressure,
           heartRate: triage.heartRate?.toString() || "",
           respiratoryRate: triage.respiratoryRate?.toString() || "",
           oxygenSaturation: triage.oxygenSaturation?.toString() || "",
           painLevel: triage.painLevel?.toString() || "",
+          weight: triage.weight?.toString() || "",
+          height: triage.height?.toString() || "",
           priority: triage.triageCategory === 'red' ? 'Emergency' :
                     triage.triageCategory === 'yellow' ? (triage.priorityLevel === 2 ? 'Urgent' : 'Semi-urgent') :
                     'Non-urgent',
@@ -301,13 +302,14 @@ export function AddTriageForm({
         const savedDraft = loadDraftFromStorage(initialPatientId)
         const normalizedDraft = savedDraft
           ? {
-              chiefComplaint: savedDraft.chiefComplaint ?? "",
               temperature: savedDraft.temperature ?? "",
               bloodPressure: savedDraft.bloodPressure ?? "",
               heartRate: savedDraft.heartRate ?? "",
               respiratoryRate: savedDraft.respiratoryRate ?? "",
               oxygenSaturation: savedDraft.oxygenSaturation ?? "",
               painLevel: savedDraft.painLevel ?? "",
+              weight: savedDraft.weight ?? "",
+              height: savedDraft.height ?? "",
               priority: savedDraft.priority ?? "",
               assignedToDoctorId: savedDraft.assignedToDoctorId ?? "",
               assignedToDepartment: savedDraft.assignedToDepartment ?? "",
@@ -361,13 +363,14 @@ export function AddTriageForm({
     const savedDraft = loadDraftFromStorage(patientId)
     const normalizedDraft = savedDraft
       ? {
-          chiefComplaint: savedDraft.chiefComplaint ?? "",
           temperature: savedDraft.temperature ?? "",
           bloodPressure: savedDraft.bloodPressure ?? "",
           heartRate: savedDraft.heartRate ?? "",
           respiratoryRate: savedDraft.respiratoryRate ?? "",
           oxygenSaturation: savedDraft.oxygenSaturation ?? "",
           painLevel: savedDraft.painLevel ?? "",
+          weight: savedDraft.weight ?? "",
+          height: savedDraft.height ?? "",
           priority: savedDraft.priority ?? "",
           assignedToDoctorId: savedDraft.assignedToDoctorId ?? "",
           assignedToDepartment: savedDraft.assignedToDepartment ?? "",
@@ -394,13 +397,15 @@ export function AddTriageForm({
 
       const payload = {
         patientId: parseInt(data.patientId),
-        chiefComplaint: data.chiefComplaint,
+        chiefComplaint: "", // Removed from form, send empty string
         temperature: data.temperature || null,
         bloodPressure: data.bloodPressure || null,
         heartRate: data.heartRate || null,
         respiratoryRate: data.respiratoryRate || null,
         oxygenSaturation: data.oxygenSaturation || null,
         painLevel: data.painLevel || null,
+        weight: data.weight || null,
+        height: data.height || null,
         priority: data.priority,
         assignedToDoctorId: data.assignedToDoctorId ? parseInt(data.assignedToDoctorId) : null,
         assignedToDepartment: data.assignedToDepartment || null,
@@ -496,27 +501,6 @@ export function AddTriageForm({
               )}
             />
 
-            <FormField
-              control={form.control}
-              name="chiefComplaint"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Chief Complaint</FormLabel>
-                  <FormControl>
-                    <ChiefComplaintCombobox
-                      value={field.value || ""}
-                      onChange={field.onChange}
-                      placeholder="Patient's main complaint or reason for visit. Type to search ICD-10 symptoms..."
-                    />
-                  </FormControl>
-                  <FormDescription>
-                    Use the ICD-10 button to search for symptoms and complaints from the ICD-10 database
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
             <div className="grid grid-cols-2 gap-4">
               <FormField
                 control={form.control}
@@ -597,6 +581,35 @@ export function AddTriageForm({
                     <FormLabel>Pain Level (0-10)</FormLabel>
                     <FormControl>
                       <Input placeholder="0" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <FormField
+                control={form.control}
+                name="weight"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Weight (kg)</FormLabel>
+                    <FormControl>
+                      <Input placeholder="70" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="height"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Height (cm)</FormLabel>
+                    <FormControl>
+                      <Input placeholder="170" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>

@@ -33,7 +33,8 @@ export function RolesManagement() {
   const [roles, setRoles] = useState<any[]>([])
   const [privileges, setPrivileges] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
-  const [searchTerm, setSearchTerm] = useState("")
+  const [searchInput, setSearchInput] = useState("") // Input value (what user types)
+  const [searchTerm, setSearchTerm] = useState("") // Actual search term used for filtering
   const [formOpen, setFormOpen] = useState(false)
   const [viewDialogOpen, setViewDialogOpen] = useState(false)
   const [usersDialogOpen, setUsersDialogOpen] = useState(false)
@@ -47,13 +48,6 @@ export function RolesManagement() {
     loadRoles()
     loadPrivileges()
   }, [])
-
-  useEffect(() => {
-    const timeoutId = setTimeout(() => {
-      loadRoles()
-    }, 300)
-    return () => clearTimeout(timeoutId)
-  }, [searchTerm])
 
   const loadRoles = async () => {
     try {
@@ -380,10 +374,15 @@ export function RolesManagement() {
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
                 type="search"
-                placeholder="Search roles..."
+                placeholder="Search roles... (Press Enter)"
                 className="pl-8"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    setSearchTerm(searchInput)
+                  }
+                }}
               />
             </div>
           </div>

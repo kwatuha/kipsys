@@ -479,6 +479,9 @@ export const inpatientApi = {
   getBed: (id: string) =>
     apiRequest<any>(`/api/inpatient/beds/${id}`),
 
+  createBed: (data: any) =>
+    apiRequest<any>('/api/inpatient/beds', { method: 'POST', body: data }),
+
   updateBed: (id: string, data: any) =>
     apiRequest<any>(`/api/inpatient/beds/${id}`, { method: 'PUT', body: data }),
 

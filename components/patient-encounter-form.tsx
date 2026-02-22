@@ -5197,10 +5197,16 @@ const clearDraftFromStorage = (patientId:any) => {
                     appendMedication(newMedication)
                     
                     // Reload patient prescriptions to update the "Existing Prescriptions" section
+                    // Use startTransition to make this non-blocking update
                     try {
                       const updatedPrescriptions = await pharmacyApi.getPrescriptions(patientId)
-                      setPatientMedications(updatedPrescriptions || [])
-                      console.log('✅ Reloaded patient prescriptions:', updatedPrescriptions?.length || 0)
+                      // Ensure items are present in the response
+                      const prescriptionsWithItems = (updatedPrescriptions || []).map((p: any) => ({
+                        ...p,
+                        items: p.items || []
+                      }))
+                      setPatientMedications(prescriptionsWithItems)
+                      console.log('✅ Reloaded patient prescriptions:', prescriptionsWithItems?.length || 0, 'with items')
                     } catch (reloadError) {
                       console.error('⚠️ Error reloading prescriptions:', reloadError)
                     }

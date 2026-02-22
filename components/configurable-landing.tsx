@@ -32,9 +32,50 @@ export function ConfigurableLanding({ landingConfig }: ConfigurableLandingProps)
   // Only fetch menu access if user exists and has an id
   const userId = user?.id ? String(user.id) : undefined
   const { menuAccess, loading: menuLoading } = useRoleMenuAccess(userId)
-  
+
   // Check if user has top menu access (has categories)
   const hasTopMenuAccess = menuAccess && menuAccess.categories && menuAccess.categories.length > 0
+
+  // Normalize landing config early - handle both formats (before hooks that need it)
+  // This needs to be computed before hooks, but we can safely use optional chaining
+  let normalizedConfig = landingConfig || user?.landingConfig || null
+
+  // If config has database format, transform it
+  if (normalizedConfig && (normalizedConfig as any).landingPageType) {
+    normalizedConfig = {
+      type: (normalizedConfig as any).landingPageType || 'dashboard',
+      label: (normalizedConfig as any).landingPageLabel || null,
+      url: (normalizedConfig as any).landingPageUrl || null,
+      icon: (normalizedConfig as any).landingPageIcon || 'Home',
+      description: (normalizedConfig as any).landingPageDescription || null,
+      servicePoint: (normalizedConfig as any).servicePoint || (normalizedConfig as any).defaultServicePoint || null
+    }
+  }
+
+  // If no landing config, default to dashboard
+  const config = normalizedConfig || {
+    type: 'dashboard' as const,
+    label: null,
+    url: null,
+    icon: 'Home',
+    description: null,
+    servicePoint: null
+  }
+
+  // ALL HOOKS MUST BE CALLED BEFORE ANY CONDITIONAL RETURNS
+  // Redirect to login if not authenticated
+  useEffect(() => {
+    if (!isLoading && !user) {
+      router.push('/login')
+    }
+  }, [user, isLoading, router])
+
+  // Handle redirect type - must be at top level (React hooks rule)
+  useEffect(() => {
+    if (config.type === 'redirect' && config.url) {
+      router.replace(config.url)
+    }
+  }, [config.type, config.url, router])
 
   if (isLoading || menuLoading) {
     return (
@@ -48,49 +89,23 @@ export function ConfigurableLanding({ landingConfig }: ConfigurableLandingProps)
   }
 
   if (!user) {
-    return null
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="text-center">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground mx-auto mb-4" />
+          <p className="text-sm text-muted-foreground">Redirecting to login...</p>
+        </div>
+      </div>
+    )
   }
 
-  // Normalize landing config - handle both formats
-  let normalizedConfig = landingConfig || user?.landingConfig || null
-  
-  // If config has database format, transform it
-  if (normalizedConfig && (normalizedConfig as any).landingPageType) {
-    normalizedConfig = {
-      type: (normalizedConfig as any).landingPageType || 'dashboard',
-      label: (normalizedConfig as any).landingPageLabel || null,
-      url: (normalizedConfig as any).landingPageUrl || null,
-      icon: (normalizedConfig as any).landingPageIcon || 'Home',
-      description: (normalizedConfig as any).landingPageDescription || null,
-      servicePoint: (normalizedConfig as any).servicePoint || (normalizedConfig as any).defaultServicePoint || null
-    }
-  }
-  
-  // If no landing config, default to dashboard
-  const config = normalizedConfig || {
-    type: 'dashboard' as const,
-    label: null,
-    url: null,
-    icon: 'Home',
-    description: null,
-    servicePoint: null
-  }
-  
   // Build the final URL - if it's a queue service URL and we have a service point, append it
   let finalUrl = config.url
   if (config.url && config.servicePoint && (config.url.includes('/queue/service') || config.url === '/queue/service')) {
     finalUrl = `${config.url}?servicePoint=${config.servicePoint}`
   }
 
-  // Handle redirect type
   if (config.type === 'redirect' && config.url) {
-    // Use useEffect for redirect
-    useEffect(() => {
-      if (config.url) {
-        router.replace(config.url)
-      }
-    }, [config.url, router])
-    
     return (
       <div className="flex items-center justify-center h-screen">
         <div className="text-center">
@@ -114,11 +129,11 @@ export function ConfigurableLanding({ landingConfig }: ConfigurableLandingProps)
         </NavigationProvider>
       )
     }
-    
+
     // User has no menu access - show app view
     // Get icon component dynamically
     const IconComponent = (Icons as any)[config.icon || 'Activity'] || Activity
-    
+
     // If URL is provided, show a single app card with header
     if (config.url) {
       return (
@@ -152,7 +167,7 @@ export function ConfigurableLanding({ landingConfig }: ConfigurableLandingProps)
         </CriticalNotificationsProvider>
       )
     }
-    
+
     // If no URL, show a message with header
     return (
       <CriticalNotificationsProvider>
@@ -196,7 +211,7 @@ export function ConfigurableLanding({ landingConfig }: ConfigurableLandingProps)
       </NavigationProvider>
     )
   }
-  
+
   // User has no menu access - show simplified dashboard with just header (for triage, etc.)
   return (
     <CriticalNotificationsProvider>

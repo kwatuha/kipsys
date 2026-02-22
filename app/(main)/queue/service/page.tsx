@@ -8,25 +8,38 @@ import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
 import { getServicePointName } from "@/lib/data/queue-data"
 import type { ServicePoint } from "@/lib/data/queue-data"
 import { useAuth } from "@/lib/auth/auth-context"
+import { useRoleMenuAccess } from "@/lib/hooks/use-role-menu-access"
+import { filterQueueServicePoints } from "@/lib/role-menu-filter"
 
 export default function ServicePointDashboard() {
   const searchParams = useSearchParams()
   const { user } = useAuth()
-  
+
+  // Get user's role-based menu access
+  const userId = user?.id ? String(user.id) : undefined
+  const { menuAccess, loading: menuLoading } = useRoleMenuAccess(userId)
+
   // Get service point from URL query params, user's role config, or default
   const urlServicePoint = searchParams.get('servicePoint')
   const roleServicePoint = (user?.landingConfig as any)?.servicePoint || null
   const defaultServicePoint = urlServicePoint || roleServicePoint || "triage"
-  
+
   // In a real app, this would be determined by the logged-in user's role
   const staffName = "Dr. James Ndiwa"
 
-  // Service points this staff member can serve
-  // If a specific service point is set, show only that one; otherwise show all
+  // All available service points
   const allServicePoints: ServicePoint[] = ["triage", "consultation", "laboratory", "radiology", "pharmacy", "cashier"]
-  const servicePoints: ServicePoint[] = defaultServicePoint && defaultServicePoint !== "all" 
-    ? [defaultServicePoint as ServicePoint].filter(sp => allServicePoints.includes(sp))
-    : allServicePoints
+
+  // Filter service points based on role access
+  const allowedServicePoints = menuLoading || !menuAccess
+    ? allServicePoints // Show all while loading or if no access data
+    : filterQueueServicePoints(allServicePoints, menuAccess)
+
+  // If a specific service point is requested, show only that one (if allowed)
+  // Otherwise, show all allowed service points
+  const servicePoints: ServicePoint[] = defaultServicePoint && defaultServicePoint !== "all" && allowedServicePoints.includes(defaultServicePoint as ServicePoint)
+    ? [defaultServicePoint as ServicePoint]
+    : allowedServicePoints
 
   return (
     <div className="flex flex-col gap-6">
@@ -60,7 +73,7 @@ export default function ServicePointDashboard() {
                 <CallPatientPanel servicePoint={point} staffName={staffName} counterNumber={1} />
               </div>
               <div className="lg:col-span-2">
-                <QueueDisplay initialServicePoint={point} />
+                <QueueDisplay initialServicePoint={point} restrictToSingleServicePoint={servicePoints.length === 1} />
               </div>
             </div>
           </TabsContent>

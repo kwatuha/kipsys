@@ -52,9 +52,10 @@ import { Label } from "@/components/ui/label"
 
 interface QueueDisplayProps {
   initialServicePoint?: ServicePoint
+  restrictToSingleServicePoint?: boolean // If true, hide tabs and show only the initial service point
 }
 
-export function QueueDisplay({ initialServicePoint = "triage" }: QueueDisplayProps) {
+export function QueueDisplay({ initialServicePoint = "triage", restrictToSingleServicePoint = false }: QueueDisplayProps) {
   // Define all service points
   const allServicePoints: ServicePoint[] = [
     "triage",
@@ -77,23 +78,28 @@ export function QueueDisplay({ initialServicePoint = "triage" }: QueueDisplayPro
     ? allServicePoints // Show all while loading or if no access data
     : filterQueueServicePoints(allServicePoints, menuAccess)
 
+  // If restricted to single service point, only show that one (if allowed)
+  const effectiveAllowedServicePoints = restrictToSingleServicePoint && allowedServicePoints.includes(initialServicePoint as ServicePoint)
+    ? [initialServicePoint as ServicePoint]
+    : allowedServicePoints
+
   // Ensure initial service point is allowed, otherwise use first allowed
   const validInitialServicePoint = useMemo(() => {
-    if (allowedServicePoints.includes(initialServicePoint as ServicePoint)) {
+    if (effectiveAllowedServicePoints.includes(initialServicePoint as ServicePoint)) {
       return initialServicePoint
     }
-    return allowedServicePoints[0] || "triage"
-  }, [initialServicePoint, allowedServicePoints])
+    return effectiveAllowedServicePoints[0] || "triage"
+  }, [initialServicePoint, effectiveAllowedServicePoints])
 
   const [selectedTab, setSelectedTab] = useState<ServicePoint>(validInitialServicePoint as ServicePoint)
   const screenSize = useScreenSize()
 
   // Update selected tab if it becomes invalid
   useEffect(() => {
-    if (!allowedServicePoints.includes(selectedTab)) {
-      setSelectedTab((allowedServicePoints[0] || "triage") as ServicePoint)
+    if (!effectiveAllowedServicePoints.includes(selectedTab)) {
+      setSelectedTab((effectiveAllowedServicePoints[0] || "triage") as ServicePoint)
     }
-  }, [selectedTab, allowedServicePoints])
+  }, [selectedTab, effectiveAllowedServicePoints])
 
   // Determine how many tabs to show based on screen size
   const visibleTabCount = useMemo(() => {
@@ -117,13 +123,18 @@ export function QueueDisplay({ initialServicePoint = "triage" }: QueueDisplayPro
   // Determine which tabs to show
   // Priority: 1. Selected tab, 2. Common tabs (if allowed), 3. Others in order
   const visibleTabs = useMemo(() => {
-    // Priority tabs (only if they're in allowedServicePoints)
+    // If restricted to single service point, only show that one
+    if (restrictToSingleServicePoint && effectiveAllowedServicePoints.length === 1) {
+      return effectiveAllowedServicePoints
+    }
+
+    // Priority tabs (only if they're in effectiveAllowedServicePoints)
     const priorityTabs: ServicePoint[] = ["triage", "consultation", "pharmacy"]
-    const allowedPriorityTabs = priorityTabs.filter(tab => allowedServicePoints.includes(tab))
+    const allowedPriorityTabs = priorityTabs.filter(tab => effectiveAllowedServicePoints.includes(tab))
 
     // Start with the selected tab if it's allowed
     const result: ServicePoint[] = []
-    if (allowedServicePoints.includes(selectedTab)) {
+    if (effectiveAllowedServicePoints.includes(selectedTab)) {
       result.push(selectedTab)
     }
 
@@ -137,7 +148,7 @@ export function QueueDisplay({ initialServicePoint = "triage" }: QueueDisplayPro
     }
 
     // Fill remaining slots with other allowed tabs (excluding priority tabs already added)
-    for (const tab of allowedServicePoints) {
+    for (const tab of effectiveAllowedServicePoints) {
       if (result.length < visibleTabCount) {
         if (!result.includes(tab) && !allowedPriorityTabs.includes(tab)) {
           result.push(tab)
@@ -146,19 +157,19 @@ export function QueueDisplay({ initialServicePoint = "triage" }: QueueDisplayPro
     }
 
     return result
-  }, [selectedTab, visibleTabCount, allowedServicePoints])
+  }, [selectedTab, visibleTabCount, effectiveAllowedServicePoints, restrictToSingleServicePoint])
 
   // Determine which tabs to show in the "More" dropdown
   const dropdownTabs = useMemo(() => {
-    return allowedServicePoints.filter((tab) => !visibleTabs.includes(tab))
-  }, [allowedServicePoints, visibleTabs])
+    return effectiveAllowedServicePoints.filter((tab) => !visibleTabs.includes(tab))
+  }, [effectiveAllowedServicePoints, visibleTabs])
 
   // Check if we need to show the "More" dropdown
   const showMoreDropdown = dropdownTabs.length > 0
 
   // Load queue counts for all allowed service points
   useEffect(() => {
-    if (menuLoading || !menuAccess || allowedServicePoints.length === 0) return
+    if (menuLoading || !menuAccess || effectiveAllowedServicePoints.length === 0) return
 
     const loadQueueCounts = async () => {
       // Prevent flickering by only updating if counts actually changed
@@ -166,7 +177,7 @@ export function QueueDisplay({ initialServicePoint = "triage" }: QueueDisplayPro
       try {
         const counts: Record<string, number> = {}
         await Promise.all(
-          allowedServicePoints.map(async (servicePoint) => {
+          effectiveAllowedServicePoints.map(async (servicePoint) => {
             try {
               // Fetch queue data without including completed entries (same as detail view)
               const data = await queueApi.getAll(servicePoint, undefined, 1, 50, false)
@@ -198,7 +209,7 @@ export function QueueDisplay({ initialServicePoint = "triage" }: QueueDisplayPro
     // Waiting time is calculated client-side using arrivalTime, so frequent polling is unnecessary
     const interval = setInterval(loadQueueCounts, 600000)
     return () => clearInterval(interval)
-  }, [allowedServicePoints, menuLoading, menuAccess])
+  }, [effectiveAllowedServicePoints, menuLoading, menuAccess])
 
   return (
     <Card className="h-full">
@@ -215,9 +226,10 @@ export function QueueDisplay({ initialServicePoint = "triage" }: QueueDisplayPro
         >
           <div className="relative mb-4">
             <ScrollArea className="w-full whitespace-nowrap">
-              {visibleTabCount < allowedServicePoints.length && <QueueTabsIndicator />}
+              {!restrictToSingleServicePoint && visibleTabCount < effectiveAllowedServicePoints.length && <QueueTabsIndicator />}
+              {!restrictToSingleServicePoint && effectiveAllowedServicePoints.length > 1 && (
               <TabsList className="inline-flex h-auto w-full justify-start rounded-none border-b bg-transparent p-0">
-                {visibleTabs.filter(tab => allowedServicePoints.includes(tab)).map((point) => {
+                {visibleTabs.filter(tab => effectiveAllowedServicePoints.includes(tab)).map((point) => {
                   const count = queueCounts[point] || 0
                   return (
                     <TabsTrigger
@@ -265,11 +277,12 @@ export function QueueDisplay({ initialServicePoint = "triage" }: QueueDisplayPro
                   </DropdownMenu>
                 )}
               </TabsList>
+              )}
               <ScrollBar orientation="horizontal" />
             </ScrollArea>
           </div>
 
-          {allowedServicePoints.map((point) => (
+          {effectiveAllowedServicePoints.map((point) => (
             <TabsContent key={point} value={point} className="mt-6">
               <Suspense fallback={<div className="h-64 animate-pulse bg-muted rounded-md" />}>
                 <QueueContent servicePoint={point} />
@@ -352,8 +365,8 @@ function QueueContent({ servicePoint }: { servicePoint: ServicePoint }) {
 
         setQueueData(mappedData)
 
-                // Check for encounters today for each patient - LAZY LOAD (non-blocking)
-                if (servicePoint === "consultation" && mappedData.length > 0) {
+        // Check for encounters today for each patient - LAZY LOAD (non-blocking)
+        if (servicePoint === "consultation" && mappedData.length > 0) {
                   const today = format(new Date(), 'yyyy-MM-dd')
                   const encounterChecks: Record<string, boolean> = {}
 
@@ -400,7 +413,6 @@ function QueueContent({ servicePoint }: { servicePoint: ServicePoint }) {
                     checkEncountersAsync()
                   })
                 }
-        }
       } catch (error) {
         console.error('Error loading queue data:', error)
         // Fallback to mock data
@@ -409,7 +421,6 @@ function QueueContent({ servicePoint }: { servicePoint: ServicePoint }) {
       } finally {
         setLoading(false)
       }
-    }
   }, [servicePoint])
 
   useEffect(() => {

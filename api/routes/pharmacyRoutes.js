@@ -234,7 +234,32 @@ router.get('/prescriptions', async (req, res) => {
         query += ` ORDER BY p.prescriptionDate DESC LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset)}`;
 
         const [rows] = await pool.execute(query, params);
-        res.status(200).json(rows);
+
+        // Fetch prescription items with medication names for each prescription
+        const prescriptionsWithItems = await Promise.all(rows.map(async (prescription) => {
+            try {
+                const [items] = await pool.execute(
+                    `SELECT pi.*, m.name as medicationNameFromCatalog, m.genericName
+                     FROM prescription_items pi
+                     LEFT JOIN medications m ON pi.medicationId = m.medicationId
+                     WHERE pi.prescriptionId = ?
+                     ORDER BY pi.itemId`,
+                    [prescription.prescriptionId]
+                );
+                return {
+                    ...prescription,
+                    items: items || []
+                };
+            } catch (error) {
+                console.error(`Error fetching items for prescription ${prescription.prescriptionId}:`, error);
+                return {
+                    ...prescription,
+                    items: []
+                };
+            }
+        }));
+
+        res.status(200).json(prescriptionsWithItems);
     } catch (error) {
         console.error('Error fetching prescriptions:', error);
         res.status(500).json({ message: 'Error fetching prescriptions', error: error.message });
