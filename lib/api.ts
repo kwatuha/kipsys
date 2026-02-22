@@ -527,6 +527,12 @@ export const inpatientApi = {
 
   recordVitals: (id: string, data: any) =>
     apiRequest<any>(`/api/inpatient/admissions/${id}/vitals`, { method: 'POST', body: data }),
+
+  updateVitals: (vitalId: string, data: any) =>
+    apiRequest<any>(`/api/inpatient/vitals/${vitalId}`, { method: 'PUT', body: data }),
+
+  deleteVitals: (vitalId: string) =>
+    apiRequest<any>(`/api/inpatient/vitals/${vitalId}`, { method: 'DELETE' }),
 };
 
 // Maternity API

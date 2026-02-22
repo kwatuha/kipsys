@@ -301,11 +301,34 @@ router.post('/orders', async (req, res) => {
 
             // Number doesn't exist, try to insert
             try {
-                [result] = await connection.execute(
-                    `INSERT INTO radiology_exam_orders (orderNumber, patientId, orderedBy, examTypeId, orderDate, bodyPart, clinicalIndication, priority, status, scheduledDate, notes)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                    [finalOrderNum, patientId, orderedBy, examTypeId, orderDate || new Date(), bodyPart || null, finalClinicalIndication, priority || 'routine', status || 'pending', scheduledDate || null, notes || null]
-                );
+                // Try to insert with admissionId if provided (column may or may not exist)
+                // If column doesn't exist, MySQL will throw an error which we'll handle
+                if (admissionId) {
+                    try {
+                        [result] = await connection.execute(
+                            `INSERT INTO radiology_exam_orders (orderNumber, patientId, admissionId, orderedBy, examTypeId, orderDate, bodyPart, clinicalIndication, priority, status, scheduledDate, notes)
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                            [finalOrderNum, patientId, admissionId, orderedBy, examTypeId, orderDate || new Date(), bodyPart || null, finalClinicalIndication, priority || 'routine', status || 'pending', scheduledDate || null, notes || null]
+                        );
+                    } catch (colError) {
+                        // If admissionId column doesn't exist (error code 1054), fall back to query without it
+                        if (colError.code === 'ER_BAD_FIELD_ERROR' || colError.errno === 1054) {
+                            [result] = await connection.execute(
+                                `INSERT INTO radiology_exam_orders (orderNumber, patientId, orderedBy, examTypeId, orderDate, bodyPart, clinicalIndication, priority, status, scheduledDate, notes)
+                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                                [finalOrderNum, patientId, orderedBy, examTypeId, orderDate || new Date(), bodyPart || null, finalClinicalIndication, priority || 'routine', status || 'pending', scheduledDate || null, notes || null]
+                            );
+                        } else {
+                            throw colError; // Re-throw if it's a different error
+                        }
+                    }
+                } else {
+                    [result] = await connection.execute(
+                        `INSERT INTO radiology_exam_orders (orderNumber, patientId, orderedBy, examTypeId, orderDate, bodyPart, clinicalIndication, priority, status, scheduledDate, notes)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                        [finalOrderNum, patientId, orderedBy, examTypeId, orderDate || new Date(), bodyPart || null, finalClinicalIndication, priority || 'routine', status || 'pending', scheduledDate || null, notes || null]
+                    );
+                }
                 // Success - break out of retry loop
                 break;
             } catch (insertError) {

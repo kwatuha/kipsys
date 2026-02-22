@@ -1109,22 +1109,42 @@ router.get('/admissions/:id/overview', async (req, res) => {
             };
         }));
 
-        // Get radiology orders with exam type names for this patient during admission period
-        // Note: radiology_exam_orders doesn't have admissionId, so we filter by patientId and date range
-        const admissionDate = admission?.admissionDate;
-        const dischargeDate = admission?.dischargeDate || new Date().toISOString().split('T')[0];
-
-        const [radiologyOrders] = await pool.execute(
-            `SELECT ro.*,
-                    u.firstName as orderedByFirstName, u.lastName as orderedByLastName,
-                    ret.examName, ret.examCode, ret.category
-             FROM radiology_exam_orders ro
-             LEFT JOIN users u ON ro.orderedBy = u.userId
-             LEFT JOIN radiology_exam_types ret ON ro.examTypeId = ret.examTypeId
-             WHERE ro.patientId = ? AND ro.orderDate >= ? AND ro.orderDate <= ?
-             ORDER BY ro.orderDate DESC`,
-            [admission.patientId, admissionDate, dischargeDate]
-        );
+        // Get radiology orders with exam type names for this admission
+        // Try to filter by admissionId first (if column exists), otherwise fall back to patientId and date range
+        let radiologyOrders;
+        try {
+            // Try query with admissionId (preferred method)
+            [radiologyOrders] = await pool.execute(
+                `SELECT ro.*,
+                        u.firstName as orderedByFirstName, u.lastName as orderedByLastName,
+                        ret.examName, ret.examCode, ret.category
+                 FROM radiology_exam_orders ro
+                 LEFT JOIN users u ON ro.orderedBy = u.userId
+                 LEFT JOIN radiology_exam_types ret ON ro.examTypeId = ret.examTypeId
+                 WHERE ro.admissionId = ?
+                 ORDER BY ro.orderDate DESC`,
+                [id]
+            );
+        } catch (error) {
+            // If admissionId column doesn't exist, fall back to patientId and date range
+            if (error.code === 'ER_BAD_FIELD_ERROR' || error.errno === 1054) {
+                const admissionDate = admission?.admissionDate;
+                const dischargeDate = admission?.dischargeDate || new Date().toISOString().split('T')[0];
+                [radiologyOrders] = await pool.execute(
+                    `SELECT ro.*,
+                            u.firstName as orderedByFirstName, u.lastName as orderedByLastName,
+                            ret.examName, ret.examCode, ret.category
+                     FROM radiology_exam_orders ro
+                     LEFT JOIN users u ON ro.orderedBy = u.userId
+                     LEFT JOIN radiology_exam_types ret ON ro.examTypeId = ret.examTypeId
+                     WHERE ro.patientId = ? AND ro.orderDate >= ? AND ro.orderDate <= ?
+                     ORDER BY ro.orderDate DESC`,
+                    [admission.patientId, admissionDate, dischargeDate]
+                );
+            } else {
+                throw error; // Re-throw if it's a different error
+            }
+        }
 
         // Get prescriptions with medication items
         const [prescriptionsRaw] = await pool.execute(
@@ -1440,6 +1460,146 @@ router.post('/admissions/:id/vitals', async (req, res) => {
     } catch (error) {
         console.error('Error recording vital signs:', error);
         res.status(500).json({ message: 'Error recording vital signs', error: error.message });
+    }
+});
+
+/**
+ * @route PUT /api/inpatient/vitals/:vitalId
+ * @description Update vital signs record
+ */
+router.put('/vitals/:vitalId', async (req, res) => {
+    try {
+        const { vitalId } = req.params;
+        const { recordedDate, systolicBP, diastolicBP, heartRate, respiratoryRate, temperature, oxygenSaturation, painScore, glasgowComaScale, weight, height, bmi, bloodGlucose, notes } = req.body;
+
+        // Check if vital sign exists
+        const [existing] = await pool.execute(
+            'SELECT vitalSignId FROM vital_signs WHERE vitalSignId = ?',
+            [vitalId]
+        );
+
+        if (existing.length === 0) {
+            return res.status(404).json({ message: 'Vital sign record not found' });
+        }
+
+        // Build update query
+        const updates = [];
+        const values = [];
+
+        if (recordedDate !== undefined) {
+            updates.push('recordedDate = ?');
+            values.push(recordedDate);
+        }
+        if (systolicBP !== undefined) {
+            updates.push('systolicBP = ?');
+            values.push(systolicBP || null);
+        }
+        if (diastolicBP !== undefined) {
+            updates.push('diastolicBP = ?');
+            values.push(diastolicBP || null);
+        }
+        if (heartRate !== undefined) {
+            updates.push('heartRate = ?');
+            values.push(heartRate || null);
+        }
+        if (respiratoryRate !== undefined) {
+            updates.push('respiratoryRate = ?');
+            values.push(respiratoryRate || null);
+        }
+        if (temperature !== undefined) {
+            updates.push('temperature = ?');
+            values.push(temperature || null);
+        }
+        if (oxygenSaturation !== undefined) {
+            updates.push('oxygenSaturation = ?');
+            values.push(oxygenSaturation || null);
+        }
+        if (painScore !== undefined) {
+            updates.push('painScore = ?');
+            values.push(painScore || null);
+        }
+        if (glasgowComaScale !== undefined) {
+            updates.push('glasgowComaScale = ?');
+            values.push(glasgowComaScale || null);
+        }
+        if (weight !== undefined) {
+            updates.push('weight = ?');
+            values.push(weight || null);
+        }
+        if (height !== undefined) {
+            updates.push('height = ?');
+            values.push(height || null);
+        }
+        if (bmi !== undefined) {
+            updates.push('bmi = ?');
+            values.push(bmi || null);
+        }
+        if (bloodGlucose !== undefined) {
+            updates.push('bloodGlucose = ?');
+            values.push(bloodGlucose || null);
+        }
+        if (notes !== undefined) {
+            updates.push('notes = ?');
+            values.push(notes || null);
+        }
+
+        if (updates.length === 0) {
+            return res.status(400).json({ message: 'No fields to update' });
+        }
+
+        values.push(vitalId);
+
+        await pool.execute(
+            `UPDATE vital_signs SET ${updates.join(', ')} WHERE vitalSignId = ?`,
+            values
+        );
+
+        const [updatedVital] = await pool.execute(
+            `SELECT vs.*,
+                    u.firstName as recordedByFirstName, u.lastName as recordedByLastName
+             FROM vital_signs vs
+             LEFT JOIN users u ON vs.recordedBy = u.userId
+             WHERE vs.vitalSignId = ?`,
+            [vitalId]
+        );
+
+        res.status(200).json(updatedVital[0]);
+    } catch (error) {
+        console.error('Error updating vital signs:', error);
+        res.status(500).json({ message: 'Error updating vital signs', error: error.message });
+    }
+});
+
+/**
+ * @route DELETE /api/inpatient/vitals/:vitalId
+ * @description Delete (soft delete) vital signs record
+ */
+router.delete('/vitals/:vitalId', async (req, res) => {
+    try {
+        const { vitalId } = req.params;
+
+        // Check if vital sign exists
+        const [existing] = await pool.execute(
+            'SELECT vitalSignId FROM vital_signs WHERE vitalSignId = ?',
+            [vitalId]
+        );
+
+        if (existing.length === 0) {
+            return res.status(404).json({ message: 'Vital sign record not found' });
+        }
+
+        // Soft delete by setting a flag or hard delete
+        // Since vital_signs may not have a deleted flag, we'll do a hard delete
+        // If you want soft delete, add a deletedAt or isDeleted column first
+        await pool.execute(
+            'DELETE FROM vital_signs WHERE vitalSignId = ?',
+            [vitalId]
+        );
+
+        res.status(200).json({ message: 'Vital sign record deleted successfully' });
+    } catch (error) {
+        console.error('Error deleting vital signs:', error);
+        res.status(500).json({ message: 'Error deleting vital signs', error: error.message });
     }
 });
 

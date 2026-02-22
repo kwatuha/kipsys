@@ -11,12 +11,15 @@ import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
-import { Plus, Clock, Activity, Stethoscope, Pill, FlaskConical, Calendar, User, FileText, AlertCircle, Eye, Package, Scan } from "lucide-react"
-import { inpatientApi, laboratoryApi, userApi, doctorsApi, serviceChargeApi, billingApi, proceduresApi, pharmacyApi, radiologyApi } from "@/lib/api"
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
+import { Plus, Clock, Activity, Stethoscope, Pill, FlaskConical, Calendar, User, FileText, AlertCircle, Eye, Package, Scan, Pencil, Trash2 } from "lucide-react"
+import { inpatientApi, laboratoryApi, userApi, doctorsApi, serviceChargeApi, billingApi, proceduresApi, pharmacyApi, radiologyApi, roleApi } from "@/lib/api"
 import { format } from "date-fns"
 import { toast } from "@/components/ui/use-toast"
 import { useAuth } from "@/lib/auth/auth-context"
 import { ProcedureCombobox } from "@/components/procedure-combobox"
+import { TestTypeCombobox } from "@/components/test-type-combobox"
+import { ExamTypeCombobox } from "@/components/exam-type-combobox"
 
 interface InpatientManagementProps {
   admissionId: string
@@ -65,6 +68,7 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
 
   // Vitals states
   const [vitalsDialogOpen, setVitalsDialogOpen] = useState(false)
+  const [editingVital, setEditingVital] = useState<any>(null)
   const [vitalsForm, setVitalsForm] = useState({
     recordedDate: new Date().toISOString().slice(0, 16),
     systolicBP: "",
@@ -74,6 +78,8 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
     temperature: "",
     oxygenSaturation: "",
     painScore: "",
+    weight: "",
+    height: "",
     notes: "",
   })
   const [savingVitals, setSavingVitals] = useState(false)
@@ -143,6 +149,15 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
   const [viewReviewDialogOpen, setViewReviewDialogOpen] = useState(false)
   const [viewingReview, setViewingReview] = useState<any>(null)
 
+  // View nursing care dialog states
+  const [viewNursingDialogOpen, setViewNursingDialogOpen] = useState(false)
+  const [viewingNursing, setViewingNursing] = useState<any>(null)
+
+  // Delete vital dialog states
+  const [deleteVitalDialogOpen, setDeleteVitalDialogOpen] = useState(false)
+  const [vitalToDelete, setVitalToDelete] = useState<any>(null)
+  const [deletingVital, setDeletingVital] = useState(false)
+
   useEffect(() => {
     if (open && admissionId) {
       loadOverview()
@@ -156,15 +171,71 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
       const doctorsList = await doctorsApi.getAll()
       setDoctors(doctorsList || [])
 
-      // Load nurses - get users with nurse role
-      const allUsers = await userApi.getAll()
-      const nursesList = allUsers.filter((u: any) =>
-        u.role?.toLowerCase().includes('nurse') ||
-        u.roleName?.toLowerCase().includes('nurse')
-      )
-      setNurses(nursesList || [])
+      // Load nurses - first get all roles to find nurse role(s), then get users by role
+      try {
+        const allRoles = await roleApi.getAll()
+        const nurseRoles = (allRoles || []).filter((role: any) => {
+          const roleName = (role.roleName || '').toLowerCase().trim()
+          return roleName === 'nurse' ||
+                 roleName === 'nursing' ||
+                 roleName === 'registered nurse' ||
+                 roleName === 'enrolled nurse' ||
+                 (roleName.includes('nurse') && !roleName.includes('doctor'))
+        })
+
+        if (nurseRoles.length > 0) {
+          // Get users for each nurse role
+          const allNurses: any[] = []
+          for (const nurseRole of nurseRoles) {
+            try {
+              const roleUsers = await roleApi.getUsersByRole(nurseRole.roleId.toString())
+              if (roleUsers?.users) {
+                allNurses.push(...roleUsers.users)
+              }
+            } catch (err) {
+              console.error(`Error loading users for role ${nurseRole.roleName}:`, err)
+            }
+          }
+          setNurses(allNurses)
+          console.log(`Loaded ${allNurses.length} nurse(s) from ${nurseRoles.length} role(s)`)
+        } else {
+          // Fallback: filter all users by role name if no nurse role found
+          console.warn("No nurse role found in roles table, falling back to user filtering")
+          const allUsers = await userApi.getAll()
+          const nursesList = allUsers.filter((u: any) => {
+            const roleName = (u.role || u.roleName || '').toLowerCase().trim()
+            return roleName === 'nurse' ||
+                   roleName === 'nursing' ||
+                   roleName === 'registered nurse' ||
+                   roleName === 'enrolled nurse' ||
+                   (roleName.includes('nurse') && !roleName.includes('doctor'))
+          })
+          setNurses(nursesList || [])
+
+          if (nursesList.length === 0) {
+            console.warn("No nurses found. Available roles:",
+              Array.from(new Set(allUsers.map((u: any) => u.role || u.roleName).filter(Boolean))))
+          }
+        }
+      } catch (roleError) {
+        console.error("Error loading roles for nurses:", roleError)
+        // Fallback to direct user filtering
+        const allUsers = await userApi.getAll()
+        const nursesList = allUsers.filter((u: any) => {
+          const roleName = (u.role || u.roleName || '').toLowerCase().trim()
+          return roleName === 'nurse' ||
+                 roleName === 'nursing' ||
+                 (roleName.includes('nurse') && !roleName.includes('doctor'))
+        })
+        setNurses(nursesList || [])
+      }
     } catch (error) {
       console.error("Error loading doctors and nurses:", error)
+      toast({
+        title: "Error",
+        description: "Failed to load doctors and nurses. Please try again.",
+        variant: "destructive",
+      })
     }
   }
 
@@ -240,9 +311,11 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
     }
   }
 
-  const loadOverview = async () => {
+  const loadOverview = async (showLoading = true) => {
     try {
-      setLoading(true)
+      if (showLoading) {
+        setLoading(true)
+      }
       const data = await inpatientApi.getAdmissionOverview(admissionId)
       setOverview(data)
 
@@ -261,7 +334,9 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
         variant: "destructive",
       })
     } finally {
-      setLoading(false)
+      if (showLoading) {
+        setLoading(false)
+      }
     }
   }
 
@@ -289,7 +364,6 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
         description: "Reviewing doctor is required",
         variant: "destructive",
       })
-      setSavingReview(false)
       return
     }
 
@@ -379,15 +453,30 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
   const handleSaveVitals = async () => {
     try {
       setSavingVitals(true)
-      await inpatientApi.recordVitals(admissionId, {
-        ...vitalsForm,
-        recordedBy: user?.userId,
-      })
-      toast({
-        title: "Success",
-        description: "Vital signs recorded successfully",
-      })
+
+      if (editingVital) {
+        // Update existing vital
+        await inpatientApi.updateVitals(editingVital.vitalSignId.toString(), {
+          ...vitalsForm,
+        })
+        toast({
+          title: "Success",
+          description: "Vital signs updated successfully",
+        })
+      } else {
+        // Create new vital
+        await inpatientApi.recordVitals(admissionId, {
+          ...vitalsForm,
+          recordedBy: user?.id || user?.userId,
+        })
+        toast({
+          title: "Success",
+          description: "Vital signs recorded successfully",
+        })
+      }
+
       setVitalsDialogOpen(false)
+      setEditingVital(null)
       setVitalsForm({
         recordedDate: new Date().toISOString().slice(0, 16),
         systolicBP: "",
@@ -403,7 +492,7 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
     } catch (error: any) {
       toast({
         title: "Error",
-        description: error.message || "Failed to record vital signs",
+        description: error.message || (editingVital ? "Failed to update vital signs" : "Failed to record vital signs"),
         variant: "destructive",
       })
     } finally {
@@ -411,8 +500,64 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
     }
   }
 
+  const handleEditVital = (vital: any) => {
+    // Format datetime-local string from recordedDate
+    const date = new Date(vital.recordedDate)
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    const hours = String(date.getHours()).padStart(2, '0')
+    const minutes = String(date.getMinutes()).padStart(2, '0')
+    const datetimeLocal = `${year}-${month}-${day}T${hours}:${minutes}`
+
+    setEditingVital(vital)
+    setVitalsForm({
+      recordedDate: datetimeLocal,
+      systolicBP: vital.systolicBP?.toString() || "",
+      diastolicBP: vital.diastolicBP?.toString() || "",
+      heartRate: vital.heartRate?.toString() || "",
+      respiratoryRate: vital.respiratoryRate?.toString() || "",
+      temperature: vital.temperature?.toString() || "",
+      oxygenSaturation: vital.oxygenSaturation?.toString() || "",
+      painScore: vital.painScore?.toString() || "",
+      weight: vital.weight?.toString() || "",
+      height: vital.height?.toString() || "",
+      notes: vital.notes || "",
+    })
+    setVitalsDialogOpen(true)
+  }
+
+  const handleDeleteVital = (vital: any) => {
+    setVitalToDelete(vital)
+    setDeleteVitalDialogOpen(true)
+  }
+
+  const confirmDeleteVital = async () => {
+    if (!vitalToDelete) return
+
+    try {
+      setDeletingVital(true)
+      await inpatientApi.deleteVitals(vitalToDelete.vitalSignId.toString())
+      toast({
+        title: "Success",
+        description: "Vital sign record deleted successfully",
+      })
+      setDeleteVitalDialogOpen(false)
+      setVitalToDelete(null)
+      loadOverview()
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to delete vital sign",
+        variant: "destructive",
+      })
+    } finally {
+      setDeletingVital(false)
+    }
+  }
+
   const handleSaveLabOrder = async () => {
-    if (!labOrderForm.testTypeId) {
+    if (!labOrderForm.testTypeId || labOrderForm.testTypeId.trim() === "") {
       toast({
         title: "Error",
         description: "Please select a test type",
@@ -429,10 +574,15 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
         throw new Error("Patient ID not found")
       }
 
+      const userId = user?.id || user?.userId
+      if (!userId) {
+        throw new Error("User not authenticated. Please log in again.")
+      }
+
       const labOrderData = {
         patientId: parseInt(patientId.toString()),
         admissionId: admissionId,
-        orderedBy: parseInt(user?.userId?.toString() || "0"),
+        orderedBy: parseInt(userId.toString()),
         orderDate: new Date().toISOString().split('T')[0],
         priority: labOrderForm.priority,
         clinicalIndication: labOrderForm.clinicalIndication || null,
@@ -486,6 +636,55 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
       loadMedications()
     }
   }, [prescriptionDialogOpen])
+
+  // Auto-calculate prescription quantity based on frequency and duration
+  useEffect(() => {
+    if (!isQuantityManuallyEdited && prescriptionForm.frequency && prescriptionForm.duration) {
+      // Parse frequency (e.g., "twice daily" = 2, "once daily" = 1, "3 times daily" = 3)
+      const frequencyMatch = prescriptionForm.frequency.match(/(\d+)\s*(?:times?|x)\s*(?:daily|day|per day)/i) ||
+                            prescriptionForm.frequency.match(/(once|one)\s*(?:daily|day|per day)/i) ||
+                            prescriptionForm.frequency.match(/(twice|two)\s*(?:daily|day|per day)/i) ||
+                            prescriptionForm.frequency.match(/(thrice|three)\s*(?:daily|day|per day)/i)
+
+      let frequencyPerDay = 1
+      if (frequencyMatch) {
+        if (frequencyMatch[1]) {
+          frequencyPerDay = parseInt(frequencyMatch[1]) || 1
+        } else if (frequencyMatch[0]?.toLowerCase().includes('once') || frequencyMatch[0]?.toLowerCase().includes('one')) {
+          frequencyPerDay = 1
+        } else if (frequencyMatch[0]?.toLowerCase().includes('twice') || frequencyMatch[0]?.toLowerCase().includes('two')) {
+          frequencyPerDay = 2
+        } else if (frequencyMatch[0]?.toLowerCase().includes('thrice') || frequencyMatch[0]?.toLowerCase().includes('three')) {
+          frequencyPerDay = 3
+        }
+      }
+
+      // Parse duration (e.g., "7 days" = 7, "2 weeks" = 14, "1 month" = 30)
+      const durationMatch = prescriptionForm.duration.match(/(\d+)\s*(?:days?|day)/i) ||
+                           prescriptionForm.duration.match(/(\d+)\s*(?:weeks?|week)/i) ||
+                           prescriptionForm.duration.match(/(\d+)\s*(?:months?|month)/i)
+
+      let durationDays = 0
+      if (durationMatch) {
+        const number = parseInt(durationMatch[1]) || 0
+        if (durationMatch[0]?.toLowerCase().includes('week')) {
+          durationDays = number * 7
+        } else if (durationMatch[0]?.toLowerCase().includes('month')) {
+          durationDays = number * 30
+        } else {
+          durationDays = number
+        }
+      }
+
+      // Calculate quantity
+      if (frequencyPerDay > 0 && durationDays > 0) {
+        const calculatedQuantity = frequencyPerDay * durationDays
+        setPrescriptionForm({ ...prescriptionForm, quantity: calculatedQuantity.toString() })
+      } else {
+        setPrescriptionForm({ ...prescriptionForm, quantity: "" })
+      }
+    }
+  }, [prescriptionForm.frequency, prescriptionForm.duration, isQuantityManuallyEdited])
 
   const loadTestTypes = async () => {
     try {
@@ -631,7 +830,7 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
   }
 
   const handleSaveRadiologyOrder = async () => {
-    if (!radiologyOrderForm.examTypeId) {
+    if (!radiologyOrderForm.examTypeId || radiologyOrderForm.examTypeId.trim() === "") {
       toast({
         title: "Error",
         description: "Please select an examination type",
@@ -642,22 +841,58 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
 
     try {
       setSavingRadiologyOrder(true)
+
       const patientId = overview?.admission?.patientId
       if (!patientId) {
-        throw new Error("Patient ID not found")
+        toast({
+          title: "Error",
+          description: "Patient ID not found. Please refresh the page and try again.",
+          variant: "destructive",
+        })
+        setSavingRadiologyOrder(false)
+        return
+      }
+
+      const userId = user?.id || user?.userId
+      if (!userId) {
+        toast({
+          title: "Error",
+          description: "User not authenticated. Please log in again.",
+          variant: "destructive",
+        })
+        setSavingRadiologyOrder(false)
+        return
+      }
+
+      if (!admissionId) {
+        toast({
+          title: "Error",
+          description: "Admission ID not found. Please refresh the page and try again.",
+          variant: "destructive",
+        })
+        setSavingRadiologyOrder(false)
+        return
+      }
+
+      // Format scheduledDate if provided (datetime-local to ISO string)
+      let formattedScheduledDate = null
+      if (radiologyOrderForm.scheduledDate && radiologyOrderForm.scheduledDate.trim() !== "") {
+        // datetime-local format is "YYYY-MM-DDTHH:mm", convert to ISO string
+        formattedScheduledDate = new Date(radiologyOrderForm.scheduledDate).toISOString()
       }
 
       const orderData = {
         patientId: parseInt(patientId.toString()),
-        orderedBy: parseInt(user?.userId?.toString() || "0"),
+        orderedBy: parseInt(userId.toString()),
         examTypeId: parseInt(radiologyOrderForm.examTypeId),
         orderDate: new Date().toISOString().split('T')[0],
         bodyPart: radiologyOrderForm.bodyPart || null,
         clinicalIndication: radiologyOrderForm.clinicalIndication || null,
         priority: radiologyOrderForm.priority || 'routine',
         status: 'pending',
-        scheduledDate: radiologyOrderForm.scheduledDate || null,
+        scheduledDate: formattedScheduledDate,
         notes: radiologyOrderForm.notes || null,
+        admissionId: admissionId,
       }
 
       await radiologyApi.createOrder(orderData)
@@ -675,7 +910,10 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
         scheduledDate: "",
         notes: "",
       })
-      loadOverview()
+      // Switch to Radiology tab to show the new order
+      setActiveTab("radiology")
+      // Reload overview to get the new order (without showing loading state)
+      await loadOverview(false)
     } catch (error: any) {
       toast({
         title: "Error",
@@ -704,9 +942,59 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
         throw new Error("Patient ID not found")
       }
 
+      const userId = user?.id || user?.userId
+      if (!userId) {
+        throw new Error("User not authenticated. Please log in again.")
+      }
+
+      // Calculate quantity if not provided or empty
+      let calculatedQuantity = null
+      if (prescriptionForm.quantity && prescriptionForm.quantity.trim() !== "") {
+        calculatedQuantity = parseInt(prescriptionForm.quantity)
+      } else {
+        // Try to auto-calculate from frequency and duration
+        const frequencyMatch = prescriptionForm.frequency.match(/(\d+)\s*(?:times?|x)\s*(?:daily|day|per day)/i) ||
+                              prescriptionForm.frequency.match(/(once|one)\s*(?:daily|day|per day)/i) ||
+                              prescriptionForm.frequency.match(/(twice|two)\s*(?:daily|day|per day)/i) ||
+                              prescriptionForm.frequency.match(/(thrice|three)\s*(?:daily|day|per day)/i)
+
+        let frequencyPerDay = 1
+        if (frequencyMatch) {
+          if (frequencyMatch[1]) {
+            frequencyPerDay = parseInt(frequencyMatch[1]) || 1
+          } else if (frequencyMatch[0]?.toLowerCase().includes('once') || frequencyMatch[0]?.toLowerCase().includes('one')) {
+            frequencyPerDay = 1
+          } else if (frequencyMatch[0]?.toLowerCase().includes('twice') || frequencyMatch[0]?.toLowerCase().includes('two')) {
+            frequencyPerDay = 2
+          } else if (frequencyMatch[0]?.toLowerCase().includes('thrice') || frequencyMatch[0]?.toLowerCase().includes('three')) {
+            frequencyPerDay = 3
+          }
+        }
+
+        const durationMatch = prescriptionForm.duration.match(/(\d+)\s*(?:days?|day)/i) ||
+                             prescriptionForm.duration.match(/(\d+)\s*(?:weeks?|week)/i) ||
+                             prescriptionForm.duration.match(/(\d+)\s*(?:months?|month)/i)
+
+        let durationDays = 0
+        if (durationMatch) {
+          const number = parseInt(durationMatch[1]) || 0
+          if (durationMatch[0]?.toLowerCase().includes('week')) {
+            durationDays = number * 7
+          } else if (durationMatch[0]?.toLowerCase().includes('month')) {
+            durationDays = number * 30
+          } else {
+            durationDays = number
+          }
+        }
+
+        if (frequencyPerDay > 0 && durationDays > 0) {
+          calculatedQuantity = frequencyPerDay * durationDays
+        }
+      }
+
       const prescriptionData = {
         patientId: patientId.toString(),
-        doctorId: user?.userId?.toString() || "",
+        doctorId: userId.toString(),
         prescriptionDate: new Date().toISOString().split('T')[0],
         status: 'pending',
         admissionId: admissionId,
@@ -715,11 +1003,12 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
           dosage: prescriptionForm.dosage,
           frequency: prescriptionForm.frequency,
           duration: prescriptionForm.duration,
-          quantity: prescriptionForm.quantity ? parseInt(prescriptionForm.quantity) : null,
+          quantity: calculatedQuantity,
           instructions: prescriptionForm.instructions || null,
         }],
       }
 
+      console.log("Saving prescription:", prescriptionData)
       await pharmacyApi.createPrescription(prescriptionData)
 
       toast({
@@ -735,6 +1024,7 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
         quantity: "",
         instructions: "",
       })
+      setIsQuantityManuallyEdited(false) // Reset manual edit flag
       loadOverview()
     } catch (error: any) {
       toast({
@@ -751,6 +1041,10 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Loading</DialogTitle>
+            <DialogDescription>Loading admission details...</DialogDescription>
+          </DialogHeader>
           <div className="flex items-center justify-center p-8">
             <div className="text-center">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
@@ -1048,10 +1342,12 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                 <DialogHeader>
                   <DialogTitle>Doctor Review Details</DialogTitle>
                   <DialogDescription>
-                    {viewingReview && (
+                    {viewingReview ? (
                       <>
                         {format(new Date(viewingReview.reviewDate), "PPp")} - {viewingReview.doctorFirstName} {viewingReview.doctorLastName}
                       </>
+                    ) : (
+                      "View detailed information about this doctor review"
                     )}
                   </DialogDescription>
                 </DialogHeader>
@@ -1157,6 +1453,30 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                         />
                       </div>
                       <div>
+                        <Label>Nurse *</Label>
+                        <Select value={nursingForm.nurseId} onValueChange={(v) => setNursingForm({ ...nursingForm, nurseId: v })}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select nurse" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {nurses.length > 0 ? (
+                              nurses.map((nurse: any) => (
+                                <SelectItem key={nurse.userId} value={nurse.userId.toString()}>
+                                  {nurse.firstName} {nurse.lastName}
+                                </SelectItem>
+                              ))
+                            ) : (
+                              <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                                No nurses available
+                              </div>
+                            )}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
                         <Label>Shift</Label>
                         <Select value={nursingForm.shift} onValueChange={(v) => setNursingForm({ ...nursingForm, shift: v })}>
                           <SelectTrigger>
@@ -1169,23 +1489,22 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                           </SelectContent>
                         </Select>
                       </div>
-                    </div>
-
-                    <div>
-                      <Label>Care Type</Label>
-                      <Select value={nursingForm.careType} onValueChange={(v) => setNursingForm({ ...nursingForm, careType: v })}>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="assessment">Assessment</SelectItem>
-                          <SelectItem value="medication">Medication</SelectItem>
-                          <SelectItem value="procedure">Procedure</SelectItem>
-                          <SelectItem value="observation">Observation</SelectItem>
-                          <SelectItem value="education">Education</SelectItem>
-                          <SelectItem value="other">Other</SelectItem>
-                        </SelectContent>
-                      </Select>
+                      <div>
+                        <Label>Care Type</Label>
+                        <Select value={nursingForm.careType} onValueChange={(v) => setNursingForm({ ...nursingForm, careType: v })}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="assessment">Assessment</SelectItem>
+                            <SelectItem value="medication">Medication</SelectItem>
+                            <SelectItem value="procedure">Procedure</SelectItem>
+                            <SelectItem value="observation">Observation</SelectItem>
+                            <SelectItem value="education">Education</SelectItem>
+                            <SelectItem value="other">Other</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
                     </div>
 
                     <div className="flex items-center gap-2">
@@ -1269,24 +1588,44 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                       <TableHead>Type</TableHead>
                       <TableHead>Nurse</TableHead>
                       <TableHead>Observations</TableHead>
+                      <TableHead className="w-[100px]">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {overview.nursingCare?.length > 0 ? (
-                      overview.nursingCare.map((care: any) => (
-                        <TableRow key={care.careId}>
-                          <TableCell>{format(new Date(care.careDate), "PPp")}</TableCell>
-                          <TableCell>
-                            <Badge variant="outline">{care.shift}</Badge>
-                          </TableCell>
-                          <TableCell>{care.careType}</TableCell>
-                          <TableCell>{care.nurseFirstName} {care.nurseLastName}</TableCell>
-                          <TableCell className="max-w-xs truncate">{care.observations || "N/A"}</TableCell>
-                        </TableRow>
-                      ))
+                      overview.nursingCare.map((care: any) => {
+                        const observationsTruncated = care.observations && care.observations.length > 50
+                        const needsView = observationsTruncated || care.interventions || care.patientResponse || care.concerns || care.notes
+
+                        return (
+                          <TableRow key={care.careId}>
+                            <TableCell>{format(new Date(care.careDate), "PPp")}</TableCell>
+                            <TableCell>
+                              <Badge variant="outline">{care.shift}</Badge>
+                            </TableCell>
+                            <TableCell>{care.careType}</TableCell>
+                            <TableCell>{care.nurseFirstName} {care.nurseLastName}</TableCell>
+                            <TableCell className="max-w-xs truncate">{care.observations || "N/A"}</TableCell>
+                            <TableCell>
+                              {needsView && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    setViewingNursing(care)
+                                    setViewNursingDialogOpen(true)
+                                  }}
+                                >
+                                  <Eye className="h-4 w-4" />
+                                </Button>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })
                     ) : (
                       <TableRow>
-                        <TableCell colSpan={5} className="text-center text-muted-foreground">
+                        <TableCell colSpan={6} className="text-center text-muted-foreground">
                           No nursing care notes recorded yet
                         </TableCell>
                       </TableRow>
@@ -1295,6 +1634,109 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                 </Table>
               </CardContent>
             </Card>
+
+            {/* View Nursing Care Note Dialog */}
+            <Dialog open={viewNursingDialogOpen} onOpenChange={setViewNursingDialogOpen}>
+              <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+                <DialogHeader>
+                  <DialogTitle>Nursing Care Note Details</DialogTitle>
+                  <DialogDescription>
+                    {viewingNursing ? (
+                      <>
+                        {format(new Date(viewingNursing.careDate), "PPp")} - {viewingNursing.nurseFirstName} {viewingNursing.nurseLastName}
+                      </>
+                    ) : (
+                      "View detailed information about this nursing care note"
+                    )}
+                  </DialogDescription>
+                </DialogHeader>
+                {viewingNursing && (
+                  <div className="space-y-6">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <Label className="text-sm font-semibold">Care Type</Label>
+                        <p>
+                          <Badge variant="outline">{viewingNursing.careType}</Badge>
+                        </p>
+                      </div>
+                      <div>
+                        <Label className="text-sm font-semibold">Shift</Label>
+                        <p>
+                          <Badge variant="outline">{viewingNursing.shift}</Badge>
+                        </p>
+                      </div>
+                      <div>
+                        <Label className="text-sm font-semibold">Date & Time</Label>
+                        <p>{format(new Date(viewingNursing.careDate), "PPp")}</p>
+                      </div>
+                      <div>
+                        <Label className="text-sm font-semibold">Nurse</Label>
+                        <p>{viewingNursing.nurseFirstName} {viewingNursing.nurseLastName}</p>
+                      </div>
+                      <div>
+                        <Label className="text-sm font-semibold">Vital Signs Recorded</Label>
+                        <p>
+                          <Badge variant={viewingNursing.vitalSignsRecorded ? "default" : "outline"}>
+                            {viewingNursing.vitalSignsRecorded ? "Yes" : "No"}
+                          </Badge>
+                        </p>
+                      </div>
+                    </div>
+
+                    {viewingNursing.observations && (
+                      <div>
+                        <Label className="text-sm font-semibold mb-2 block">Observations</Label>
+                        <div className="p-3 bg-muted rounded-md">
+                          <p className="text-sm whitespace-pre-wrap">{viewingNursing.observations}</p>
+                        </div>
+                      </div>
+                    )}
+
+                    {viewingNursing.interventions && (
+                      <div>
+                        <Label className="text-sm font-semibold mb-2 block">Interventions</Label>
+                        <div className="p-3 bg-muted rounded-md">
+                          <p className="text-sm whitespace-pre-wrap">{viewingNursing.interventions}</p>
+                        </div>
+                      </div>
+                    )}
+
+                    {viewingNursing.patientResponse && (
+                      <div>
+                        <Label className="text-sm font-semibold mb-2 block">Patient Response</Label>
+                        <div className="p-3 bg-muted rounded-md">
+                          <p className="text-sm whitespace-pre-wrap">{viewingNursing.patientResponse}</p>
+                        </div>
+                      </div>
+                    )}
+
+                    {viewingNursing.concerns && (
+                      <div>
+                        <Label className="text-sm font-semibold mb-2 block">Concerns</Label>
+                        <div className="p-3 bg-muted rounded-md">
+                          <p className="text-sm whitespace-pre-wrap">{viewingNursing.concerns}</p>
+                        </div>
+                      </div>
+                    )}
+
+                    {viewingNursing.notes && (
+                      <div>
+                        <Label className="text-sm font-semibold mb-2 block">Additional Notes</Label>
+                        <div className="p-3 bg-muted rounded-md">
+                          <p className="text-sm whitespace-pre-wrap">{viewingNursing.notes}</p>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex justify-end">
+                      <Button variant="outline" onClick={() => setViewNursingDialogOpen(false)}>
+                        Close
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </DialogContent>
+            </Dialog>
           </TabsContent>
 
           {/* Vitals Tab */}
@@ -1305,14 +1747,32 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                 <Button variant="outline" onClick={() => setScheduleDialogOpen(true)}>
                   <Clock className="mr-2 h-4 w-4" />Schedule
                 </Button>
-                <Dialog open={vitalsDialogOpen} onOpenChange={setVitalsDialogOpen}>
+                <Dialog open={vitalsDialogOpen} onOpenChange={(open) => {
+                  setVitalsDialogOpen(open)
+                  if (!open) {
+                    setEditingVital(null)
+                    setVitalsForm({
+                      recordedDate: new Date().toISOString().slice(0, 16),
+                      systolicBP: "",
+                      diastolicBP: "",
+                      heartRate: "",
+                      respiratoryRate: "",
+                      temperature: "",
+                      oxygenSaturation: "",
+                      painScore: "",
+                      weight: "",
+                      height: "",
+                      notes: "",
+                    })
+                  }
+                }}>
                   <DialogTrigger asChild>
                     <Button><Plus className="mr-2 h-4 w-4" />Record Vitals</Button>
                   </DialogTrigger>
                   <DialogContent>
                     <DialogHeader>
-                      <DialogTitle>Record Vital Signs</DialogTitle>
-                      <DialogDescription>Record patient vital signs</DialogDescription>
+                      <DialogTitle>{editingVital ? "Edit Vital Signs" : "Record Vital Signs"}</DialogTitle>
+                      <DialogDescription>{editingVital ? "Update patient vital signs" : "Record patient vital signs"}</DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4">
                       <div>
@@ -1392,6 +1852,26 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                             onChange={(e) => setVitalsForm({ ...vitalsForm, painScore: e.target.value })}
                           />
                         </div>
+                        <div>
+                          <Label>Weight (kg)</Label>
+                          <Input
+                            type="number"
+                            step="0.1"
+                            placeholder="70"
+                            value={vitalsForm.weight}
+                            onChange={(e) => setVitalsForm({ ...vitalsForm, weight: e.target.value })}
+                          />
+                        </div>
+                        <div>
+                          <Label>Height (cm)</Label>
+                          <Input
+                            type="number"
+                            step="0.1"
+                            placeholder="170"
+                            value={vitalsForm.height}
+                            onChange={(e) => setVitalsForm({ ...vitalsForm, height: e.target.value })}
+                          />
+                        </div>
                       </div>
 
                       <div>
@@ -1405,9 +1885,23 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                       </div>
 
                       <div className="flex justify-end gap-2">
-                        <Button variant="outline" onClick={() => setVitalsDialogOpen(false)}>Cancel</Button>
+                        <Button variant="outline" onClick={() => {
+                          setVitalsDialogOpen(false)
+                          setEditingVital(null)
+                          setVitalsForm({
+                            recordedDate: new Date().toISOString().slice(0, 16),
+                            systolicBP: "",
+                            diastolicBP: "",
+                            heartRate: "",
+                            respiratoryRate: "",
+                            temperature: "",
+                            oxygenSaturation: "",
+                            painScore: "",
+                            notes: "",
+                          })
+                        }}>Cancel</Button>
                         <Button onClick={handleSaveVitals} disabled={savingVitals}>
-                          {savingVitals ? "Saving..." : "Save Vitals"}
+                          {savingVitals ? "Saving..." : editingVital ? "Update Vitals" : "Save Vitals"}
                         </Button>
                       </div>
                     </div>
@@ -1456,7 +1950,10 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                       <TableHead>Temp</TableHead>
                       <TableHead>SpO2</TableHead>
                       <TableHead>Pain</TableHead>
+                      <TableHead>Weight</TableHead>
+                      <TableHead>Height</TableHead>
                       <TableHead>Recorded By</TableHead>
+                      <TableHead className="w-[100px]">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1472,12 +1969,32 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                           <TableCell>{vital.temperature ? `${vital.temperature}°C` : "N/A"}</TableCell>
                           <TableCell>{vital.oxygenSaturation ? `${vital.oxygenSaturation}%` : "N/A"}</TableCell>
                           <TableCell>{vital.painScore !== null ? vital.painScore : "N/A"}</TableCell>
+                          <TableCell>{vital.weight ? `${vital.weight}kg` : "N/A"}</TableCell>
+                          <TableCell>{vital.height ? `${vital.height}cm` : "N/A"}</TableCell>
                           <TableCell>{vital.recordedByFirstName} {vital.recordedByLastName}</TableCell>
+                          <TableCell>
+                            <div className="flex gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleEditVital(vital)}
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleDeleteVital(vital)}
+                              >
+                                <Trash2 className="h-4 w-4 text-destructive" />
+                              </Button>
+                            </div>
+                          </TableCell>
                         </TableRow>
                       ))
                     ) : (
                       <TableRow>
-                        <TableCell colSpan={8} className="text-center text-muted-foreground">
+                        <TableCell colSpan={11} className="text-center text-muted-foreground">
                           No vital signs recorded yet
                         </TableCell>
                       </TableRow>
@@ -1616,26 +2133,13 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                   <div className="space-y-4">
                     <div>
                       <Label>Examination Type *</Label>
-                      <Select value={radiologyOrderForm.examTypeId} onValueChange={(v) => setRadiologyOrderForm({ ...radiologyOrderForm, examTypeId: v })}>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select examination type" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {examTypes.length > 0 ? (
-                            examTypes.map((exam: any) => (
-                              <SelectItem key={exam.examTypeId} value={exam.examTypeId.toString()}>
-                                {exam.examName}
-                                {exam.category && ` (${exam.category})`}
-                                {exam.cost && ` - KES ${parseFloat(exam.cost).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                              </SelectItem>
-                            ))
-                          ) : (
-                            <div className="px-2 py-1.5 text-sm text-muted-foreground">
-                              No examination types available
-                            </div>
-                          )}
-                        </SelectContent>
-                      </Select>
+                      <ExamTypeCombobox
+                        value={radiologyOrderForm.examTypeId || ""}
+                        onValueChange={(value, examType) => {
+                          setRadiologyOrderForm({ ...radiologyOrderForm, examTypeId: value })
+                        }}
+                        placeholder="Search examination type by name, code, or category..."
+                      />
                     </div>
                     <div>
                       <Label>Body Part</Label>
@@ -1685,8 +2189,16 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                       />
                     </div>
                     <div className="flex justify-end gap-2">
-                      <Button variant="outline" onClick={() => setRadiologyOrderDialogOpen(false)}>Cancel</Button>
-                      <Button onClick={handleSaveRadiologyOrder} disabled={savingRadiologyOrder}>
+                      <Button type="button" variant="outline" onClick={() => setRadiologyOrderDialogOpen(false)}>Cancel</Button>
+                      <Button
+                        type="button"
+                        onClick={async (e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          await handleSaveRadiologyOrder()
+                        }}
+                        disabled={savingRadiologyOrder}
+                      >
                         {savingRadiologyOrder ? "Creating..." : "Create Order"}
                       </Button>
                     </div>
@@ -1755,26 +2267,14 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                   </DialogHeader>
                   <div className="space-y-4">
                     <div>
-                      <Label>Test Type</Label>
-                      <Select value={labOrderForm.testTypeId} onValueChange={(v) => setLabOrderForm({ ...labOrderForm, testTypeId: v })}>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select test type" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {testTypes.length > 0 ? (
-                            testTypes.map((type) => (
-                              <SelectItem key={type.testTypeId} value={type.testTypeId.toString()}>
-                                {type.testName} {type.category && `(${type.category})`}
-                                {type.cost && ` - KES ${parseFloat(type.cost).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                              </SelectItem>
-                            ))
-                          ) : (
-                            <div className="px-2 py-1.5 text-sm text-muted-foreground">
-                              No test types available
-                            </div>
-                          )}
-                        </SelectContent>
-                      </Select>
+                      <Label>Test Type *</Label>
+                      <TestTypeCombobox
+                        value={labOrderForm.testTypeId || ""}
+                        onValueChange={(value, testType) => {
+                          setLabOrderForm({ ...labOrderForm, testTypeId: value })
+                        }}
+                        placeholder="Search test type by name, code, or category..."
+                      />
                     </div>
 
                     <div>
@@ -1982,7 +2482,12 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
           <TabsContent value="medications" className="space-y-4">
             <div className="flex justify-between items-center">
               <h3 className="text-lg font-semibold">Prescriptions</h3>
-              <Dialog open={prescriptionDialogOpen} onOpenChange={setPrescriptionDialogOpen}>
+              <Dialog open={prescriptionDialogOpen} onOpenChange={(open) => {
+                setPrescriptionDialogOpen(open)
+                if (!open) {
+                  setIsQuantityManuallyEdited(false) // Reset when dialog closes
+                }
+              }}>
                 <DialogTrigger asChild>
                   <Button><Plus className="mr-2 h-4 w-4" />Add Prescription</Button>
                 </DialogTrigger>
@@ -2111,6 +2616,70 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
             </Card>
           </TabsContent>
         </Tabs>
+
+        {/* Delete Vital Confirmation Dialog */}
+        <AlertDialog open={deleteVitalDialogOpen} onOpenChange={setDeleteVitalDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete Vital Sign Record?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Are you sure you want to delete this vital sign record? This action cannot be undone.
+                {vitalToDelete && (
+                  <div className="mt-4 p-3 bg-muted rounded-md space-y-2">
+                    <div className="grid grid-cols-2 gap-2 text-sm">
+                      <div>
+                        <span className="font-medium">Date & Time:</span>{" "}
+                        {format(new Date(vitalToDelete.recordedDate), "PPp")}
+                      </div>
+                      {vitalToDelete.systolicBP && vitalToDelete.diastolicBP && (
+                        <div>
+                          <span className="font-medium">Blood Pressure:</span>{" "}
+                          {vitalToDelete.systolicBP}/{vitalToDelete.diastolicBP}
+                        </div>
+                      )}
+                      {vitalToDelete.heartRate && (
+                        <div>
+                          <span className="font-medium">Heart Rate:</span> {vitalToDelete.heartRate} bpm
+                        </div>
+                      )}
+                      {vitalToDelete.temperature && (
+                        <div>
+                          <span className="font-medium">Temperature:</span> {vitalToDelete.temperature}°C
+                        </div>
+                      )}
+                      {vitalToDelete.weight && (
+                        <div>
+                          <span className="font-medium">Weight:</span> {vitalToDelete.weight} kg
+                        </div>
+                      )}
+                      {vitalToDelete.height && (
+                        <div>
+                          <span className="font-medium">Height:</span> {vitalToDelete.height} cm
+                        </div>
+                      )}
+                      {vitalToDelete.recordedByFirstName && (
+                        <div className="col-span-2">
+                          <span className="font-medium">Recorded By:</span>{" "}
+                          {vitalToDelete.recordedByFirstName} {vitalToDelete.recordedByLastName}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={deletingVital}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={confirmDeleteVital}
+                disabled={deletingVital}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                {deletingVital ? "Deleting..." : "Delete"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </DialogContent>
     </Dialog>
   )
