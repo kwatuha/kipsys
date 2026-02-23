@@ -513,11 +513,17 @@ export const inpatientApi = {
   createDoctorReview: (id: string, data: any) =>
     apiRequest<any>(`/api/inpatient/admissions/${id}/reviews`, { method: 'POST', body: data }),
 
+  updateDoctorReview: (reviewId: string, data: any) =>
+    apiRequest<any>(`/api/inpatient/reviews/${reviewId}`, { method: 'PUT', body: data }),
+
   getNursingCare: (id: string) =>
     apiRequest<any[]>(`/api/inpatient/admissions/${id}/nursing-care`),
 
   createNursingCare: (id: string, data: any) =>
     apiRequest<any>(`/api/inpatient/admissions/${id}/nursing-care`, { method: 'POST', body: data }),
+
+  updateNursingCare: (careId: string, data: any) =>
+    apiRequest<any>(`/api/inpatient/nursing-care/${careId}`, { method: 'PUT', body: data }),
 
   getVitalsSchedule: (id: string) =>
     apiRequest<any>(`/api/inpatient/admissions/${id}/vitals-schedule`),

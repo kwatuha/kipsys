@@ -148,15 +148,33 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
   // View review dialog states
   const [viewReviewDialogOpen, setViewReviewDialogOpen] = useState(false)
   const [viewingReview, setViewingReview] = useState<any>(null)
+  const [editingReview, setEditingReview] = useState<any>(null)
 
   // View nursing care dialog states
   const [viewNursingDialogOpen, setViewNursingDialogOpen] = useState(false)
   const [viewingNursing, setViewingNursing] = useState<any>(null)
+  const [editingNursing, setEditingNursing] = useState<any>(null)
 
   // Delete vital dialog states
   const [deleteVitalDialogOpen, setDeleteVitalDialogOpen] = useState(false)
   const [vitalToDelete, setVitalToDelete] = useState<any>(null)
   const [deletingVital, setDeletingVital] = useState(false)
+
+  // Edit states for other items
+  const [editingProcedure, setEditingProcedure] = useState<any>(null)
+  const [editingRadiologyOrder, setEditingRadiologyOrder] = useState<any>(null)
+  const [editingLabOrder, setEditingLabOrder] = useState<any>(null)
+  const [editingPrescription, setEditingPrescription] = useState<any>(null)
+
+  // View states for other items
+  const [viewingProcedure, setViewingProcedure] = useState<any>(null)
+  const [viewProcedureDialogOpen, setViewProcedureDialogOpen] = useState(false)
+  const [viewingRadiologyOrder, setViewingRadiologyOrder] = useState<any>(null)
+  const [viewRadiologyOrderDialogOpen, setViewRadiologyOrderDialogOpen] = useState(false)
+  const [viewingLabOrder, setViewingLabOrder] = useState<any>(null)
+  const [viewLabOrderDialogOpen, setViewLabOrderDialogOpen] = useState(false)
+  const [viewingPrescription, setViewingPrescription] = useState<any>(null)
+  const [viewPrescriptionDialogOpen, setViewPrescriptionDialogOpen] = useState(false)
 
   useEffect(() => {
     if (open && admissionId) {
@@ -373,12 +391,23 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
         ...reviewForm,
         reviewingDoctorId: parseInt(reviewForm.reviewingDoctorId),
       }
-      await inpatientApi.createDoctorReview(admissionId, reviewData)
+
+      if (editingReview) {
+        // Update existing review
+        await inpatientApi.updateDoctorReview(editingReview.reviewId.toString(), reviewData)
+        toast({
+          title: "Success",
+          description: "Doctor review updated successfully",
+        })
+      } else {
+        // Create new review
+      }
       toast({
         title: "Success",
         description: "Doctor review saved successfully",
       })
       setReviewDialogOpen(false)
+      setEditingReview(null)
       setReviewForm({
         reviewDate: new Date().toISOString().slice(0, 16),
         reviewingDoctorId: user?.userId?.toString() || "",
@@ -420,12 +449,23 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
         ...nursingForm,
         nurseId: parseInt(nursingForm.nurseId),
       }
-      await inpatientApi.createNursingCare(admissionId, nursingData)
+
+      if (editingNursing) {
+        // Update existing nursing care note
+        await inpatientApi.updateNursingCare(editingNursing.careId.toString(), nursingData)
+        toast({
+          title: "Success",
+          description: "Nursing care note updated successfully",
+        })
+      } else {
+        // Create new nursing care note
+      }
       toast({
         title: "Success",
         description: "Nursing care note saved successfully",
       })
       setNursingDialogOpen(false)
+      setEditingNursing(null)
       setNursingForm({
         careDate: new Date().toISOString().slice(0, 16),
         nurseId: user?.userId?.toString() || "",
@@ -579,39 +619,53 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
         throw new Error("User not authenticated. Please log in again.")
       }
 
-      const labOrderData = {
-        patientId: parseInt(patientId.toString()),
-        admissionId: admissionId,
-        orderedBy: parseInt(userId.toString()),
-        orderDate: new Date().toISOString().split('T')[0],
-        priority: labOrderForm.priority,
-        clinicalIndication: labOrderForm.clinicalIndication || null,
-        items: [{
-          testTypeId: parseInt(labOrderForm.testTypeId),
-          notes: labOrderForm.clinicalIndication || null,
-        }],
+      if (editingLabOrder) {
+        // Update existing order
+        await laboratoryApi.updateOrder(editingLabOrder.orderId.toString(), {
+          priority: labOrderForm.priority,
+          clinicalIndication: labOrderForm.clinicalIndication || null,
+        })
+        toast({
+          title: "Success",
+          description: "Lab order updated successfully",
+        })
+      } else {
+        // Create new order
+        const labOrderData = {
+          patientId: parseInt(patientId.toString()),
+          admissionId: admissionId,
+          orderedBy: parseInt(userId.toString()),
+          orderDate: new Date().toISOString().split('T')[0],
+          priority: labOrderForm.priority,
+          clinicalIndication: labOrderForm.clinicalIndication || null,
+          items: [{
+            testTypeId: parseInt(labOrderForm.testTypeId),
+            notes: labOrderForm.clinicalIndication || null,
+          }],
+        }
+
+        console.log("Saving lab order:", labOrderData)
+        const result = await laboratoryApi.createOrder(labOrderData)
+        console.log("Lab order saved:", result)
+        toast({
+          title: "Success",
+          description: "Lab order created successfully",
+        })
+        setActiveTab("labs")
       }
 
-      console.log("Saving lab order:", labOrderData)
-
-      const result = await laboratoryApi.createOrder(labOrderData)
-      console.log("Lab order saved:", result)
-
-      toast({
-        title: "Success",
-        description: "Lab order created successfully",
-      })
       setLabOrderDialogOpen(false)
+      setEditingLabOrder(null)
       setLabOrderForm({
         testTypeId: "",
         priority: "routine",
         clinicalIndication: "",
       })
-      loadOverview()
+      await loadOverview(false)
     } catch (error: any) {
       toast({
         title: "Error",
-        description: error.message || "Failed to create lab order",
+        description: error.message || (editingLabOrder ? "Failed to update lab order" : "Failed to create lab order"),
         variant: "destructive",
       })
     } finally {
@@ -630,6 +684,18 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
       loadProcedures()
     }
   }, [procedureDialogOpen])
+
+  useEffect(() => {
+    if (radiologyOrderDialogOpen && editingRadiologyOrder) {
+      loadExamTypes()
+    }
+  }, [radiologyOrderDialogOpen, editingRadiologyOrder])
+
+  useEffect(() => {
+    if (labOrderDialogOpen && editingLabOrder) {
+      loadTestTypes()
+    }
+  }, [labOrderDialogOpen, editingLabOrder])
 
   useEffect(() => {
     if (prescriptionDialogOpen) {
@@ -795,6 +861,18 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
         throw new Error("Patient ID not found")
       }
 
+      if (editingProcedure) {
+        // Note: Update API doesn't exist yet for procedures
+        toast({
+          title: "Info",
+          description: "Update functionality requires backend API support",
+          variant: "default",
+        })
+        setProcedureDialogOpen(false)
+        setEditingProcedure(null)
+        return
+      }
+
       await proceduresApi.createPatientProcedure({
         patientId: patientId.toString(),
         procedureId: parseInt(procedureForm.procedureId),
@@ -810,6 +888,7 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
         description: "Procedure created successfully",
       })
       setProcedureDialogOpen(false)
+      setEditingProcedure(null)
       setProcedureForm({
         procedureId: "",
         procedureDate: new Date().toISOString().split('T')[0],
@@ -881,27 +960,47 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
         formattedScheduledDate = new Date(radiologyOrderForm.scheduledDate).toISOString()
       }
 
-      const orderData = {
-        patientId: parseInt(patientId.toString()),
-        orderedBy: parseInt(userId.toString()),
-        examTypeId: parseInt(radiologyOrderForm.examTypeId),
-        orderDate: new Date().toISOString().split('T')[0],
-        bodyPart: radiologyOrderForm.bodyPart || null,
-        clinicalIndication: radiologyOrderForm.clinicalIndication || null,
-        priority: radiologyOrderForm.priority || 'routine',
-        status: 'pending',
-        scheduledDate: formattedScheduledDate,
-        notes: radiologyOrderForm.notes || null,
-        admissionId: admissionId,
+      if (editingRadiologyOrder) {
+        // Update existing order
+        await radiologyApi.updateOrder(editingRadiologyOrder.orderId.toString(), {
+          examTypeId: parseInt(radiologyOrderForm.examTypeId),
+          bodyPart: radiologyOrderForm.bodyPart || null,
+          clinicalIndication: radiologyOrderForm.clinicalIndication || null,
+          priority: radiologyOrderForm.priority || 'routine',
+          scheduledDate: formattedScheduledDate,
+          notes: radiologyOrderForm.notes || null,
+        })
+        toast({
+          title: "Success",
+          description: "Radiology order updated successfully",
+        })
+      } else {
+        // Create new order
+        const orderData = {
+          patientId: parseInt(patientId.toString()),
+          orderedBy: parseInt(userId.toString()),
+          examTypeId: parseInt(radiologyOrderForm.examTypeId),
+          orderDate: new Date().toISOString().split('T')[0],
+          bodyPart: radiologyOrderForm.bodyPart || null,
+          clinicalIndication: radiologyOrderForm.clinicalIndication || null,
+          priority: radiologyOrderForm.priority || 'routine',
+          status: 'pending',
+          scheduledDate: formattedScheduledDate,
+          notes: radiologyOrderForm.notes || null,
+          admissionId: admissionId,
+        }
+
+        await radiologyApi.createOrder(orderData)
+        toast({
+          title: "Success",
+          description: "Radiology order created successfully",
+        })
+        // Switch to Radiology tab to show the new order
+        setActiveTab("radiology")
       }
 
-      await radiologyApi.createOrder(orderData)
-
-      toast({
-        title: "Success",
-        description: "Radiology order created successfully",
-      })
       setRadiologyOrderDialogOpen(false)
+      setEditingRadiologyOrder(null)
       setRadiologyOrderForm({
         examTypeId: "",
         bodyPart: "",
@@ -910,14 +1009,12 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
         scheduledDate: "",
         notes: "",
       })
-      // Switch to Radiology tab to show the new order
-      setActiveTab("radiology")
-      // Reload overview to get the new order (without showing loading state)
+      // Reload overview to get the new/updated order (without showing loading state)
       await loadOverview(false)
     } catch (error: any) {
       toast({
         title: "Error",
-        description: error.message || "Failed to create radiology order",
+        description: error.message || (editingRadiologyOrder ? "Failed to update radiology order" : "Failed to create radiology order"),
         variant: "destructive",
       })
     } finally {
@@ -992,30 +1089,56 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
         }
       }
 
-      const prescriptionData = {
-        patientId: patientId.toString(),
-        doctorId: userId.toString(),
-        prescriptionDate: new Date().toISOString().split('T')[0],
-        status: 'pending',
-        admissionId: admissionId,
-        items: [{
-          medicationId: parseInt(prescriptionForm.medicationId),
-          dosage: prescriptionForm.dosage,
-          frequency: prescriptionForm.frequency,
-          duration: prescriptionForm.duration,
-          quantity: calculatedQuantity,
-          instructions: prescriptionForm.instructions || null,
-        }],
+      if (editingPrescription) {
+        // Update existing prescription with items
+        const item = editingPrescription.items?.[0]
+        if (!item) {
+          throw new Error("Prescription item not found")
+        }
+
+        await pharmacyApi.updatePrescription(editingPrescription.prescriptionId.toString(), {
+          items: [{
+            itemId: item.itemId,
+            medicationId: parseInt(prescriptionForm.medicationId),
+            dosage: prescriptionForm.dosage,
+            frequency: prescriptionForm.frequency,
+            duration: prescriptionForm.duration,
+            quantity: calculatedQuantity,
+            instructions: prescriptionForm.instructions || null,
+          }],
+        })
+        toast({
+          title: "Success",
+          description: "Prescription updated successfully",
+        })
+      } else {
+        // Create new prescription
+        const prescriptionData = {
+          patientId: patientId.toString(),
+          doctorId: userId.toString(),
+          prescriptionDate: new Date().toISOString().split('T')[0],
+          status: 'pending',
+          admissionId: admissionId,
+          items: [{
+            medicationId: parseInt(prescriptionForm.medicationId),
+            dosage: prescriptionForm.dosage,
+            frequency: prescriptionForm.frequency,
+            duration: prescriptionForm.duration,
+            quantity: calculatedQuantity,
+            instructions: prescriptionForm.instructions || null,
+          }],
+        }
+
+        console.log("Saving prescription:", prescriptionData)
+        await pharmacyApi.createPrescription(prescriptionData)
+        toast({
+          title: "Success",
+          description: "Prescription created successfully",
+        })
       }
 
-      console.log("Saving prescription:", prescriptionData)
-      await pharmacyApi.createPrescription(prescriptionData)
-
-      toast({
-        title: "Success",
-        description: "Prescription created successfully",
-      })
       setPrescriptionDialogOpen(false)
+      setEditingPrescription(null)
       setPrescriptionForm({
         medicationId: "",
         dosage: "",
@@ -1029,11 +1152,220 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
     } catch (error: any) {
       toast({
         title: "Error",
-        description: error.message || "Failed to create prescription",
+        description: error.message || (editingPrescription ? "Failed to update prescription" : "Failed to create prescription"),
         variant: "destructive",
       })
     } finally {
       setSavingPrescription(false)
+    }
+  }
+
+  // Edit handlers
+  const handleEditReview = (review: any) => {
+    const date = new Date(review.reviewDate)
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    const hours = String(date.getHours()).padStart(2, '0')
+    const minutes = String(date.getMinutes()).padStart(2, '0')
+    const datetimeLocal = `${year}-${month}-${day}T${hours}:${minutes}`
+
+    setEditingReview(review)
+    setReviewForm({
+      reviewDate: datetimeLocal,
+      reviewingDoctorId: review.reviewingDoctorId?.toString() || "",
+      reviewType: review.reviewType || "morning_round",
+      subjective: review.subjective || "",
+      objective: review.objective || "",
+      assessment: review.assessment || "",
+      plan: review.plan || "",
+      notes: review.notes || "",
+      nextReviewDate: review.nextReviewDate ? new Date(review.nextReviewDate).toISOString().slice(0, 16) : "",
+    })
+    setReviewDialogOpen(true)
+  }
+
+  const handleEditNursing = (care: any) => {
+    const date = new Date(care.careDate)
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    const hours = String(date.getHours()).padStart(2, '0')
+    const minutes = String(date.getMinutes()).padStart(2, '0')
+    const datetimeLocal = `${year}-${month}-${day}T${hours}:${minutes}`
+
+    setEditingNursing(care)
+    setNursingForm({
+      careDate: datetimeLocal,
+      nurseId: care.nurseId?.toString() || "",
+      careType: care.careType || "observation",
+      shift: care.shift || "morning",
+      vitalSignsRecorded: care.vitalSignsRecorded || false,
+      observations: care.observations || "",
+      interventions: care.interventions || "",
+      patientResponse: care.patientResponse || "",
+      concerns: care.concerns || "",
+      notes: care.notes || "",
+    })
+    setNursingDialogOpen(true)
+  }
+
+  const handleEditProcedure = async (procedure: any) => {
+    try {
+      // Load procedures if not already loaded
+      if (procedures.length === 0) {
+        await loadProcedures()
+      }
+      setEditingProcedure(procedure)
+      setProcedureForm({
+        procedureId: procedure.procedureId?.toString() || "",
+        procedureDate: procedure.procedureDate ? new Date(procedure.procedureDate).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+        performedBy: procedure.performedBy?.toString() || "",
+        notes: procedure.notes || "",
+        complications: procedure.complications || "",
+      })
+      setProcedureDialogOpen(true)
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to load procedure details",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleEditRadiologyOrder = async (order: any) => {
+    try {
+      // Load exam types if not already loaded
+      if (examTypes.length === 0) {
+        await loadExamTypes()
+      }
+      // Fetch full order details
+      const fullOrder = await radiologyApi.getOrder(order.orderId.toString())
+      setEditingRadiologyOrder(fullOrder)
+
+      const scheduledDate = fullOrder.scheduledDate ? new Date(fullOrder.scheduledDate).toISOString().slice(0, 16) : ""
+
+      setRadiologyOrderForm({
+        examTypeId: fullOrder.examTypeId?.toString() || "",
+        bodyPart: fullOrder.bodyPart || "",
+        clinicalIndication: fullOrder.clinicalIndication || "",
+        priority: fullOrder.priority || "routine",
+        scheduledDate: scheduledDate,
+        notes: fullOrder.notes || "",
+      })
+      setRadiologyOrderDialogOpen(true)
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to load radiology order details",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleEditLabOrder = async (order: any) => {
+    try {
+      // Load test types if not already loaded
+      if (testTypes.length === 0) {
+        await loadTestTypes()
+      }
+      // Fetch full order details
+      const fullOrder = await laboratoryApi.getOrder(order.orderId.toString())
+      setEditingLabOrder(fullOrder)
+
+      // Get test type from order items
+      const testTypeId = fullOrder.items?.[0]?.testTypeId?.toString() || ""
+
+      setLabOrderForm({
+        testTypeId: testTypeId,
+        priority: fullOrder.priority || "routine",
+        clinicalIndication: fullOrder.clinicalIndication || "",
+      })
+      setLabOrderDialogOpen(true)
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to load lab order details",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleEditPrescription = async (prescription: any) => {
+    try {
+      // Fetch full prescription details
+      const fullPrescription = await pharmacyApi.getPrescription(prescription.prescriptionId.toString())
+      setEditingPrescription(fullPrescription)
+
+      // Get first item for editing (most prescriptions have one item)
+      const item = fullPrescription.items?.[0]
+      if (item) {
+        setPrescriptionForm({
+          medicationId: item.medicationId?.toString() || "",
+          dosage: item.dosage || "",
+          frequency: item.frequency || "",
+          duration: item.duration || "",
+          quantity: item.quantity?.toString() || "",
+          instructions: item.instructions || "",
+        })
+        setIsQuantityManuallyEdited(true) // Prevent auto-calculation when editing
+      }
+      setPrescriptionDialogOpen(true)
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to load prescription details",
+        variant: "destructive",
+      })
+    }
+  }
+
+  // View handlers
+  const handleViewProcedure = (procedure: any) => {
+    setViewingProcedure(procedure)
+    setViewProcedureDialogOpen(true)
+  }
+
+  const handleViewRadiologyOrder = async (order: any) => {
+    try {
+      const fullOrder = await radiologyApi.getOrder(order.orderId.toString())
+      setViewingRadiologyOrder(fullOrder)
+      setViewRadiologyOrderDialogOpen(true)
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to load radiology order details",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleViewLabOrder = async (order: any) => {
+    try {
+      const fullOrder = await laboratoryApi.getOrder(order.orderId.toString())
+      setViewingLabOrder(fullOrder)
+      setViewLabOrderDialogOpen(true)
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to load lab order details",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleViewPrescription = async (prescription: any) => {
+    try {
+      const fullPrescription = await pharmacyApi.getPrescription(prescription.prescriptionId.toString())
+      setViewingPrescription(fullPrescription)
+      setViewPrescriptionDialogOpen(true)
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to load prescription details",
+        variant: "destructive",
+      })
     }
   }
 
@@ -1162,14 +1494,30 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
           <TabsContent value="reviews" className="space-y-4">
             <div className="flex justify-between items-center">
               <h3 className="text-lg font-semibold">Doctor Reviews & Rounds</h3>
-              <Dialog open={reviewDialogOpen} onOpenChange={setReviewDialogOpen}>
+              <Dialog open={reviewDialogOpen} onOpenChange={(open) => {
+                setReviewDialogOpen(open)
+                if (!open) {
+                  setEditingReview(null)
+                  setReviewForm({
+                    reviewDate: new Date().toISOString().slice(0, 16),
+                    reviewingDoctorId: user?.userId?.toString() || "",
+                    reviewType: "morning_round",
+                    subjective: "",
+                    objective: "",
+                    assessment: "",
+                    plan: "",
+                    notes: "",
+                    nextReviewDate: "",
+                  })
+                }
+              }}>
                 <DialogTrigger asChild>
                   <Button><Plus className="mr-2 h-4 w-4" />Add Review</Button>
                 </DialogTrigger>
                 <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
                   <DialogHeader>
-                    <DialogTitle>Doctor Review</DialogTitle>
-                    <DialogDescription>Record a doctor review or round</DialogDescription>
+                    <DialogTitle>{editingReview ? "Edit Doctor Review" : "Doctor Review"}</DialogTitle>
+                    <DialogDescription>{editingReview ? "Update doctor review or round" : "Record a doctor review or round"}</DialogDescription>
                   </DialogHeader>
                   <div className="space-y-4">
                     <div className="grid grid-cols-2 gap-4">
@@ -1268,9 +1616,23 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                     </div>
 
                     <div className="flex justify-end gap-2">
-                      <Button variant="outline" onClick={() => setReviewDialogOpen(false)}>Cancel</Button>
+                      <Button variant="outline" onClick={() => {
+                        setReviewDialogOpen(false)
+                        setEditingReview(null)
+                        setReviewForm({
+                          reviewDate: new Date().toISOString().slice(0, 16),
+                          reviewingDoctorId: user?.userId?.toString() || "",
+                          reviewType: "morning_round",
+                          subjective: "",
+                          objective: "",
+                          assessment: "",
+                          plan: "",
+                          notes: "",
+                          nextReviewDate: "",
+                        })
+                      }}>Cancel</Button>
                       <Button onClick={handleSaveReview} disabled={savingReview}>
-                        {savingReview ? "Saving..." : "Save Review"}
+                        {savingReview ? "Saving..." : editingReview ? "Update Review" : "Save Review"}
                       </Button>
                     </div>
                   </div>
@@ -1308,7 +1670,7 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                             <TableCell className="max-w-xs truncate">{review.assessment || "N/A"}</TableCell>
                             <TableCell className="max-w-xs truncate">{review.plan || "N/A"}</TableCell>
                             <TableCell>
-                              {needsView && (
+                              <div className="flex gap-1">
                                 <Button
                                   variant="ghost"
                                   size="sm"
@@ -1316,10 +1678,19 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                                     setViewingReview(review)
                                     setViewReviewDialogOpen(true)
                                   }}
+                                  title="View details"
                                 >
                                   <Eye className="h-4 w-4" />
                                 </Button>
-                              )}
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleEditReview(review)}
+                                  title="Edit review"
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                              </div>
                             </TableCell>
                           </TableRow>
                         )
@@ -1433,14 +1804,31 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
           <TabsContent value="nursing" className="space-y-4">
             <div className="flex justify-between items-center">
               <h3 className="text-lg font-semibold">Nursing Care Notes</h3>
-              <Dialog open={nursingDialogOpen} onOpenChange={setNursingDialogOpen}>
+              <Dialog open={nursingDialogOpen} onOpenChange={(open) => {
+                setNursingDialogOpen(open)
+                if (!open) {
+                  setEditingNursing(null)
+                  setNursingForm({
+                    careDate: new Date().toISOString().slice(0, 16),
+                    nurseId: user?.userId?.toString() || "",
+                    careType: "observation",
+                    shift: "morning",
+                    vitalSignsRecorded: false,
+                    observations: "",
+                    interventions: "",
+                    patientResponse: "",
+                    concerns: "",
+                    notes: "",
+                  })
+                }
+              }}>
                 <DialogTrigger asChild>
                   <Button><Plus className="mr-2 h-4 w-4" />Add Note</Button>
                 </DialogTrigger>
                 <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
                   <DialogHeader>
-                    <DialogTitle>Nursing Care Note</DialogTitle>
-                    <DialogDescription>Record nursing observations and care</DialogDescription>
+                    <DialogTitle>{editingNursing ? "Edit Nursing Care Note" : "Nursing Care Note"}</DialogTitle>
+                    <DialogDescription>{editingNursing ? "Update nursing observations and care" : "Record nursing observations and care"}</DialogDescription>
                   </DialogHeader>
                   <div className="space-y-4">
                     <div className="grid grid-cols-2 gap-4">
@@ -1568,9 +1956,24 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                     </div>
 
                     <div className="flex justify-end gap-2">
-                      <Button variant="outline" onClick={() => setNursingDialogOpen(false)}>Cancel</Button>
+                      <Button variant="outline" onClick={() => {
+                        setNursingDialogOpen(false)
+                        setEditingNursing(null)
+                        setNursingForm({
+                          careDate: new Date().toISOString().slice(0, 16),
+                          nurseId: user?.userId?.toString() || "",
+                          careType: "observation",
+                          shift: "morning",
+                          vitalSignsRecorded: false,
+                          observations: "",
+                          interventions: "",
+                          patientResponse: "",
+                          concerns: "",
+                          notes: "",
+                        })
+                      }}>Cancel</Button>
                       <Button onClick={handleSaveNursing} disabled={savingNursing}>
-                        {savingNursing ? "Saving..." : "Save Note"}
+                        {savingNursing ? "Saving..." : editingNursing ? "Update Note" : "Save Note"}
                       </Button>
                     </div>
                   </div>
@@ -1607,7 +2010,7 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                             <TableCell>{care.nurseFirstName} {care.nurseLastName}</TableCell>
                             <TableCell className="max-w-xs truncate">{care.observations || "N/A"}</TableCell>
                             <TableCell>
-                              {needsView && (
+                              <div className="flex gap-1">
                                 <Button
                                   variant="ghost"
                                   size="sm"
@@ -1615,10 +2018,19 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                                     setViewingNursing(care)
                                     setViewNursingDialogOpen(true)
                                   }}
+                                  title="View details"
                                 >
                                   <Eye className="h-4 w-4" />
                                 </Button>
-                              )}
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleEditNursing(care)}
+                                  title="Edit note"
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                              </div>
                             </TableCell>
                           </TableRow>
                         )
@@ -2009,14 +2421,26 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
           <TabsContent value="procedures" className="space-y-4">
             <div className="flex justify-between items-center">
               <h3 className="text-lg font-semibold">Procedures</h3>
-              <Dialog open={procedureDialogOpen} onOpenChange={setProcedureDialogOpen}>
+              <Dialog open={procedureDialogOpen} onOpenChange={(open) => {
+                setProcedureDialogOpen(open)
+                if (!open) {
+                  setEditingProcedure(null)
+                  setProcedureForm({
+                    procedureId: "",
+                    procedureDate: new Date().toISOString().split('T')[0],
+                    performedBy: user?.userId?.toString() || "",
+                    notes: "",
+                    complications: "",
+                  })
+                }
+              }}>
                 <DialogTrigger asChild>
                   <Button><Plus className="mr-2 h-4 w-4" />Add Procedure</Button>
                 </DialogTrigger>
                 <DialogContent>
                   <DialogHeader>
-                    <DialogTitle>Add Procedure</DialogTitle>
-                    <DialogDescription>Record a procedure performed on this patient</DialogDescription>
+                    <DialogTitle>{editingProcedure ? "Edit Procedure" : "Add Procedure"}</DialogTitle>
+                    <DialogDescription>{editingProcedure ? "Update procedure details" : "Record a procedure performed on this patient"}</DialogDescription>
                   </DialogHeader>
                   <div className="space-y-4">
                     <div>
@@ -2074,9 +2498,19 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                       />
                     </div>
                     <div className="flex justify-end gap-2">
-                      <Button variant="outline" onClick={() => setProcedureDialogOpen(false)}>Cancel</Button>
+                      <Button variant="outline" onClick={() => {
+                        setProcedureDialogOpen(false)
+                        setEditingProcedure(null)
+                        setProcedureForm({
+                          procedureId: "",
+                          procedureDate: new Date().toISOString().split('T')[0],
+                          performedBy: user?.userId?.toString() || "",
+                          notes: "",
+                          complications: "",
+                        })
+                      }}>Cancel</Button>
                       <Button onClick={handleSaveProcedure} disabled={savingProcedure}>
-                        {savingProcedure ? "Saving..." : "Save Procedure"}
+                        {savingProcedure ? "Saving..." : editingProcedure ? "Update Procedure" : "Save Procedure"}
                       </Button>
                     </div>
                   </div>
@@ -2092,6 +2526,7 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                       <TableHead>Procedure</TableHead>
                       <TableHead>Performed By</TableHead>
                       <TableHead>Notes</TableHead>
+                      <TableHead className="w-[100px]">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -2102,11 +2537,31 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                           <TableCell>{procedure.procedureName}</TableCell>
                           <TableCell>{procedure.performedByFirstName} {procedure.performedByLastName}</TableCell>
                           <TableCell className="max-w-xs truncate">{procedure.notes || "N/A"}</TableCell>
+                          <TableCell>
+                            <div className="flex gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleViewProcedure(procedure)}
+                                title="View details"
+                              >
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleEditProcedure(procedure)}
+                                title="Edit procedure"
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </TableCell>
                         </TableRow>
                       ))
                     ) : (
                       <TableRow>
-                        <TableCell colSpan={4} className="text-center text-muted-foreground">
+                        <TableCell colSpan={5} className="text-center text-muted-foreground">
                           No procedures recorded yet
                         </TableCell>
                       </TableRow>
@@ -2121,14 +2576,27 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
           <TabsContent value="radiology" className="space-y-4">
             <div className="flex justify-between items-center">
               <h3 className="text-lg font-semibold">Radiology Orders</h3>
-              <Dialog open={radiologyOrderDialogOpen} onOpenChange={setRadiologyOrderDialogOpen}>
+              <Dialog open={radiologyOrderDialogOpen} onOpenChange={(open) => {
+                setRadiologyOrderDialogOpen(open)
+                if (!open) {
+                  setEditingRadiologyOrder(null)
+                  setRadiologyOrderForm({
+                    examTypeId: "",
+                    bodyPart: "",
+                    clinicalIndication: "",
+                    priority: "routine",
+                    scheduledDate: "",
+                    notes: "",
+                  })
+                }
+              }}>
                 <DialogTrigger asChild>
                   <Button><Plus className="mr-2 h-4 w-4" />Order Radiology</Button>
                 </DialogTrigger>
                 <DialogContent>
                   <DialogHeader>
-                    <DialogTitle>Order Radiology Examination</DialogTitle>
-                    <DialogDescription>Create a new radiology order for this patient</DialogDescription>
+                    <DialogTitle>{editingRadiologyOrder ? "Edit Radiology Order" : "Order Radiology Examination"}</DialogTitle>
+                    <DialogDescription>{editingRadiologyOrder ? "Update radiology order details" : "Create a new radiology order for this patient"}</DialogDescription>
                   </DialogHeader>
                   <div className="space-y-4">
                     <div>
@@ -2189,7 +2657,18 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                       />
                     </div>
                     <div className="flex justify-end gap-2">
-                      <Button type="button" variant="outline" onClick={() => setRadiologyOrderDialogOpen(false)}>Cancel</Button>
+                      <Button type="button" variant="outline" onClick={() => {
+                        setRadiologyOrderDialogOpen(false)
+                        setEditingRadiologyOrder(null)
+                        setRadiologyOrderForm({
+                          examTypeId: "",
+                          bodyPart: "",
+                          clinicalIndication: "",
+                          priority: "routine",
+                          scheduledDate: "",
+                          notes: "",
+                        })
+                      }}>Cancel</Button>
                       <Button
                         type="button"
                         onClick={async (e) => {
@@ -2199,7 +2678,7 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                         }}
                         disabled={savingRadiologyOrder}
                       >
-                        {savingRadiologyOrder ? "Creating..." : "Create Order"}
+                        {savingRadiologyOrder ? (editingRadiologyOrder ? "Updating..." : "Creating...") : editingRadiologyOrder ? "Update Order" : "Create Order"}
                       </Button>
                     </div>
                   </div>
@@ -2217,6 +2696,7 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                       <TableHead>Body Part</TableHead>
                       <TableHead>Priority</TableHead>
                       <TableHead>Status</TableHead>
+                      <TableHead className="w-[100px]">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -2237,11 +2717,31 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                               {order.status?.split('_').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') || 'PENDING'}
                             </Badge>
                           </TableCell>
+                          <TableCell>
+                            <div className="flex gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleViewRadiologyOrder(order)}
+                                title="View details"
+                              >
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleEditRadiologyOrder(order)}
+                                title="Edit order"
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </TableCell>
                         </TableRow>
                       ))
                     ) : (
                       <TableRow>
-                        <TableCell colSpan={6} className="text-center text-muted-foreground">
+                        <TableCell colSpan={7} className="text-center text-muted-foreground">
                           No radiology orders recorded yet
                         </TableCell>
                       </TableRow>
@@ -2256,14 +2756,24 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
           <TabsContent value="labs" className="space-y-4">
             <div className="flex justify-between items-center">
               <h3 className="text-lg font-semibold">Laboratory Orders</h3>
-              <Dialog open={labOrderDialogOpen} onOpenChange={setLabOrderDialogOpen}>
+              <Dialog open={labOrderDialogOpen} onOpenChange={(open) => {
+                setLabOrderDialogOpen(open)
+                if (!open) {
+                  setEditingLabOrder(null)
+                  setLabOrderForm({
+                    testTypeId: "",
+                    priority: "routine",
+                    clinicalIndication: "",
+                  })
+                }
+              }}>
                 <DialogTrigger asChild>
                   <Button><Plus className="mr-2 h-4 w-4" />Order Lab</Button>
                 </DialogTrigger>
                 <DialogContent>
                   <DialogHeader>
-                    <DialogTitle>Order Laboratory Test</DialogTitle>
-                    <DialogDescription>Create a new lab order for this patient</DialogDescription>
+                    <DialogTitle>{editingLabOrder ? "Edit Lab Order" : "Order Laboratory Test"}</DialogTitle>
+                    <DialogDescription>{editingLabOrder ? "Update lab order details" : "Create a new lab order for this patient"}</DialogDescription>
                   </DialogHeader>
                   <div className="space-y-4">
                     <div>
@@ -2302,9 +2812,17 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                     </div>
 
                     <div className="flex justify-end gap-2">
-                      <Button variant="outline" onClick={() => setLabOrderDialogOpen(false)}>Cancel</Button>
+                      <Button variant="outline" onClick={() => {
+                        setLabOrderDialogOpen(false)
+                        setEditingLabOrder(null)
+                        setLabOrderForm({
+                          testTypeId: "",
+                          priority: "routine",
+                          clinicalIndication: "",
+                        })
+                      }}>Cancel</Button>
                       <Button onClick={handleSaveLabOrder} disabled={savingLabOrder}>
-                        {savingLabOrder ? "Creating..." : "Create Order"}
+                        {savingLabOrder ? (editingLabOrder ? "Updating..." : "Creating...") : editingLabOrder ? "Update Order" : "Create Order"}
                       </Button>
                     </div>
                   </div>
@@ -2322,6 +2840,7 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                       <TableHead>Priority</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Ordered By</TableHead>
+                      <TableHead className="w-[100px]">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -2339,11 +2858,31 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                             <Badge variant="outline">{order.status || "pending"}</Badge>
                           </TableCell>
                           <TableCell>{order.orderedByFirstName} {order.orderedByLastName}</TableCell>
+                          <TableCell>
+                            <div className="flex gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleViewLabOrder(order)}
+                                title="View details"
+                              >
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleEditLabOrder(order)}
+                                title="Edit order"
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </TableCell>
                         </TableRow>
                       ))
                     ) : (
                       <TableRow>
-                        <TableCell colSpan={5} className="text-center text-muted-foreground">
+                        <TableCell colSpan={6} className="text-center text-muted-foreground">
                           No lab orders yet
                         </TableCell>
                       </TableRow>
@@ -2493,8 +3032,8 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                 </DialogTrigger>
                 <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
                   <DialogHeader>
-                    <DialogTitle>Add Prescription</DialogTitle>
-                    <DialogDescription>Prescribe medication for this patient</DialogDescription>
+                    <DialogTitle>{editingPrescription ? "Edit Prescription" : "Add Prescription"}</DialogTitle>
+                    <DialogDescription>{editingPrescription ? "Update prescription details" : "Prescribe medication for this patient"}</DialogDescription>
                   </DialogHeader>
                   <div className="space-y-4">
                     <div>
@@ -2569,9 +3108,21 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                       />
                     </div>
                     <div className="flex justify-end gap-2">
-                      <Button variant="outline" onClick={() => setPrescriptionDialogOpen(false)}>Cancel</Button>
+                      <Button variant="outline" onClick={() => {
+                        setPrescriptionDialogOpen(false)
+                        setEditingPrescription(null)
+                        setIsQuantityManuallyEdited(false)
+                        setPrescriptionForm({
+                          medicationId: "",
+                          dosage: "",
+                          frequency: "",
+                          duration: "",
+                          quantity: "",
+                          instructions: "",
+                        })
+                      }}>Cancel</Button>
                       <Button onClick={handleSavePrescription} disabled={savingPrescription}>
-                        {savingPrescription ? "Saving..." : "Save Prescription"}
+                        {savingPrescription ? "Saving..." : editingPrescription ? "Update Prescription" : "Save Prescription"}
                       </Button>
                     </div>
                   </div>
@@ -2588,6 +3139,7 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                       <TableHead>Medications</TableHead>
                       <TableHead>Doctor</TableHead>
                       <TableHead>Status</TableHead>
+                      <TableHead className="w-[100px]">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -2601,11 +3153,31 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                           <TableCell>
                             <Badge variant="outline">{prescription.status || "active"}</Badge>
                           </TableCell>
+                          <TableCell>
+                            <div className="flex gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleViewPrescription(prescription)}
+                                title="View details"
+                              >
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleEditPrescription(prescription)}
+                                title="Edit prescription"
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </TableCell>
                         </TableRow>
                       ))
                     ) : (
                       <TableRow>
-                        <TableCell colSpan={5} className="text-center text-muted-foreground">
+                        <TableCell colSpan={6} className="text-center text-muted-foreground">
                           No prescriptions yet
                         </TableCell>
                       </TableRow>
@@ -2616,6 +3188,309 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
             </Card>
           </TabsContent>
         </Tabs>
+
+        {/* View Procedure Dialog */}
+        <Dialog open={viewProcedureDialogOpen} onOpenChange={setViewProcedureDialogOpen}>
+          <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Procedure Details</DialogTitle>
+              <DialogDescription>
+                {viewingProcedure ? (
+                  <>
+                    {format(new Date(viewingProcedure.procedureDate), "PP")} - {viewingProcedure.procedureName}
+                  </>
+                ) : (
+                  "View detailed information about this procedure"
+                )}
+              </DialogDescription>
+            </DialogHeader>
+            {viewingProcedure && (
+              <div className="space-y-6">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-sm font-semibold">Procedure</Label>
+                    <p>{viewingProcedure.procedureName}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-semibold">Procedure Date</Label>
+                    <p>{format(new Date(viewingProcedure.procedureDate), "PP")}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-semibold">Performed By</Label>
+                    <p>{viewingProcedure.performedByFirstName} {viewingProcedure.performedByLastName}</p>
+                  </div>
+                </div>
+                {viewingProcedure.notes && (
+                  <div>
+                    <Label className="text-sm font-semibold mb-2 block">Notes</Label>
+                    <div className="p-3 bg-muted rounded-md">
+                      <p className="text-sm whitespace-pre-wrap">{viewingProcedure.notes}</p>
+                    </div>
+                  </div>
+                )}
+                {viewingProcedure.complications && (
+                  <div>
+                    <Label className="text-sm font-semibold mb-2 block">Complications</Label>
+                    <div className="p-3 bg-muted rounded-md">
+                      <p className="text-sm whitespace-pre-wrap">{viewingProcedure.complications}</p>
+                    </div>
+                  </div>
+                )}
+                <div className="flex justify-end">
+                  <Button variant="outline" onClick={() => setViewProcedureDialogOpen(false)}>
+                    Close
+                  </Button>
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+
+        {/* View Radiology Order Dialog */}
+        <Dialog open={viewRadiologyOrderDialogOpen} onOpenChange={setViewRadiologyOrderDialogOpen}>
+          <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Radiology Order Details</DialogTitle>
+              <DialogDescription>
+                {viewingRadiologyOrder ? (
+                  <>
+                    {viewingRadiologyOrder.orderNumber} - {format(new Date(viewingRadiologyOrder.orderDate), "PP")}
+                  </>
+                ) : (
+                  "View detailed information about this radiology order"
+                )}
+              </DialogDescription>
+            </DialogHeader>
+            {viewingRadiologyOrder && (
+              <div className="space-y-6">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-sm font-semibold">Order Number</Label>
+                    <p className="font-mono">{viewingRadiologyOrder.orderNumber}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-semibold">Order Date</Label>
+                    <p>{format(new Date(viewingRadiologyOrder.orderDate), "PP")}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-semibold">Examination</Label>
+                    <p>{viewingRadiologyOrder.examName || "Unknown"}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-semibold">Body Part</Label>
+                    <p>{viewingRadiologyOrder.bodyPart || "N/A"}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-semibold">Priority</Label>
+                    <p>
+                      <Badge variant={viewingRadiologyOrder.priority === 'stat' || viewingRadiologyOrder.priority === 'urgent' ? 'destructive' : 'outline'}>
+                        {viewingRadiologyOrder.priority?.toUpperCase() || 'ROUTINE'}
+                      </Badge>
+                    </p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-semibold">Status</Label>
+                    <p>
+                      <Badge variant={viewingRadiologyOrder.status === 'completed' ? 'default' : viewingRadiologyOrder.status === 'in_progress' ? 'secondary' : 'outline'}>
+                        {viewingRadiologyOrder.status?.split('_').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') || 'PENDING'}
+                      </Badge>
+                    </p>
+                  </div>
+                  {viewingRadiologyOrder.scheduledDate && (
+                    <div>
+                      <Label className="text-sm font-semibold">Scheduled Date</Label>
+                      <p>{format(new Date(viewingRadiologyOrder.scheduledDate), "PPp")}</p>
+                    </div>
+                  )}
+                  <div>
+                    <Label className="text-sm font-semibold">Ordered By</Label>
+                    <p>{viewingRadiologyOrder.doctorFirstName} {viewingRadiologyOrder.doctorLastName}</p>
+                  </div>
+                </div>
+                {viewingRadiologyOrder.clinicalIndication && (
+                  <div>
+                    <Label className="text-sm font-semibold mb-2 block">Clinical Indication</Label>
+                    <div className="p-3 bg-muted rounded-md">
+                      <p className="text-sm whitespace-pre-wrap">{viewingRadiologyOrder.clinicalIndication}</p>
+                    </div>
+                  </div>
+                )}
+                {viewingRadiologyOrder.notes && (
+                  <div>
+                    <Label className="text-sm font-semibold mb-2 block">Notes</Label>
+                    <div className="p-3 bg-muted rounded-md">
+                      <p className="text-sm whitespace-pre-wrap">{viewingRadiologyOrder.notes}</p>
+                    </div>
+                  </div>
+                )}
+                <div className="flex justify-end">
+                  <Button variant="outline" onClick={() => setViewRadiologyOrderDialogOpen(false)}>
+                    Close
+                  </Button>
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+
+        {/* View Lab Order Dialog */}
+        <Dialog open={viewLabOrderDialogOpen} onOpenChange={setViewLabOrderDialogOpen}>
+          <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Lab Order Details</DialogTitle>
+              <DialogDescription>
+                {viewingLabOrder ? (
+                  <>
+                    Order #{viewingLabOrder.orderId} - {format(new Date(viewingLabOrder.orderDate), "PP")}
+                  </>
+                ) : (
+                  "View detailed information about this lab order"
+                )}
+              </DialogDescription>
+            </DialogHeader>
+            {viewingLabOrder && (
+              <div className="space-y-6">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-sm font-semibold">Order Date</Label>
+                    <p>{format(new Date(viewingLabOrder.orderDate), "PP")}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-semibold">Priority</Label>
+                    <p>
+                      <Badge variant={viewingLabOrder.priority === "stat" ? "destructive" : viewingLabOrder.priority === "urgent" ? "default" : "secondary"}>
+                        {viewingLabOrder.priority}
+                      </Badge>
+                    </p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-semibold">Status</Label>
+                    <p>
+                      <Badge variant="outline">{viewingLabOrder.status || "pending"}</Badge>
+                    </p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-semibold">Ordered By</Label>
+                    <p>{viewingLabOrder.orderedByFirstName} {viewingLabOrder.orderedByLastName}</p>
+                  </div>
+                </div>
+                {viewingLabOrder.items && viewingLabOrder.items.length > 0 && (
+                  <div>
+                    <Label className="text-sm font-semibold mb-2 block">Test Types</Label>
+                    <div className="space-y-2">
+                      {viewingLabOrder.items.map((item: any, idx: number) => (
+                        <div key={idx} className="p-3 bg-muted rounded-md">
+                          <p className="font-medium">{item.testTypeName || `Test ${idx + 1}`}</p>
+                          {item.notes && <p className="text-sm text-muted-foreground mt-1">{item.notes}</p>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {viewingLabOrder.clinicalIndication && (
+                  <div>
+                    <Label className="text-sm font-semibold mb-2 block">Clinical Indication</Label>
+                    <div className="p-3 bg-muted rounded-md">
+                      <p className="text-sm whitespace-pre-wrap">{viewingLabOrder.clinicalIndication}</p>
+                    </div>
+                  </div>
+                )}
+                {viewingLabOrder.notes && (
+                  <div>
+                    <Label className="text-sm font-semibold mb-2 block">Notes</Label>
+                    <div className="p-3 bg-muted rounded-md">
+                      <p className="text-sm whitespace-pre-wrap">{viewingLabOrder.notes}</p>
+                    </div>
+                  </div>
+                )}
+                <div className="flex justify-end">
+                  <Button variant="outline" onClick={() => setViewLabOrderDialogOpen(false)}>
+                    Close
+                  </Button>
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+
+        {/* View Prescription Dialog */}
+        <Dialog open={viewPrescriptionDialogOpen} onOpenChange={setViewPrescriptionDialogOpen}>
+          <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Prescription Details</DialogTitle>
+              <DialogDescription>
+                {viewingPrescription ? (
+                  <>
+                    {viewingPrescription.prescriptionNumber} - {format(new Date(viewingPrescription.prescriptionDate), "PP")}
+                  </>
+                ) : (
+                  "View detailed information about this prescription"
+                )}
+              </DialogDescription>
+            </DialogHeader>
+            {viewingPrescription && (
+              <div className="space-y-6">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-sm font-semibold">Prescription Number</Label>
+                    <p className="font-mono">{viewingPrescription.prescriptionNumber}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-semibold">Prescription Date</Label>
+                    <p>{format(new Date(viewingPrescription.prescriptionDate), "PP")}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-semibold">Doctor</Label>
+                    <p>{viewingPrescription.doctorFirstName} {viewingPrescription.doctorLastName}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-semibold">Status</Label>
+                    <p>
+                      <Badge variant="outline">{viewingPrescription.status || "active"}</Badge>
+                    </p>
+                  </div>
+                </div>
+                {viewingPrescription.items && viewingPrescription.items.length > 0 && (
+                  <div>
+                    <Label className="text-sm font-semibold mb-2 block">Medications</Label>
+                    <div className="space-y-3">
+                      {viewingPrescription.items.map((item: any, idx: number) => (
+                        <div key={idx} className="p-4 bg-muted rounded-md space-y-2">
+                          <p className="font-medium">{item.medicationName || `Medication ${idx + 1}`}</p>
+                          <div className="grid grid-cols-2 gap-2 text-sm">
+                            <div>
+                              <span className="text-muted-foreground">Dosage:</span> {item.dosage || "N/A"}
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">Frequency:</span> {item.frequency || "N/A"}
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">Duration:</span> {item.duration || "N/A"}
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">Quantity:</span> {item.quantity || "N/A"}
+                            </div>
+                          </div>
+                          {item.instructions && (
+                            <div className="mt-2">
+                              <span className="text-sm text-muted-foreground">Instructions:</span>
+                              <p className="text-sm mt-1">{item.instructions}</p>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div className="flex justify-end">
+                  <Button variant="outline" onClick={() => setViewPrescriptionDialogOpen(false)}>
+                    Close
+                  </Button>
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
 
         {/* Delete Vital Confirmation Dialog */}
         <AlertDialog open={deleteVitalDialogOpen} onOpenChange={setDeleteVitalDialogOpen}>

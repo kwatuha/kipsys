@@ -1292,6 +1292,93 @@ router.post('/admissions/:id/reviews', async (req, res) => {
 });
 
 /**
+ * @route PUT /api/inpatient/reviews/:reviewId
+ * @description Update a doctor review
+ */
+router.put('/reviews/:reviewId', async (req, res) => {
+    try {
+        const { reviewId } = req.params;
+        const { reviewDate, reviewingDoctorId, reviewType, subjective, objective, assessment, plan, notes, nextReviewDate } = req.body;
+
+        // Check if review exists
+        const [existing] = await pool.execute(
+            'SELECT reviewId FROM inpatient_doctor_reviews WHERE reviewId = ?',
+            [reviewId]
+        );
+
+        if (existing.length === 0) {
+            return res.status(404).json({ message: 'Doctor review not found' });
+        }
+
+        // Build update query
+        const updates = [];
+        const values = [];
+
+        if (reviewDate !== undefined) {
+            updates.push('reviewDate = ?');
+            values.push(reviewDate);
+        }
+        if (reviewingDoctorId !== undefined) {
+            updates.push('reviewingDoctorId = ?');
+            values.push(reviewingDoctorId);
+        }
+        if (reviewType !== undefined) {
+            updates.push('reviewType = ?');
+            values.push(reviewType);
+        }
+        if (subjective !== undefined) {
+            updates.push('subjective = ?');
+            values.push(subjective || null);
+        }
+        if (objective !== undefined) {
+            updates.push('objective = ?');
+            values.push(objective || null);
+        }
+        if (assessment !== undefined) {
+            updates.push('assessment = ?');
+            values.push(assessment || null);
+        }
+        if (plan !== undefined) {
+            updates.push('plan = ?');
+            values.push(plan || null);
+        }
+        if (notes !== undefined) {
+            updates.push('notes = ?');
+            values.push(notes || null);
+        }
+        if (nextReviewDate !== undefined) {
+            updates.push('nextReviewDate = ?');
+            values.push(nextReviewDate || null);
+        }
+
+        if (updates.length === 0) {
+            return res.status(400).json({ message: 'No fields to update' });
+        }
+
+        values.push(reviewId);
+
+        await pool.execute(
+            `UPDATE inpatient_doctor_reviews SET ${updates.join(', ')}, updatedAt = NOW() WHERE reviewId = ?`,
+            values
+        );
+
+        const [updatedReview] = await pool.execute(
+            `SELECT r.*,
+                    u.firstName as doctorFirstName, u.lastName as doctorLastName
+             FROM inpatient_doctor_reviews r
+             LEFT JOIN users u ON r.reviewingDoctorId = u.userId
+             WHERE r.reviewId = ?`,
+            [reviewId]
+        );
+
+        res.status(200).json(updatedReview[0]);
+    } catch (error) {
+        console.error('Error updating doctor review:', error);
+        res.status(500).json({ message: 'Error updating doctor review', error: error.message });
+    }
+});
+
+/**
  * @route GET /api/inpatient/admissions/:id/nursing-care
  * @description Get nursing care notes for an admission
  */
@@ -1347,6 +1434,97 @@ router.post('/admissions/:id/nursing-care', async (req, res) => {
     } catch (error) {
         console.error('Error creating nursing care note:', error);
         res.status(500).json({ message: 'Error creating nursing care note', error: error.message });
+    }
+});
+
+/**
+ * @route PUT /api/inpatient/nursing-care/:careId
+ * @description Update a nursing care note
+ */
+router.put('/nursing-care/:careId', async (req, res) => {
+    try {
+        const { careId } = req.params;
+        const { careDate, nurseId, careType, shift, vitalSignsRecorded, observations, interventions, patientResponse, concerns, notes } = req.body;
+
+        // Check if care note exists
+        const [existing] = await pool.execute(
+            'SELECT careId FROM inpatient_nursing_care WHERE careId = ?',
+            [careId]
+        );
+
+        if (existing.length === 0) {
+            return res.status(404).json({ message: 'Nursing care note not found' });
+        }
+
+        // Build update query
+        const updates = [];
+        const values = [];
+
+        if (careDate !== undefined) {
+            updates.push('careDate = ?');
+            values.push(careDate);
+        }
+        if (nurseId !== undefined) {
+            updates.push('nurseId = ?');
+            values.push(nurseId);
+        }
+        if (careType !== undefined) {
+            updates.push('careType = ?');
+            values.push(careType);
+        }
+        if (shift !== undefined) {
+            updates.push('shift = ?');
+            values.push(shift);
+        }
+        if (vitalSignsRecorded !== undefined) {
+            updates.push('vitalSignsRecorded = ?');
+            values.push(vitalSignsRecorded);
+        }
+        if (observations !== undefined) {
+            updates.push('observations = ?');
+            values.push(observations || null);
+        }
+        if (interventions !== undefined) {
+            updates.push('interventions = ?');
+            values.push(interventions || null);
+        }
+        if (patientResponse !== undefined) {
+            updates.push('patientResponse = ?');
+            values.push(patientResponse || null);
+        }
+        if (concerns !== undefined) {
+            updates.push('concerns = ?');
+            values.push(concerns || null);
+        }
+        if (notes !== undefined) {
+            updates.push('notes = ?');
+            values.push(notes || null);
+        }
+
+        if (updates.length === 0) {
+            return res.status(400).json({ message: 'No fields to update' });
+        }
+
+        values.push(careId);
+
+        await pool.execute(
+            `UPDATE inpatient_nursing_care SET ${updates.join(', ')}, updatedAt = NOW() WHERE careId = ?`,
+            values
+        );
+
+        const [updatedCare] = await pool.execute(
+            `SELECT n.*,
+                    u.firstName as nurseFirstName, u.lastName as nurseLastName
+             FROM inpatient_nursing_care n
+             LEFT JOIN users u ON n.nurseId = u.userId
+             WHERE n.careId = ?`,
+            [careId]
+        );
+
+        res.status(200).json(updatedCare[0]);
+    } catch (error) {
+        console.error('Error updating nursing care note:', error);
+        res.status(500).json({ message: 'Error updating nursing care note', error: error.message });
     }
 });
 
