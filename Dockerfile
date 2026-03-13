@@ -27,6 +27,6 @@ EXPOSE 3000
 # For production, dependencies are already installed above
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint-frontend.sh"]
 
-# Start Next.js development server (using legacy mode to avoid Turbopack font issues in Docker)
-# The server will compile on first access, but subsequent requests will be fast
-CMD ["npm", "run", "dev:legacy"]
+# Start Next.js development server with Turbo mode for faster compilation
+# Turbo mode significantly speeds up page compilation and hot reloading
+CMD ["npm", "run", "dev"]

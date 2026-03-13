@@ -361,6 +361,32 @@ export const pharmacyApi = {
   // Stock Adjustments
   createStockAdjustment: (data: any) =>
     apiRequest<any>('/api/pharmacy/stock-adjustments', { method: 'POST', body: data }),
+
+  // Nurse Pickups (for admitted patients)
+  getPrescriptionsReadyForPickup: (admissionId?: string, patientId?: string) => {
+    const params = new URLSearchParams();
+    if (admissionId) params.append('admissionId', admissionId);
+    if (patientId) params.append('patientId', patientId);
+    return apiRequest<any[]>(`/api/pharmacy/nurse-pickups/ready?${params.toString()}`);
+  },
+
+  createNursePickup: (data: { pickups: Array<{ prescriptionId: string, items: Array<{ prescriptionItemId: string, dispensationId?: string, quantityPickedUp: number, notes?: string }>, notes?: string, admissionId?: string }> }) =>
+    apiRequest<any>('/api/pharmacy/nurse-pickups', { method: 'POST', body: data }),
+
+  getNursePickups: (params?: { nurseId?: string, patientId?: string, admissionId?: string, startDate?: string, endDate?: string, status?: string, page?: number, limit?: number }) => {
+    const searchParams = new URLSearchParams();
+    if (params) {
+      Object.entries(params).forEach(([key, value]) => {
+        if (value !== undefined && value !== null) {
+          searchParams.append(key, value.toString());
+        }
+      });
+    }
+    return apiRequest<{ pickups: any[], pagination: any }>(`/api/pharmacy/nurse-pickups?${searchParams.toString()}`);
+  },
+
+  getNursePickup: (id: string) =>
+    apiRequest<any>(`/api/pharmacy/nurse-pickups/${id}`),
 };
 
 // Notification API
@@ -1903,6 +1929,12 @@ export const proceduresApi = {
 
   createPatientProcedure: (data: any) =>
     apiRequest<any>('/api/procedures/patient', { method: 'POST', body: data }),
+
+  updatePatientProcedure: (id: string, data: any) =>
+    apiRequest<any>(`/api/procedures/patient/${id}`, { method: 'PUT', body: data }),
+
+  deletePatientProcedure: (id: string) =>
+    apiRequest<any>(`/api/procedures/patient/${id}`, { method: 'DELETE' }),
 };
 
 // Ambulance API

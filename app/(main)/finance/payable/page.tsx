@@ -204,7 +204,7 @@ export default function AccountsPayablePage() {
             <style>
               body { font-family: Arial, sans-serif; padding: 20px; }
               .header { text-align: center; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 20px; }
-              .header img { max-width: 150px; height: auto; margin-bottom: 10px; }
+              .header img { max-width: 250px; height: auto; margin-bottom: 15px; display: block; margin-left: auto; margin-right: auto; }
               .invoice-details { margin: 20px 0; }
               .invoice-details table { width: 100%; border-collapse: collapse; }
               .invoice-details td { padding: 8px; border-bottom: 1px solid #ddd; }
@@ -214,7 +214,7 @@ export default function AccountsPayablePage() {
           </head>
           <body>
             <div class="header">
-              <img src="${window.location.origin}/logo.png" alt="Kiplombe Medical Centre" style="max-width: 150px; height: auto; margin-bottom: 10px;" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';" />
+              <img src="${window.location.origin}/logo.png" alt="Kiplombe Medical Centre" style="max-width: 250px; height: auto; margin-bottom: 15px; display: block; margin-left: auto; margin-right: auto;" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';" />
               <div style="display: none;">
                 <h1 style="margin: 0; font-size: 28px; font-weight: bold; letter-spacing: 2px;">KIPLOMBE</h1>
                 <h2 style="margin: 5px 0; font-size: 18px; color: #333;">Medical Centre</h2>

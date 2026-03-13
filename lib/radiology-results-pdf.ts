@@ -144,7 +144,7 @@ export function generateRadiologyOrderHTML(order: RadiologyOrder): string {
       </head>
       <body>
         <div class="header">
-          <img src="${typeof window !== 'undefined' ? window.location.origin : ''}/logo.png" alt="Medical Centre" style="max-width: 150px; height: auto; margin-bottom: 10px;" onerror="this.style.display='none';" />
+          <img src="${typeof window !== 'undefined' ? window.location.origin : ''}/logo.png" alt="Kiplombe Medical Centre" style="max-width: 250px; height: auto; margin-bottom: 15px; display: block; margin-left: auto; margin-right: auto;" onerror="this.style.display='none';" />
           <h1>RADIOLOGY EXAMINATION ORDER</h1>
           <h2>Order Number: ${order.orderNumber}</h2>
         </div>
@@ -437,7 +437,7 @@ export function generateCombinedRadiologyReportHTML(
       </head>
       <body>
         <div class="header">
-          <img src="${typeof window !== 'undefined' ? window.location.origin : ''}/logo.png" alt="Medical Centre" style="max-width: 150px; height: auto; margin-bottom: 10px;" onerror="this.style.display='none';" />
+          <img src="${typeof window !== 'undefined' ? window.location.origin : ''}/logo.png" alt="Kiplombe Medical Centre" style="max-width: 250px; height: auto; margin-bottom: 15px; display: block; margin-left: auto; margin-right: auto;" onerror="this.style.display='none';" />
           <h1>RADIOLOGY EXAMINATION REPORT</h1>
           <h2>Combined Orders and Results</h2>
         </div>

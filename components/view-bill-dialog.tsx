@@ -445,6 +445,14 @@ export function ViewBillDialog({ open, onOpenChange, patientId, queueId, queueNo
                 padding-bottom: 20px;
                 margin-bottom: 30px;
               }
+              .header img {
+                max-width: 250px;
+                height: auto;
+                margin-bottom: 15px;
+                display: block;
+                margin-left: auto;
+                margin-right: auto;
+              }
               .header h1 { margin: 0; font-size: 24px; }
               .header p { margin: 5px 0; color: #666; }
               .info-grid {
@@ -513,7 +521,12 @@ export function ViewBillDialog({ open, onOpenChange, patientId, queueId, queueNo
           </head>
           <body>
             <div class="header">
-              <h1>INVOICE</h1>
+              <img src="${window.location.origin}/logo.png" alt="Kiplombe Medical Centre" style="max-width: 250px; height: auto; margin-bottom: 15px; display: block; margin-left: auto; margin-right: auto;" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';" />
+              <div style="display: none;">
+                <h1 style="margin: 0; font-size: 28px; font-weight: bold; letter-spacing: 2px;">KIPLOMBE</h1>
+                <h2 style="margin: 5px 0; font-size: 18px; color: #333;">Medical Centre</h2>
+              </div>
+              <h1 style="margin-top: 20px;">INVOICE</h1>
               <p>Invoice Number: ${invoiceDetails.invoiceNumber}</p>
               <p>Date: ${invoiceDetails.invoiceDate ? formatDate(invoiceDetails.invoiceDate) : 'N/A'}</p>
             </div>

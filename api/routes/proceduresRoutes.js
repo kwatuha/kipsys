@@ -512,6 +512,127 @@ router.post('/patient', async (req, res) => {
     }
 });
 
+/**
+ * @route PUT /api/procedures/patient/:id
+ * @description Update a patient procedure
+ */
+router.put('/patient/:id', async (req, res) => {
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
+
+        const { id } = req.params;
+        const { procedureId, procedureDate, performedBy, notes, complications } = req.body;
+
+        // Check if patient procedure exists
+        const [existing] = await connection.execute(
+            'SELECT patientProcedureId FROM patient_procedures WHERE patientProcedureId = ?',
+            [id]
+        );
+        if (existing.length === 0) {
+            await connection.rollback();
+            return res.status(404).json({ message: 'Patient procedure not found' });
+        }
+
+        // Build update query dynamically
+        const updates = [];
+        const values = [];
+
+        if (procedureId !== undefined) { updates.push('procedureId = ?'); values.push(procedureId || null); }
+        if (procedureDate !== undefined) { updates.push('procedureDate = ?'); values.push(procedureDate); }
+        if (performedBy !== undefined) { updates.push('performedBy = ?'); values.push(performedBy || null); }
+        if (notes !== undefined) { updates.push('notes = ?'); values.push(notes || null); }
+        if (complications !== undefined) { updates.push('complications = ?'); values.push(complications || null); }
+
+        if (updates.length === 0) {
+            await connection.rollback();
+            return res.status(400).json({ error: 'No fields to update' });
+        }
+
+        // If procedureId is provided, get procedure details to update procedureName and procedureCode
+        if (procedureId) {
+            const [procedure] = await connection.execute(
+                'SELECT procedureCode, procedureName FROM procedures WHERE procedureId = ?',
+                [procedureId]
+            );
+            if (procedure.length > 0) {
+                updates.push('procedureCode = ?');
+                values.push(procedure[0].procedureCode || null);
+                updates.push('procedureName = ?');
+                values.push(procedure[0].procedureName);
+            }
+        }
+
+        values.push(id);
+        await connection.execute(
+            `UPDATE patient_procedures SET ${updates.join(', ')} WHERE patientProcedureId = ?`,
+            values
+        );
+
+        const [updated] = await connection.execute(
+            `SELECT
+                pp.*,
+                p.procedureCode, p.procedureName, p.category, p.description, p.duration, p.cost as procedureCost,
+                p.chargeId,
+                sc.chargeCode as chargeCode, sc.name as chargeName, sc.cost as chargeCost,
+                u.firstName as performedByFirstName, u.lastName as performedByLastName
+            FROM patient_procedures pp
+            LEFT JOIN procedures p ON pp.procedureId = p.procedureId
+            LEFT JOIN service_charges sc ON p.chargeId = sc.chargeId
+            LEFT JOIN users u ON pp.performedBy = u.userId
+            WHERE pp.patientProcedureId = ?`,
+            [id]
+        );
+
+        await connection.commit();
+        res.status(200).json(updated[0]);
+    } catch (error) {
+        await connection.rollback();
+        console.error('Error updating patient procedure:', error);
+        res.status(500).json({ message: 'Error updating patient procedure', error: error.message });
+    } finally {
+        connection.release();
+    }
+});
+
+/**
+ * @route DELETE /api/procedures/patient/:id
+ * @description Delete a patient procedure
+ */
+router.delete('/patient/:id', async (req, res) => {
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
+
+        const { id } = req.params;
+
+        // Check if patient procedure exists
+        const [existing] = await connection.execute(
+            'SELECT patientProcedureId FROM patient_procedures WHERE patientProcedureId = ?',
+            [id]
+        );
+        if (existing.length === 0) {
+            await connection.rollback();
+            return res.status(404).json({ message: 'Patient procedure not found' });
+        }
+
+        // Delete the patient procedure
+        await connection.execute(
+            'DELETE FROM patient_procedures WHERE patientProcedureId = ?',
+            [id]
+        );
+
+        await connection.commit();
+        res.status(200).json({ message: 'Patient procedure deleted successfully' });
+    } catch (error) {
+        await connection.rollback();
+        console.error('Error deleting patient procedure:', error);
+        res.status(500).json({ message: 'Error deleting patient procedure', error: error.message });
+    } finally {
+        connection.release();
+    }
+});
+
 module.exports = router;
 
 

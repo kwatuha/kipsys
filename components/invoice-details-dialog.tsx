@@ -114,9 +114,12 @@ export function InvoiceDetailsDialog({ invoiceId, open, onOpenChange, onUpdate }
               margin-bottom: 30px;
             }
             .header img {
-              max-width: 150px;
+              max-width: 250px;
               height: auto;
-              margin-bottom: 10px;
+              margin-bottom: 15px;
+              display: block;
+              margin-left: auto;
+              margin-right: auto;
             }
             .header h1 { margin: 0; font-size: 24px; }
             .header p { margin: 5px 0; color: #666; }
@@ -186,7 +189,7 @@ export function InvoiceDetailsDialog({ invoiceId, open, onOpenChange, onUpdate }
         </head>
         <body>
           <div class="header">
-            <img src="${window.location.origin}/logo.png" alt="Kiplombe Medical Centre" style="max-width: 150px; height: auto; margin-bottom: 10px;" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';" />
+            <img src="${window.location.origin}/logo.png" alt="Kiplombe Medical Centre" style="max-width: 250px; height: auto; margin-bottom: 15px; display: block; margin-left: auto; margin-right: auto;" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';" />
             <div style="display: none;">
               <h1 style="margin: 0; font-size: 28px; font-weight: bold; letter-spacing: 2px;">KIPLOMBE</h1>
               <h2 style="margin: 5px 0; font-size: 18px; color: #333;">Medical Centre</h2>

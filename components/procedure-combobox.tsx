@@ -85,6 +85,15 @@ export function ProcedureCombobox({
     }
   }, [open, category])
 
+  // Load procedures when value is provided (for editing) but list is empty
+  React.useEffect(() => {
+    if (value && procedures.length === 0 && !loading && !open) {
+      // Load procedures to find the selected one when editing
+      loadProcedures("")
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value])
+
   // Debounced search - reload when search query changes
   React.useEffect(() => {
     if (!open) return

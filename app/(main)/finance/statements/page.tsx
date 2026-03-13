@@ -188,6 +188,7 @@ export default function FinancialStatementsPage() {
 </head>
 <body>
   <div class="header">
+    <img src="${window.location.origin}/logo.png" alt="Kiplombe Medical Centre" style="max-width: 250px; height: auto; margin-bottom: 15px; display: block; margin-left: auto; margin-right: auto;" onerror="this.style.display='none';" />
     <h1>PATIENT FINANCIAL STATEMENT</h1>
     <h2>${patientStatement.statementDate ? format(new Date(patientStatement.statementDate), "dd MMMM yyyy") : ""}</h2>
   </div>
@@ -303,6 +304,7 @@ export default function FinancialStatementsPage() {
   <style>
     body { font-family: Arial, sans-serif; margin: 20px; }
     .header { text-align: center; margin-bottom: 30px; }
+    .header img { max-width: 250px; height: auto; margin-bottom: 15px; display: block; margin-left: auto; margin-right: auto; }
     .header h1 { margin: 0; font-size: 24px; }
     .header h2 { margin: 5px 0; font-size: 18px; color: #666; }
     .staff-info { margin-bottom: 20px; }
@@ -321,6 +323,7 @@ export default function FinancialStatementsPage() {
 </head>
 <body>
   <div class="header">
+    <img src="${window.location.origin}/logo.png" alt="Kiplombe Medical Centre" style="max-width: 250px; height: auto; margin-bottom: 15px; display: block; margin-left: auto; margin-right: auto;" onerror="this.style.display='none';" />
     <h1>STAFF FINANCIAL STATEMENT</h1>
     <h2>${staffStatement.statementDate ? format(new Date(staffStatement.statementDate), "dd MMMM yyyy") : ""}</h2>
   </div>

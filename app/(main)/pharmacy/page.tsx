@@ -16,6 +16,7 @@ import { BatchTraceability } from "@/components/batch-traceability"
 import { DrugInventoryHistoryDialog } from "@/components/drug-inventory-history-dialog"
 import { StockAdjustmentForm } from "@/components/stock-adjustment-form"
 import { DispenseMedicationDialog } from "@/components/dispense-medication-dialog"
+import { NursePickup } from "@/components/nurse-pickup"
 import { pharmacyApi } from "@/lib/api"
 import {
   DropdownMenu,
@@ -267,7 +268,7 @@ export default function PharmacyPage() {
           <style>
             body { font-family: Arial, sans-serif; margin: 20px; }
             .header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #000; padding-bottom: 15px; }
-            .header img { max-width: 150px; height: auto; margin-bottom: 10px; }
+            .header img { max-width: 250px; height: auto; margin-bottom: 15px; display: block; margin-left: auto; margin-right: auto; }
             h1 { text-align: center; margin-bottom: 30px; }
             table { width: 100%; border-collapse: collapse; margin-top: 20px; }
             th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
@@ -278,7 +279,7 @@ export default function PharmacyPage() {
         </head>
         <body>
           <div class="header">
-            <img src="${window.location.origin}/logo.png" alt="Kiplombe Medical Centre" style="max-width: 150px; height: auto; margin-bottom: 10px;" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';" />
+            <img src="${window.location.origin}/logo.png" alt="Kiplombe Medical Centre" style="max-width: 250px; height: auto; margin-bottom: 15px; display: block; margin-left: auto; margin-right: auto;" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';" />
             <div style="display: none;">
               <h1 style="margin: 0; font-size: 28px; font-weight: bold; letter-spacing: 2px;">KIPLOMBE</h1>
               <h2 style="margin: 5px 0; font-size: 18px; color: #333;">Medical Centre</h2>
@@ -590,9 +591,12 @@ export default function PharmacyPage() {
               padding-bottom: 15px;
             }
             .header img {
-              max-width: 150px;
+              max-width: 250px;
               height: auto;
-              margin-bottom: 10px;
+              margin-bottom: 15px;
+              display: block;
+              margin-left: auto;
+              margin-right: auto;
             }
             h1 {
               text-align: center;
@@ -686,7 +690,7 @@ export default function PharmacyPage() {
         </head>
         <body>
           <div class="header">
-            <img src="${window.location.origin}/logo.png" alt="Hospital Logo" style="max-width: 150px; height: auto; margin-bottom: 10px;" onerror="this.style.display='none';" />
+            <img src="${window.location.origin}/logo.png" alt="Kiplombe Medical Centre" style="max-width: 250px; height: auto; margin-bottom: 15px; display: block; margin-left: auto; margin-right: auto;" onerror="this.style.display='none';" />
             <h1 style="margin: 0; font-size: 28px; font-weight: bold; letter-spacing: 2px;">PRESCRIPTION</h1>
           </div>
 
@@ -960,7 +964,7 @@ export default function PharmacyPage() {
           </head>
           <body>
             <div class="header">
-              <img src="${window.location.origin}/logo.png" alt="Hospital Logo" style="max-width: 150px; height: auto; margin-bottom: 10px;" onerror="this.style.display='none';" />
+              <img src="${window.location.origin}/logo.png" alt="Kiplombe Medical Centre" style="max-width: 250px; height: auto; margin-bottom: 15px; display: block; margin-left: auto; margin-right: auto;" onerror="this.style.display='none';" />
               <h1>PRESCRIPTIONS REPORT</h1>
               <div class="filter-info">
                 ${filterDescription} | Total: ${prescriptionsWithDetails.length} prescription(s) | Generated: ${new Date().toLocaleString()}
@@ -1082,7 +1086,7 @@ export default function PharmacyPage() {
               @media print { @page { margin: 15mm; } }
               body { font-family: Arial, sans-serif; margin: 20px; font-size: 11px; }
               .header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #000; padding-bottom: 15px; }
-              .header img { max-width: 150px; height: auto; margin-bottom: 10px; }
+              .header img { max-width: 250px; height: auto; margin-bottom: 15px; display: block; margin-left: auto; margin-right: auto; }
               h1 { text-align: center; margin-bottom: 10px; font-size: 22px; }
               .patient-info { background-color: #f9f9f9; padding: 15px; border-radius: 5px; margin-bottom: 20px; border: 1px solid #ddd; }
               .patient-info h2 { margin: 0 0 10px 0; font-size: 18px; }
@@ -1095,7 +1099,7 @@ export default function PharmacyPage() {
           </head>
           <body>
             <div class="header">
-              <img src="${window.location.origin}/logo.png" alt="Hospital Logo" style="max-width: 150px; height: auto; margin-bottom: 10px;" onerror="this.style.display='none';" />
+              <img src="${window.location.origin}/logo.png" alt="Kiplombe Medical Centre" style="max-width: 250px; height: auto; margin-bottom: 15px; display: block; margin-left: auto; margin-right: auto;" onerror="this.style.display='none';" />
               <h1>PRESCRIPTIONS REPORT</h1>
             </div>
             <div class="patient-info">
@@ -1286,7 +1290,7 @@ export default function PharmacyPage() {
           </head>
           <body>
             <div class="header">
-              <img src="${window.location.origin}/logo.png" alt="Hospital Logo" style="max-width: 150px; height: auto; margin-bottom: 10px;" onerror="this.style.display='none';" />
+              <img src="${window.location.origin}/logo.png" alt="Kiplombe Medical Centre" style="max-width: 250px; height: auto; margin-bottom: 15px; display: block; margin-left: auto; margin-right: auto;" onerror="this.style.display='none';" />
               <h1>PRESCRIPTIONS REPORT</h1>
               <div class="filter-info">
                 ${filterDescription} | Total: ${prescriptionsWithDetails.length} prescription(s) | Generated: ${new Date().toLocaleString()}
@@ -1404,13 +1408,14 @@ export default function PharmacyPage() {
       </div>
 
       <Tabs defaultValue="prescriptions" className="w-full">
-        <TabsList className="grid w-full grid-cols-6">
+        <TabsList className="grid w-full grid-cols-7">
           <TabsTrigger value="prescriptions">Prescriptions</TabsTrigger>
           <TabsTrigger value="medications">Medications</TabsTrigger>
           <TabsTrigger value="drug-inventory">Drug Inventory</TabsTrigger>
           <TabsTrigger value="drug-inventory-summary">Inventory Summary</TabsTrigger>
           <TabsTrigger value="batch-trace">Batch Trace</TabsTrigger>
           <TabsTrigger value="drug-history">Drug History</TabsTrigger>
+          <TabsTrigger value="nurse-pickup">Nurse Pickup</TabsTrigger>
         </TabsList>
 
         <TabsContent value="prescriptions" className="space-y-4 mt-4">
@@ -1558,28 +1563,44 @@ export default function PharmacyPage() {
                                             </Badge>
                                           </div>
                                           <div className="flex items-center gap-2">
-                                            <Button
-                                              variant="ghost"
-                                              size="sm"
+                                            <div
+                                              className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 hover:bg-accent hover:text-accent-foreground h-8 px-3"
                                               onClick={(e) => {
                                                 e.stopPropagation()
                                                 handlePrintAllPrescriptionsForPatient(group.prescriptions)
                                               }}
                                               title="Print all prescriptions for this patient"
+                                              role="button"
+                                              tabIndex={0}
+                                              onKeyDown={(e) => {
+                                                if (e.key === 'Enter' || e.key === ' ') {
+                                                  e.preventDefault()
+                                                  e.stopPropagation()
+                                                  handlePrintAllPrescriptionsForPatient(group.prescriptions)
+                                                }
+                                              }}
                                             >
                                               <Printer className="h-4 w-4" />
-                                            </Button>
-                                            <Button
-                                              variant="ghost"
-                                              size="sm"
+                                            </div>
+                                            <div
+                                              className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 hover:bg-accent hover:text-accent-foreground h-8 px-3"
                                               onClick={(e) => {
                                                 e.stopPropagation()
                                                 handleDownloadAllPrescriptionsPDFForPatient(group.prescriptions)
                                               }}
                                               title="Download all prescriptions for this patient as PDF"
+                                              role="button"
+                                              tabIndex={0}
+                                              onKeyDown={(e) => {
+                                                if (e.key === 'Enter' || e.key === ' ') {
+                                                  e.preventDefault()
+                                                  e.stopPropagation()
+                                                  handleDownloadAllPrescriptionsPDFForPatient(group.prescriptions)
+                                                }
+                                              }}
                                             >
                                               <Download className="h-4 w-4" />
-                                            </Button>
+                                            </div>
                                           </div>
                                         </div>
                                       </AccordionTrigger>
@@ -2141,6 +2162,10 @@ export default function PharmacyPage() {
               </div>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="nurse-pickup" className="space-y-4 mt-4">
+          <NursePickup />
         </TabsContent>
       </Tabs>
 

@@ -51,10 +51,13 @@ export default function LoginPage() {
   // Loading Screen for Auth checks and Active Redirects
   if (isLoading || (isAuthenticated && pathname === "/login") || isRedirecting) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-blue-100">
-        <div className="text-center">
-          <Loader2 className="h-10 w-10 animate-spin text-[#0f4c75] mx-auto mb-4" />
-          <p className="text-sm font-medium text-[#0f4c75]">
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
+        <div className="text-center space-y-4">
+          <div className="relative">
+            <Loader2 className="h-12 w-12 animate-spin text-[#0f4c75] mx-auto" />
+            <div className="absolute inset-0 h-12 w-12 border-4 border-[#0f4c75]/20 rounded-full mx-auto"></div>
+          </div>
+          <p className="text-sm font-medium text-slate-700 animate-pulse">
             Securely logging you in...
           </p>
         </div>
@@ -63,29 +66,25 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-blue-100 p-4">
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 p-4">
       <div className="w-full max-w-md">
-        <Card className="shadow-xl border-0 bg-white/95 backdrop-blur-sm">
-          <CardHeader className="space-y-6 pb-8">
+        <Card className="shadow-2xl border border-slate-200/50 bg-white/98 backdrop-blur-md transition-all duration-300 hover:shadow-3xl">
+          <CardHeader className="space-y-8 pb-10 pt-10 px-8">
             <div className="flex justify-center">
-              <div className="flex flex-col items-center space-y-4">
-                <HospitalLogoImage variant="default" width={180} height={60} />
-                <div className="text-center space-y-2">
-                  <h1 className="text-2xl font-bold text-[#0f4c75] tracking-tight">
-                    Kiplombe Medical Centre
-                  </h1>
-                  <p className="text-sm text-muted-foreground">
-                    Hospital Management Information System
-                  </p>
+              <div className="flex flex-col items-center space-y-6">
+                <div className="p-4 rounded-2xl bg-gradient-to-br from-blue-50/50 to-indigo-50/50 border border-blue-100/50 shadow-inner">
+                  <HospitalLogoImage variant="default" width={320} height={110} />
                 </div>
               </div>
             </div>
           </CardHeader>
 
-          <CardContent className="space-y-6">
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="username">Username</Label>
+          <CardContent className="space-y-6 px-8 pb-8">
+            <form onSubmit={handleSubmit} className="space-y-5">
+              <div className="space-y-2.5">
+                <Label htmlFor="username" className="text-sm font-medium text-slate-700">
+                  Username
+                </Label>
                 <Input
                   id="username"
                   type="text"
@@ -93,13 +92,15 @@ export default function LoginPage() {
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   disabled={isLoading}
-                  className="h-11"
+                  className="h-12 text-base border-slate-300 focus:border-[#0f4c75] focus:ring-[#0f4c75] transition-all duration-200"
                   required
                 />
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="password">Password</Label>
+              <div className="space-y-2.5">
+                <Label htmlFor="password" className="text-sm font-medium text-slate-700">
+                  Password
+                </Label>
                 <Input
                   id="password"
                   type="password"
@@ -107,50 +108,64 @@ export default function LoginPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   disabled={isLoading}
-                  className="h-11"
+                  className="h-12 text-base border-slate-300 focus:border-[#0f4c75] focus:ring-[#0f4c75] transition-all duration-200"
                   required
                 />
               </div>
 
               {error && (
-                <div className="flex items-center gap-2 rounded-md bg-destructive/10 border border-destructive/20 p-3 text-sm text-destructive">
-                  <AlertCircle className="h-4 w-4 shrink-0" />
-                  <span>{error}</span>
+                <div className="flex items-center gap-2.5 rounded-lg bg-red-50/80 border border-red-200/50 p-3.5 text-sm text-red-700 shadow-sm animate-in fade-in-50">
+                  <AlertCircle className="h-4 w-4 shrink-0 text-red-600" />
+                  <span className="font-medium">{error}</span>
                 </div>
               )}
 
               <Button
                 type="submit"
-                className="w-full h-11 text-base font-medium bg-[#0f4c75] hover:bg-[#1b5e8a]"
+                className="w-full h-12 text-base font-semibold bg-gradient-to-r from-[#0f4c75] to-[#1b5e8a] hover:from-[#1b5e8a] hover:to-[#2563eb] text-white shadow-lg hover:shadow-xl transition-all duration-200 transform hover:scale-[1.02] active:scale-[0.98]"
                 disabled={isLoading}
               >
                 {isLoading ? (
-                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Signing In...</>
+                  <>
+                    <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                    Signing In...
+                  </>
                 ) : (
                   "Sign In"
                 )}
               </Button>
             </form>
 
-            <div className="pt-4 border-t">
-              <div className="rounded-lg bg-muted/50 p-4 space-y-3">
-                <h3 className="text-sm font-semibold text-foreground">Test Credentials</h3>
-                <div className="space-y-2.5 text-xs">
-                  <div className="flex justify-between items-center">
-                    <span className="font-medium">Admin:</span>
-                    <code className="bg-background px-2 py-0.5 rounded border">admin / admin123</code>
+            <div className="pt-6 border-t border-slate-200">
+              <div className="rounded-xl bg-gradient-to-br from-slate-50 to-blue-50/30 border border-slate-200/50 p-5 space-y-3.5 shadow-sm">
+                <h3 className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#0f4c75]"></span>
+                  Test Credentials
+                </h3>
+                <div className="space-y-3 text-xs">
+                  <div className="flex justify-between items-center group">
+                    <span className="font-medium text-slate-600">Admin:</span>
+                    <code className="bg-white/80 px-3 py-1.5 rounded-md border border-slate-200 text-slate-700 font-mono text-xs shadow-sm group-hover:bg-white transition-colors">
+                      admin / admin123
+                    </code>
                   </div>
-                  <div className="flex justify-between items-center">
-                    <span className="font-medium">Doctor:</span>
-                    <code className="bg-background px-2 py-0.5 rounded border">doctor1 / password123</code>
+                  <div className="flex justify-between items-center group">
+                    <span className="font-medium text-slate-600">Doctor:</span>
+                    <code className="bg-white/80 px-3 py-1.5 rounded-md border border-slate-200 text-slate-700 font-mono text-xs shadow-sm group-hover:bg-white transition-colors">
+                      doctor1 / password123
+                    </code>
                   </div>
-                  <div className="flex justify-between items-center">
-                    <span className="font-medium">Nurse:</span>
-                    <code className="bg-background px-2 py-0.5 rounded border">nurse1 / password123</code>
+                  <div className="flex justify-between items-center group">
+                    <span className="font-medium text-slate-600">Nurse:</span>
+                    <code className="bg-white/80 px-3 py-1.5 rounded-md border border-slate-200 text-slate-700 font-mono text-xs shadow-sm group-hover:bg-white transition-colors">
+                      nurse1 / password123
+                    </code>
                   </div>
-                  <div className="flex justify-between items-center">
-                    <span className="font-medium">Pharmacist:</span>
-                    <code className="bg-background px-2 py-0.5 rounded border">pharmacist1 / password123</code>
+                  <div className="flex justify-between items-center group">
+                    <span className="font-medium text-slate-600">Pharmacist:</span>
+                    <code className="bg-white/80 px-3 py-1.5 rounded-md border border-slate-200 text-slate-700 font-mono text-xs shadow-sm group-hover:bg-white transition-colors">
+                      pharmacist1 / password123
+                    </code>
                   </div>
                 </div>
               </div>

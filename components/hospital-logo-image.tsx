@@ -20,8 +20,8 @@ export function HospitalLogoImage({
   const [triedSvg, setTriedSvg] = useState(false)
 
   // Default dimensions based on variant
-  const defaultWidth = width || (variant === "compact" ? 120 : variant === "print" ? 150 : 180)
-  const defaultHeight = height || (variant === "compact" ? 40 : variant === "print" ? 50 : 60)
+  const defaultWidth = width || (variant === "compact" ? 120 : variant === "print" ? 150 : 240)
+  const defaultHeight = height || (variant === "compact" ? 40 : variant === "print" ? 50 : 80)
 
   // If image failed to load, show text fallback
   if (imageError && triedSvg) {

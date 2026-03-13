@@ -58,6 +58,15 @@ export function TestTypeCombobox({
     }
   }, [open, category])
 
+  // Load test types when value is provided (for editing) but list is empty
+  React.useEffect(() => {
+    if (value && testTypes.length === 0 && !loading && !open) {
+      // Load test types to find the selected one when editing
+      loadTestTypes("")
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value])
+
   // Debounced search - reload when search query changes
   React.useEffect(() => {
     if (!open) return

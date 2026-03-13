@@ -373,15 +373,15 @@ router.post('/prescriptions', async (req, res) => {
 
         // Ensure all values are properly set (no undefined)
         const prescriptionValues = [
-            prescNumber, 
-            patientId !== undefined ? patientId : null, 
-            doctorId !== undefined ? doctorId : null, 
-            prescriptionDate || new Date(), 
-            status || 'pending', 
-            notes !== undefined && notes !== null ? notes : null, 
+            prescNumber,
+            patientId !== undefined ? patientId : null,
+            doctorId !== undefined ? doctorId : null,
+            prescriptionDate || new Date(),
+            status || 'pending',
+            notes !== undefined && notes !== null ? notes : null,
             admissionId !== undefined && admissionId !== null ? admissionId : null
         ];
-        
+
         // Validate no undefined values
         for (let i = 0; i < prescriptionValues.length; i++) {
             if (prescriptionValues[i] === undefined) {
@@ -426,16 +426,16 @@ router.post('/prescriptions', async (req, res) => {
                 // Save prescription item
                 // Ensure all values are null instead of undefined to avoid SQL errors
                 const itemValues = [
-                    prescriptionId !== undefined ? prescriptionId : null, 
-                    medicationIdNum !== undefined && medicationIdNum !== null ? medicationIdNum : null, 
-                    medicationName !== undefined && medicationName !== null ? medicationName : null, 
+                    prescriptionId !== undefined ? prescriptionId : null,
+                    medicationIdNum !== undefined && medicationIdNum !== null ? medicationIdNum : null,
+                    medicationName !== undefined && medicationName !== null ? medicationName : null,
                     item.dosage !== undefined && item.dosage !== null ? item.dosage : null,
                     item.frequency !== undefined && item.frequency !== null ? item.frequency : null,
                     item.duration !== undefined && item.duration !== null ? item.duration : null,
                     quantityNum !== undefined && quantityNum !== null ? quantityNum : null,
                     item.instructions !== undefined && item.instructions !== null ? item.instructions : null
                 ];
-                
+
                 // Validate no undefined values before executing
                 for (let i = 0; i < itemValues.length; i++) {
                     if (itemValues[i] === undefined) {
@@ -445,7 +445,7 @@ router.post('/prescriptions', async (req, res) => {
                         throw new Error(`Prescription item parameter at index ${i} is undefined`);
                     }
                 }
-                
+
                 await connection.execute(
                     `INSERT INTO prescription_items (prescriptionId, medicationId, medicationName, dosage, frequency, duration, quantity, instructions)
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -3820,6 +3820,774 @@ router.delete('/drug-stores/:id', async (req, res) => {
     } catch (error) {
         console.error('Error deleting drug store:', error);
         res.status(500).json({ message: 'Error deleting drug store', error: error.message });
+    }
+});
+
+// ============================================
+// NURSE DRUG PICKUPS (For Admitted Patients)
+// ============================================
+
+/**
+ * @route GET /api/pharmacy/nurse-pickups/ready
+ * @description Get prescriptions ready for pickup by nurses (for admitted patients)
+ */
+router.get('/nurse-pickups/ready', async (req, res) => {
+    try {
+        const { admissionId, patientId, status } = req.query;
+
+        let query = `
+            SELECT DISTINCT
+                p.prescriptionId,
+                p.prescriptionNumber,
+                p.prescriptionDate,
+                p.status as prescriptionStatus,
+                p.patientId,
+                pt.patientNumber,
+                pt.firstName as patientFirstName,
+                pt.lastName as patientLastName,
+                pt.dateOfBirth,
+                pt.gender,
+                ia.admissionId,
+                ia.admissionNumber,
+                ia.admissionDate,
+                ia.dischargeDate,
+                ia.status as admissionStatus,
+                dr.firstName as doctorFirstName,
+                dr.lastName as doctorLastName,
+                dr.username as doctorUsername,
+                -- Count pending items
+                (SELECT COUNT(*)
+                 FROM prescription_items pi
+                 WHERE pi.prescriptionId = p.prescriptionId
+                 AND pi.status = 'dispensed'
+                 AND NOT EXISTS (
+                     SELECT 1 FROM nurse_pickup_items npi
+                     INNER JOIN nurse_pickups np ON npi.pickupId = np.pickupId
+                     WHERE npi.prescriptionItemId = pi.itemId
+                     AND np.status = 'picked_up'
+                 )
+                ) as pendingPickupItems,
+                -- Get medication names
+                GROUP_CONCAT(DISTINCT pi.medicationName SEPARATOR ', ') as medicationNames
+            FROM prescriptions p
+            INNER JOIN patients pt ON p.patientId = pt.patientId
+            LEFT JOIN admissions ia ON pt.patientId = ia.patientId
+                AND (ia.dischargeDate IS NULL OR ia.dischargeDate >= CURDATE())
+                AND ia.status = 'admitted'
+            INNER JOIN users dr ON p.doctorId = dr.userId
+            INNER JOIN prescription_items pi ON p.prescriptionId = pi.prescriptionId
+            WHERE p.status = 'dispensed'
+            AND pi.status = 'dispensed'
+            AND EXISTS (
+                SELECT 1 FROM dispensations d
+                WHERE d.prescriptionItemId = pi.itemId
+            )
+            AND NOT EXISTS (
+                SELECT 1 FROM nurse_pickup_items npi
+                INNER JOIN nurse_pickups np ON npi.pickupId = np.pickupId
+                WHERE npi.prescriptionItemId = pi.itemId
+                AND np.status = 'picked_up'
+            )
+        `;
+
+        const params = [];
+
+        if (admissionId) {
+            query += ` AND ia.admissionId = ?`;
+            params.push(admissionId);
+        }
+
+        if (patientId) {
+            query += ` AND p.patientId = ?`;
+            params.push(patientId);
+        }
+
+        // Only show prescriptions for admitted patients
+        query += ` AND ia.admissionId IS NOT NULL`;
+
+        query += ` GROUP BY p.prescriptionId, p.prescriptionNumber, p.prescriptionDate, p.status,
+                          p.patientId, pt.patientNumber, pt.firstName, pt.lastName, pt.dateOfBirth, pt.gender,
+                          ia.admissionId, ia.admissionNumber, ia.admissionDate, ia.dischargeDate, ia.status,
+                          dr.firstName, dr.lastName, dr.username
+                  HAVING pendingPickupItems > 0
+                  ORDER BY p.prescriptionDate DESC, p.prescriptionId DESC`;
+
+        const [rows] = await pool.execute(query, params);
+
+        // Get detailed items for each prescription
+        const prescriptionsWithItems = await Promise.all(
+            rows.map(async (prescription) => {
+                const [items] = await pool.execute(
+                    `SELECT
+                        pi.itemId,
+                        pi.itemId as prescriptionItemId,
+                        pi.medicationId,
+                        pi.medicationName,
+                        pi.dosage,
+                        pi.frequency,
+                        pi.duration,
+                        pi.quantity,
+                        pi.instructions,
+                        pi.status,
+                        d.dispensationId,
+                        d.dispensationDate,
+                        d.quantityDispensed,
+                        d.batchNumber,
+                        d.expiryDate,
+                        dispenser.firstName as dispensedByFirstName,
+                        dispenser.lastName as dispensedByLastName
+                    FROM prescription_items pi
+                    INNER JOIN dispensations d ON d.prescriptionItemId = pi.itemId
+                    LEFT JOIN users dispenser ON d.dispensedBy = dispenser.userId
+                    WHERE pi.prescriptionId = ?
+                    AND pi.status = 'dispensed'
+                    AND NOT EXISTS (
+                        SELECT 1 FROM nurse_pickup_items npi
+                        INNER JOIN nurse_pickups np ON npi.pickupId = np.pickupId
+                        WHERE npi.prescriptionItemId = pi.itemId
+                        AND np.status = 'picked_up'
+                    )
+                    ORDER BY d.dispensationDate DESC`,
+                    [prescription.prescriptionId]
+                );
+
+                return {
+                    ...prescription,
+                    items: items
+                };
+            })
+        );
+
+        res.status(200).json(prescriptionsWithItems);
+    } catch (error) {
+        console.error('Error fetching prescriptions ready for pickup:', error);
+        res.status(500).json({ message: 'Error fetching prescriptions ready for pickup', error: error.message });
+    }
+});
+
+/**
+ * @route POST /api/pharmacy/nurse-pickups
+ * @description Create a nurse pickup record (nurse picks up drugs for one or more patients)
+ */
+router.post('/nurse-pickups', async (req, res) => {
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
+
+        const { pickups } = req.body; // Array of { prescriptionId, items: [{ prescriptionItemId, dispensationId, quantityPickedUp }], notes }
+        const userId = req.user?.id || req.user?.userId || 1;
+
+        if (!pickups || !Array.isArray(pickups) || pickups.length === 0) {
+            await connection.rollback();
+            return res.status(400).json({ error: 'Pickups array is required and must not be empty' });
+        }
+
+        const createdPickups = [];
+
+        for (const pickup of pickups) {
+            const { prescriptionId, items, notes, admissionId } = pickup;
+
+            if (!prescriptionId || !items || !Array.isArray(items) || items.length === 0) {
+                await connection.rollback();
+                return res.status(400).json({ error: 'Each pickup must have prescriptionId and items array' });
+            }
+
+            // Get prescription details
+            const [prescriptions] = await connection.execute(
+                `SELECT p.*, pt.patientId
+                 FROM prescriptions p
+                 INNER JOIN patients pt ON p.patientId = pt.patientId
+                 WHERE p.prescriptionId = ?`,
+                [prescriptionId]
+            );
+
+            if (prescriptions.length === 0) {
+                await connection.rollback();
+                return res.status(404).json({ error: `Prescription ${prescriptionId} not found` });
+            }
+
+            const prescription = prescriptions[0];
+            const patientId = prescription.patientId;
+
+            // Get admission ID if not provided
+            let actualAdmissionId = admissionId;
+            if (!actualAdmissionId) {
+                const [admissions] = await connection.execute(
+                    `SELECT admissionId FROM admissions
+                     WHERE patientId = ?
+                     AND (dischargeDate IS NULL OR dischargeDate >= CURDATE())
+                     AND status = 'admitted'
+                     ORDER BY admissionDate DESC LIMIT 1`,
+                    [patientId]
+                );
+                if (admissions.length > 0) {
+                    actualAdmissionId = admissions[0].admissionId;
+                }
+            }
+
+            // Create pickup record
+            const [pickupResult] = await connection.execute(
+                `INSERT INTO nurse_pickups
+                 (prescriptionId, patientId, admissionId, pickedUpBy, pickupDate, status, notes)
+                 VALUES (?, ?, ?, ?, NOW(), 'picked_up', ?)`,
+                [prescriptionId, patientId, actualAdmissionId || null, userId, notes || null]
+            );
+
+            const pickupId = pickupResult.insertId;
+
+            // Collect invoice items for billing
+            const invoiceItems = [];
+            let totalInvoiceAmount = 0;
+
+            // Create pickup items and collect pricing information
+            for (const item of items) {
+                const { prescriptionItemId, dispensationId, quantityPickedUp, notes: itemNotes } = item;
+
+                if (!prescriptionItemId || !quantityPickedUp) {
+                    await connection.rollback();
+                    return res.status(400).json({ error: 'Each item must have prescriptionItemId and quantityPickedUp' });
+                }
+
+                // Verify the prescription item belongs to the prescription
+                const [prescriptionItems] = await connection.execute(
+                    'SELECT * FROM prescription_items WHERE itemId = ? AND prescriptionId = ?',
+                    [prescriptionItemId, prescriptionId]
+                );
+
+                if (prescriptionItems.length === 0) {
+                    await connection.rollback();
+                    return res.status(400).json({ error: `Prescription item ${prescriptionItemId} does not belong to prescription ${prescriptionId}` });
+                }
+
+                const prescriptionItem = prescriptionItems[0];
+
+                // Get pricing from original prescription invoice or drug inventory
+                let unitPrice = 0;
+                let drugInventoryId = null;
+                let description = prescriptionItem.medicationName || 'Medication';
+
+                // Try to get price from original prescription invoice
+                const [originalInvoiceItems] = await connection.execute(
+                    `SELECT ii.unitPrice, ii.drugInventoryId, ii.description
+                     FROM invoice_items ii
+                     INNER JOIN invoices i ON ii.invoiceId = i.invoiceId
+                     WHERE i.patientId = ?
+                     AND i.notes LIKE CONCAT('%Prescription: ', ?, '%')
+                     AND ii.description LIKE CONCAT('%', ?, '%')
+                     ORDER BY i.invoiceDate DESC
+                     LIMIT 1`,
+                    [patientId, prescription.prescriptionNumber, prescriptionItem.medicationName]
+                );
+
+                if (originalInvoiceItems.length > 0) {
+                    unitPrice = parseFloat(originalInvoiceItems[0].unitPrice) || 0;
+                    drugInventoryId = originalInvoiceItems[0].drugInventoryId;
+                    description = originalInvoiceItems[0].description || description;
+                } else {
+                    // Fallback: Get price from drug inventory via dispensation
+                    if (dispensationId) {
+                        const [dispensations] = await connection.execute(
+                            `SELECT d.*, di.sellPrice, di.drugInventoryId
+                             FROM dispensations d
+                             LEFT JOIN drug_inventory di ON di.batchNumber = d.batchNumber AND di.medicationId = ?
+                             WHERE d.dispensationId = ?
+                             LIMIT 1`,
+                            [prescriptionItem.medicationId, dispensationId]
+                        );
+
+                        if (dispensations.length > 0 && dispensations[0].sellPrice) {
+                            unitPrice = parseFloat(dispensations[0].sellPrice) || 0;
+                            drugInventoryId = dispensations[0].drugInventoryId;
+                        } else {
+                            // Last resort: Get from drug_inventory by medicationId
+                            const [drugInventory] = await connection.execute(
+                                `SELECT sellPrice, drugInventoryId
+                                 FROM drug_inventory
+                                 WHERE medicationId = ?
+                                 AND quantity > 0
+                                 AND status = 'active'
+                                 ORDER BY expiryDate ASC, createdAt ASC
+                                 LIMIT 1`,
+                                [prescriptionItem.medicationId]
+                            );
+
+                            if (drugInventory.length > 0) {
+                                unitPrice = parseFloat(drugInventory[0].sellPrice) || 0;
+                                drugInventoryId = drugInventory[0].drugInventoryId;
+                            }
+                        }
+                    }
+                }
+
+                const totalPrice = unitPrice * quantityPickedUp;
+                totalInvoiceAmount += totalPrice;
+
+                // Store invoice item data
+                invoiceItems.push({
+                    description: `${description} (${prescriptionItem.dosage || ''})`,
+                    quantity: quantityPickedUp,
+                    unitPrice: unitPrice,
+                    totalPrice: totalPrice,
+                    drugInventoryId: drugInventoryId
+                });
+
+                await connection.execute(
+                    `INSERT INTO nurse_pickup_items
+                     (pickupId, prescriptionItemId, dispensationId, quantityPickedUp, notes)
+                     VALUES (?, ?, ?, ?, ?)`,
+                    [pickupId, prescriptionItemId, dispensationId || null, quantityPickedUp, itemNotes || null]
+                );
+
+                // Record in drug history for audit trail (inventory already reduced during dispensing)
+                // Get dispensation details to find drug inventory batch
+                if (dispensationId) {
+                    const [dispensations] = await connection.execute(
+                        `SELECT d.*, di.drugInventoryId, di.quantity as currentQuantity, di.unitPrice, di.sellPrice
+                         FROM dispensations d
+                         LEFT JOIN drug_inventory di ON di.batchNumber = d.batchNumber AND di.medicationId = ?
+                         WHERE d.dispensationId = ?
+                         LIMIT 1`,
+                        [prescriptionItem.medicationId, dispensationId]
+                    );
+
+                    if (dispensations.length > 0 && dispensations[0].drugInventoryId) {
+                        const disp = dispensations[0];
+                        const transactionDate = new Date().toISOString().split('T')[0];
+                        const currentQuantity = disp.currentQuantity || 0;
+                        const unitPrice = disp.unitPrice || 0;
+                        const sellPrice = disp.sellPrice || 0;
+
+                        try {
+                            // Record in drug_inventory_transactions (for audit trail, no quantity change)
+                            await connection.execute(
+                                `INSERT INTO drug_inventory_transactions
+                                (drugInventoryId, patientId, prescriptionId, dispensationId, transactionType, transactionDate,
+                                 quantityChange, quantityBefore, quantityAfter, balanceAfter, unitPrice, sellPrice,
+                                 totalValue, totalSellValue, referenceType, referenceId, referenceNumber, performedBy, notes)
+                                VALUES (?, ?, ?, ?, 'TRANSFER', ?, 0, ?, ?, ?, ?, ?, 0, 0, 'nurse_pickup', ?, ?, ?, ?)`,
+                                [
+                                    disp.drugInventoryId,
+                                    patientId,
+                                    prescriptionId,
+                                    dispensationId,
+                                    transactionDate,
+                                    currentQuantity, // quantityBefore (no change)
+                                    currentQuantity, // quantityAfter (no change)
+                                    currentQuantity, // balanceAfter (no change)
+                                    unitPrice,
+                                    sellPrice,
+                                    pickupId,
+                                    `NP-${pickupId}`,
+                                    userId,
+                                    `Nurse pickup: ${quantityPickedUp} units picked up by nurse. Batch: ${disp.batchNumber || 'N/A'}`
+                                ]
+                            );
+
+                            // Record in drug_stock_adjustments for drug history
+                            await connection.execute(
+                                `INSERT INTO drug_stock_adjustments
+                                (drugInventoryId, medicationId, adjustmentType, adjustmentDate, quantity, batchNumber, unitPrice, sellPrice,
+                                 expiryDate, location, patientId, prescriptionId, dispensationId, referenceType, referenceId, referenceNumber, performedBy, notes)
+                                VALUES (?, ?, 'TRANSFER', ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, 'nurse_pickup', ?, ?, ?, ?)`,
+                                [
+                                    disp.drugInventoryId,
+                                    prescriptionItem.medicationId,
+                                    transactionDate,
+                                    disp.batchNumber || null,
+                                    unitPrice,
+                                    sellPrice,
+                                    disp.expiryDate || null,
+                                    null, // location
+                                    patientId,
+                                    prescriptionId,
+                                    dispensationId,
+                                    pickupId,
+                                    `NP-${pickupId}`,
+                                    userId,
+                                    `Nurse pickup: ${quantityPickedUp} units. Batch: ${disp.batchNumber || 'N/A'}`
+                                ]
+                            );
+                        } catch (historyError) {
+                            console.error('Error recording nurse pickup in drug history:', historyError);
+                            // Don't fail the transaction if history recording fails
+                        }
+                    }
+                }
+            }
+
+            // Create invoice for the pickup if there are items with pricing
+            let invoiceId = null;
+            if (invoiceItems.length > 0 && totalInvoiceAmount > 0) {
+                // Generate invoice number
+                const today = new Date().toISOString().split('T')[0].replace(/-/g, '');
+                const datePrefix = `INV-${today}-`;
+
+                const [maxResult] = await connection.execute(
+                    `SELECT MAX(CAST(SUBSTRING_INDEX(invoiceNumber, '-', -1) AS UNSIGNED)) as maxNum
+                     FROM invoices
+                     WHERE invoiceNumber LIKE CONCAT(?, '%')`,
+                    [datePrefix]
+                );
+
+                let nextNum = (maxResult[0]?.maxNum || 0) + 1;
+                let invoiceNumber = `${datePrefix}${String(nextNum).padStart(4, '0')}`;
+
+                // Check for duplicates and retry if needed
+                let attempts = 0;
+                while (attempts < 100) {
+                    try {
+                        const [invResult] = await connection.execute(
+                            `INSERT INTO invoices (invoiceNumber, patientId, invoiceDate, totalAmount, balance, status, notes, createdBy)
+                             VALUES (?, ?, CURDATE(), ?, ?, 'pending', ?, ?)`,
+                            [
+                                invoiceNumber,
+                                patientId,
+                                totalInvoiceAmount,
+                                totalInvoiceAmount,
+                                `Nurse Pickup - Prescription: ${prescription.prescriptionNumber}${actualAdmissionId ? `, Admission: ${actualAdmissionId}` : ''}`,
+                                userId || null
+                            ]
+                        );
+
+                        invoiceId = invResult.insertId;
+
+                        // Insert invoice items
+                        for (const invItem of invoiceItems) {
+                            await connection.execute(
+                                `INSERT INTO invoice_items (invoiceId, description, quantity, unitPrice, totalPrice, drugInventoryId)
+                                 VALUES (?, ?, ?, ?, ?, ?)`,
+                                [
+                                    invoiceId,
+                                    invItem.description,
+                                    invItem.quantity,
+                                    invItem.unitPrice,
+                                    invItem.totalPrice,
+                                    invItem.drugInventoryId || null
+                                ]
+                            );
+                        }
+
+                        break; // Success, exit retry loop
+                    } catch (insertError) {
+                        if (insertError.code === 'ER_DUP_ENTRY' && insertError.sqlMessage.includes('invoiceNumber')) {
+                            // Duplicate invoice number, try next number
+                            nextNum++;
+                            invoiceNumber = `${datePrefix}${String(nextNum).padStart(4, '0')}`;
+                            attempts++;
+                        } else {
+                            throw insertError; // Re-throw if it's not a duplicate key error
+                        }
+                    }
+                }
+
+                if (attempts >= 100) {
+                    await connection.rollback();
+                    return res.status(500).json({ error: 'Failed to generate unique invoice number after 100 attempts' });
+                }
+            }
+
+            // Check if all dispensed prescription items have been picked up and update prescription status
+            // Count total dispensed prescription items (only items that are dispensed should be picked up)
+            const [totalDispensedItems] = await connection.execute(
+                'SELECT COUNT(*) as total FROM prescription_items WHERE prescriptionId = ? AND status = "dispensed"',
+                [prescriptionId]
+            );
+            const totalDispensedItemsCount = totalDispensedItems[0]?.total || 0;
+
+            // Count dispensed items that have been picked up (via nurse_pickup_items)
+            const [pickedUpItems] = await connection.execute(
+                `SELECT COUNT(DISTINCT npi.prescriptionItemId) as pickedUpCount
+                 FROM nurse_pickup_items npi
+                 INNER JOIN nurse_pickups np ON npi.pickupId = np.pickupId
+                 INNER JOIN prescription_items pi ON npi.prescriptionItemId = pi.itemId
+                 WHERE np.prescriptionId = ?
+                 AND np.status = 'picked_up'
+                 AND pi.status = 'dispensed'`,
+                [prescriptionId]
+            );
+            const pickedUpItemsCount = pickedUpItems[0]?.pickedUpCount || 0;
+
+            // If all dispensed items have been picked up, update prescription status
+            if (totalDispensedItemsCount > 0 && pickedUpItemsCount >= totalDispensedItemsCount) {
+                await connection.execute(
+                    'UPDATE prescriptions SET status = "picked_up", updatedAt = NOW() WHERE prescriptionId = ?',
+                    [prescriptionId]
+                );
+            }
+
+            // Get created pickup with details
+            const [createdPickup] = await connection.execute(
+                `SELECT
+                    np.*,
+                    p.prescriptionNumber,
+                    pt.patientNumber,
+                    pt.firstName as patientFirstName,
+                    pt.lastName as patientLastName,
+                    u.firstName as nurseFirstName,
+                    u.lastName as nurseLastName,
+                    ia.admissionNumber
+                 FROM nurse_pickups np
+                 INNER JOIN prescriptions p ON np.prescriptionId = p.prescriptionId
+                 INNER JOIN patients pt ON np.patientId = pt.patientId
+                 INNER JOIN users u ON np.pickedUpBy = u.userId
+                 LEFT JOIN admissions ia ON np.admissionId = ia.admissionId
+                 WHERE np.pickupId = ?`,
+                [pickupId]
+            );
+
+            // Get pickup items
+            const [pickupItems] = await connection.execute(
+                `SELECT
+                    npi.*,
+                    pi.medicationName,
+                    pi.dosage,
+                    pi.frequency,
+                    d.quantityDispensed,
+                    d.batchNumber
+                 FROM nurse_pickup_items npi
+                 INNER JOIN prescription_items pi ON npi.prescriptionItemId = pi.itemId
+                 LEFT JOIN dispensations d ON npi.dispensationId = d.dispensationId
+                 WHERE npi.pickupId = ?`,
+                [pickupId]
+            );
+
+            createdPickups.push({
+                ...createdPickup[0],
+                items: pickupItems,
+                invoiceId: invoiceId || null
+            });
+        }
+
+        await connection.commit();
+        res.status(201).json({ pickups: createdPickups });
+    } catch (error) {
+        await connection.rollback();
+        console.error('Error creating nurse pickup:', error);
+        res.status(500).json({ message: 'Error creating nurse pickup', error: error.message });
+    } finally {
+        connection.release();
+    }
+});
+
+/**
+ * @route GET /api/pharmacy/nurse-pickups
+ * @description Get nurse pickup history
+ */
+router.get('/nurse-pickups', async (req, res) => {
+    try {
+        const { nurseId, patientId, admissionId, startDate, endDate, status, page = 1, limit = 50 } = req.query;
+        const offset = (page - 1) * limit;
+
+        let query = `
+            SELECT
+                np.pickupId,
+                np.prescriptionId,
+                np.patientId,
+                np.admissionId,
+                np.pickedUpBy,
+                np.pickupDate,
+                np.status,
+                np.notes,
+                np.createdAt,
+                p.prescriptionNumber,
+                p.prescriptionDate,
+                pt.patientNumber,
+                pt.firstName as patientFirstName,
+                pt.lastName as patientLastName,
+                u.firstName as nurseFirstName,
+                u.lastName as nurseLastName,
+                u.username as nurseUsername,
+                ia.admissionNumber,
+                (SELECT COUNT(*) FROM nurse_pickup_items WHERE pickupId = np.pickupId) as itemCount
+            FROM nurse_pickups np
+            INNER JOIN prescriptions p ON np.prescriptionId = p.prescriptionId
+            INNER JOIN patients pt ON np.patientId = pt.patientId
+            INNER JOIN users u ON np.pickedUpBy = u.userId
+            LEFT JOIN admissions ia ON np.admissionId = ia.admissionId
+            WHERE 1=1
+        `;
+
+        const params = [];
+
+        if (nurseId) {
+            query += ` AND np.pickedUpBy = ?`;
+            params.push(nurseId);
+        }
+
+        if (patientId) {
+            query += ` AND np.patientId = ?`;
+            params.push(patientId);
+        }
+
+        if (admissionId) {
+            query += ` AND np.admissionId = ?`;
+            params.push(admissionId);
+        }
+
+        if (status) {
+            query += ` AND np.status = ?`;
+            params.push(status);
+        }
+
+        if (startDate) {
+            query += ` AND DATE(np.pickupDate) >= ?`;
+            params.push(startDate);
+        }
+
+        if (endDate) {
+            query += ` AND DATE(np.pickupDate) <= ?`;
+            params.push(endDate);
+        }
+
+        query += ` ORDER BY np.pickupDate DESC LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset)}`;
+
+        const [rows] = await pool.execute(query, params);
+
+        // Get items for each pickup
+        const pickupsWithItems = await Promise.all(
+            rows.map(async (pickup) => {
+                const [items] = await pool.execute(
+                    `SELECT
+                        npi.*,
+                        pi.medicationName,
+                        pi.dosage,
+                        pi.frequency,
+                        pi.duration,
+                        d.quantityDispensed,
+                        d.batchNumber,
+                        d.expiryDate
+                     FROM nurse_pickup_items npi
+                     INNER JOIN prescription_items pi ON npi.prescriptionItemId = pi.itemId
+                     LEFT JOIN dispensations d ON npi.dispensationId = d.dispensationId
+                     WHERE npi.pickupId = ?`,
+                    [pickup.pickupId]
+                );
+
+                return {
+                    ...pickup,
+                    items: items
+                };
+            })
+        );
+
+        // Get total count
+        let countQuery = `
+            SELECT COUNT(*) as total
+            FROM nurse_pickups np
+            INNER JOIN prescriptions p ON np.prescriptionId = p.prescriptionId
+            INNER JOIN patients pt ON np.patientId = pt.patientId
+            INNER JOIN users u ON np.pickedUpBy = u.userId
+            LEFT JOIN admissions ia ON np.admissionId = ia.admissionId
+            WHERE 1=1
+        `;
+        const countParams = [];
+
+        if (nurseId) {
+            countQuery += ` AND np.pickedUpBy = ?`;
+            countParams.push(nurseId);
+        }
+        if (patientId) {
+            countQuery += ` AND np.patientId = ?`;
+            countParams.push(patientId);
+        }
+        if (admissionId) {
+            countQuery += ` AND np.admissionId = ?`;
+            countParams.push(admissionId);
+        }
+        if (status) {
+            countQuery += ` AND np.status = ?`;
+            countParams.push(status);
+        }
+        if (startDate) {
+            countQuery += ` AND DATE(np.pickupDate) >= ?`;
+            countParams.push(startDate);
+        }
+        if (endDate) {
+            countQuery += ` AND DATE(np.pickupDate) <= ?`;
+            countParams.push(endDate);
+        }
+
+        const [countResult] = await pool.execute(countQuery, countParams);
+        const total = countResult && countResult.length > 0 ? (countResult[0].total || 0) : 0;
+
+        res.status(200).json({
+            pickups: pickupsWithItems,
+            pagination: {
+                page: parseInt(page),
+                limit: parseInt(limit),
+                total,
+                totalPages: Math.ceil(total / parseInt(limit))
+            }
+        });
+    } catch (error) {
+        console.error('Error fetching nurse pickups:', error);
+        res.status(500).json({ message: 'Error fetching nurse pickups', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/pharmacy/nurse-pickups/:id
+ * @description Get a single nurse pickup by ID
+ */
+router.get('/nurse-pickups/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const [pickups] = await pool.execute(
+            `SELECT
+                np.*,
+                p.prescriptionNumber,
+                p.prescriptionDate,
+                pt.patientNumber,
+                pt.firstName as patientFirstName,
+                pt.lastName as patientLastName,
+                u.firstName as nurseFirstName,
+                u.lastName as nurseLastName,
+                u.username as nurseUsername,
+                ia.admissionNumber
+             FROM nurse_pickups np
+             INNER JOIN prescriptions p ON np.prescriptionId = p.prescriptionId
+             INNER JOIN patients pt ON np.patientId = pt.patientId
+             INNER JOIN users u ON np.pickedUpBy = u.userId
+             LEFT JOIN admissions ia ON np.admissionId = ia.admissionId
+             WHERE np.pickupId = ?`,
+            [id]
+        );
+
+        if (pickups.length === 0) {
+            return res.status(404).json({ message: 'Nurse pickup not found' });
+        }
+
+        const pickup = pickups[0];
+
+        // Get pickup items
+        const [items] = await pool.execute(
+            `SELECT
+                npi.*,
+                pi.medicationName,
+                pi.dosage,
+                pi.frequency,
+                pi.duration,
+                pi.quantity,
+                pi.instructions,
+                d.quantityDispensed,
+                d.batchNumber,
+                d.expiryDate,
+                d.dispensationDate
+             FROM nurse_pickup_items npi
+             INNER JOIN prescription_items pi ON npi.prescriptionItemId = pi.itemId
+             LEFT JOIN dispensations d ON npi.dispensationId = d.dispensationId
+             WHERE npi.pickupId = ?`,
+            [id]
+        );
+
+        res.status(200).json({
+            ...pickup,
+            items: items
+        });
+    } catch (error) {
+        console.error('Error fetching nurse pickup:', error);
+        res.status(500).json({ message: 'Error fetching nurse pickup', error: error.message });
     }
 });
 

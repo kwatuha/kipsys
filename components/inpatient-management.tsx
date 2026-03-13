@@ -138,12 +138,16 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
   // Orders/Consumables states
   const [consumables, setConsumables] = useState<any[]>([])
   const [orderDialogOpen, setOrderDialogOpen] = useState(false)
+  const [editingOrder, setEditingOrder] = useState<any>(null)
   const [orderForm, setOrderForm] = useState({
     chargeId: "",
     quantity: 1,
     notes: "",
   })
   const [savingOrder, setSavingOrder] = useState(false)
+  const [orderToDelete, setOrderToDelete] = useState<any>(null)
+  const [deleteOrderDialogOpen, setDeleteOrderDialogOpen] = useState(false)
+  const [deletingOrder, setDeletingOrder] = useState(false)
 
   // View review dialog states
   const [viewReviewDialogOpen, setViewReviewDialogOpen] = useState(false)
@@ -261,7 +265,7 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
     if (orderDialogOpen) {
       loadConsumables()
     }
-  }, [orderDialogOpen])
+  }, [orderDialogOpen, editingOrder])
 
   useEffect(() => {
     if (radiologyOrderDialogOpen) {
@@ -683,7 +687,7 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
     if (procedureDialogOpen) {
       loadProcedures()
     }
-  }, [procedureDialogOpen])
+  }, [procedureDialogOpen, editingProcedure])
 
   useEffect(() => {
     if (radiologyOrderDialogOpen && editingRadiologyOrder) {
@@ -704,50 +708,76 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
   }, [prescriptionDialogOpen])
 
   // Auto-calculate prescription quantity based on frequency and duration
+  // Formula: Quantity = Frequency (per day) * Duration (days)
   useEffect(() => {
-    if (!isQuantityManuallyEdited && prescriptionForm.frequency && prescriptionForm.duration) {
-      // Parse frequency (e.g., "twice daily" = 2, "once daily" = 1, "3 times daily" = 3)
-      const frequencyMatch = prescriptionForm.frequency.match(/(\d+)\s*(?:times?|x)\s*(?:daily|day|per day)/i) ||
-                            prescriptionForm.frequency.match(/(once|one)\s*(?:daily|day|per day)/i) ||
-                            prescriptionForm.frequency.match(/(twice|two)\s*(?:daily|day|per day)/i) ||
-                            prescriptionForm.frequency.match(/(thrice|three)\s*(?:daily|day|per day)/i)
+    if (!isQuantityManuallyEdited) {
+      // Parse frequency - more flexible parsing
+      let frequencyPerDay = 0
+      const frequencyText = prescriptionForm.frequency?.trim().toLowerCase() || ""
 
-      let frequencyPerDay = 1
-      if (frequencyMatch) {
-        if (frequencyMatch[1]) {
-          frequencyPerDay = parseInt(frequencyMatch[1]) || 1
-        } else if (frequencyMatch[0]?.toLowerCase().includes('once') || frequencyMatch[0]?.toLowerCase().includes('one')) {
-          frequencyPerDay = 1
-        } else if (frequencyMatch[0]?.toLowerCase().includes('twice') || frequencyMatch[0]?.toLowerCase().includes('two')) {
-          frequencyPerDay = 2
-        } else if (frequencyMatch[0]?.toLowerCase().includes('thrice') || frequencyMatch[0]?.toLowerCase().includes('three')) {
-          frequencyPerDay = 3
-        }
-      }
-
-      // Parse duration (e.g., "7 days" = 7, "2 weeks" = 14, "1 month" = 30)
-      const durationMatch = prescriptionForm.duration.match(/(\d+)\s*(?:days?|day)/i) ||
-                           prescriptionForm.duration.match(/(\d+)\s*(?:weeks?|week)/i) ||
-                           prescriptionForm.duration.match(/(\d+)\s*(?:months?|month)/i)
-
-      let durationDays = 0
-      if (durationMatch) {
-        const number = parseInt(durationMatch[1]) || 0
-        if (durationMatch[0]?.toLowerCase().includes('week')) {
-          durationDays = number * 7
-        } else if (durationMatch[0]?.toLowerCase().includes('month')) {
-          durationDays = number * 30
+      if (frequencyText) {
+        // Try to extract number from patterns like "2x daily", "3 times daily", "twice daily", etc.
+        const numericMatch = frequencyText.match(/(\d+)\s*(?:x|times?|×)\s*(?:daily|day|per day|d)/i)
+        if (numericMatch) {
+          frequencyPerDay = parseInt(numericMatch[1]) || 0
         } else {
-          durationDays = number
+          // Try word-based patterns
+          if (frequencyText.includes('once') || frequencyText.includes('one') || frequencyText === 'od' || frequencyText === 'qd') {
+            frequencyPerDay = 1
+          } else if (frequencyText.includes('twice') || frequencyText.includes('two') || frequencyText === 'bid' || frequencyText === 'bd') {
+            frequencyPerDay = 2
+          } else if (frequencyText.includes('thrice') || frequencyText.includes('three') || frequencyText === 'tid' || frequencyText === 'tds') {
+            frequencyPerDay = 3
+          } else if (frequencyText === 'qid' || frequencyText === 'qds') {
+            frequencyPerDay = 4
+          } else if (frequencyText === 'q6h' || frequencyText === 'q6') {
+            frequencyPerDay = 4 // Every 6 hours = 4 times per day
+          } else if (frequencyText === 'q8h' || frequencyText === 'q8') {
+            frequencyPerDay = 3 // Every 8 hours = 3 times per day
+          } else if (frequencyText === 'q12h' || frequencyText === 'q12') {
+            frequencyPerDay = 2 // Every 12 hours = 2 times per day
+          } else {
+            // Try to extract any number from the text
+            const anyNumberMatch = frequencyText.match(/(\d+)/)
+            if (anyNumberMatch) {
+              frequencyPerDay = parseInt(anyNumberMatch[1]) || 0
+            }
+          }
         }
       }
 
-      // Calculate quantity
+      // Parse duration - more flexible parsing
+      let durationDays = 0
+      const durationText = prescriptionForm.duration?.trim().toLowerCase() || ""
+
+      if (durationText) {
+        // Try to extract number and unit
+        const daysMatch = durationText.match(/(\d+)\s*(?:days?|d)/i)
+        const weeksMatch = durationText.match(/(\d+)\s*(?:weeks?|w|wk)/i)
+        const monthsMatch = durationText.match(/(\d+)\s*(?:months?|m|mo)/i)
+
+        if (daysMatch) {
+          durationDays = parseInt(daysMatch[1]) || 0
+        } else if (weeksMatch) {
+          durationDays = (parseInt(weeksMatch[1]) || 0) * 7
+        } else if (monthsMatch) {
+          durationDays = (parseInt(monthsMatch[1]) || 0) * 30
+        } else {
+          // Try to extract any number (assume days if no unit specified)
+          const anyNumberMatch = durationText.match(/(\d+)/)
+          if (anyNumberMatch) {
+            durationDays = parseInt(anyNumberMatch[1]) || 0
+          }
+        }
+      }
+
+      // Calculate quantity: Frequency * Duration
       if (frequencyPerDay > 0 && durationDays > 0) {
         const calculatedQuantity = frequencyPerDay * durationDays
-        setPrescriptionForm({ ...prescriptionForm, quantity: calculatedQuantity.toString() })
-      } else {
-        setPrescriptionForm({ ...prescriptionForm, quantity: "" })
+        setPrescriptionForm((prev) => ({ ...prev, quantity: calculatedQuantity.toString() }))
+      } else if (prescriptionForm.frequency || prescriptionForm.duration) {
+        // Clear quantity if fields are partially filled but calculation can't be done
+        setPrescriptionForm((prev) => ({ ...prev, quantity: "" }))
       }
     }
   }, [prescriptionForm.frequency, prescriptionForm.duration, isQuantityManuallyEdited])
@@ -803,30 +833,53 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
       const quantity = orderForm.quantity || 1
       const totalPrice = unitPrice * quantity
 
-      // Create invoice for the order
-      const invoiceData = {
-        patientId: patientId,
-        admissionId: admissionId,
-        invoiceDate: new Date().toISOString().split('T')[0],
-        dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        status: 'pending',
-        items: [{
-          description: consumable.name || 'Consumable',
-          quantity: quantity,
-          unitPrice: unitPrice,
-          totalPrice: totalPrice,
-          chargeId: consumable.chargeId,
-        }],
-        notes: `Consumables ordered during inpatient stay. ${orderForm.notes || ''}`.trim(),
+      if (editingOrder) {
+        // Update existing invoice
+        const invoiceData = {
+          items: [{
+            itemId: editingOrder.items?.[0]?.itemId || null,
+            description: consumable.name || 'Consumable',
+            quantity: quantity,
+            unitPrice: unitPrice,
+            totalPrice: totalPrice,
+            chargeId: consumable.chargeId,
+          }],
+          notes: `Consumables ordered during inpatient stay. ${orderForm.notes || ''}`.trim(),
+        }
+
+        await billingApi.updateInvoice(editingOrder.invoiceId.toString(), invoiceData)
+
+        toast({
+          title: "Success",
+          description: "Order updated successfully",
+        })
+      } else {
+        // Create invoice for the order
+        const invoiceData = {
+          patientId: patientId,
+          admissionId: admissionId,
+          invoiceDate: new Date().toISOString().split('T')[0],
+          dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+          status: 'pending',
+          items: [{
+            description: consumable.name || 'Consumable',
+            quantity: quantity,
+            unitPrice: unitPrice,
+            totalPrice: totalPrice,
+            chargeId: consumable.chargeId,
+          }],
+          notes: `Consumables ordered during inpatient stay. ${orderForm.notes || ''}`.trim(),
+        }
+
+        await billingApi.createInvoice(invoiceData)
+
+        toast({
+          title: "Success",
+          description: "Order created successfully",
+        })
       }
-
-      await billingApi.createInvoice(invoiceData)
-
-      toast({
-        title: "Success",
-        description: "Order created successfully",
-      })
       setOrderDialogOpen(false)
+      setEditingOrder(null)
       setOrderForm({
         chargeId: "",
         quantity: 1,
@@ -836,11 +889,62 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
     } catch (error: any) {
       toast({
         title: "Error",
-        description: error.message || "Failed to create order",
+        description: error.message || (editingOrder ? "Failed to update order" : "Failed to create order"),
         variant: "destructive",
       })
     } finally {
       setSavingOrder(false)
+    }
+  }
+
+  const handleEditOrder = async (invoice: any, item: any) => {
+    try {
+      // Load consumables if not already loaded
+      if (consumables.length === 0) {
+        await loadConsumables()
+      }
+      setEditingOrder({ ...invoice, items: [item] })
+      setOrderForm({
+        chargeId: item.chargeId?.toString() || "",
+        quantity: item.quantity || 1,
+        notes: invoice.notes?.replace('Consumables ordered during inpatient stay.', '').trim() || "",
+      })
+      setOrderDialogOpen(true)
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to load order details",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleDeleteOrder = (invoice: any) => {
+    setOrderToDelete(invoice)
+    setDeleteOrderDialogOpen(true)
+  }
+
+  const confirmDeleteOrder = async () => {
+    if (!orderToDelete) return
+
+    try {
+      setDeletingOrder(true)
+      await billingApi.deleteInvoice(orderToDelete.invoiceId.toString())
+      toast({
+        title: "Success",
+        description: "Order deleted successfully",
+      })
+      setDeleteOrderDialogOpen(false)
+      setOrderToDelete(null)
+      loadOverview()
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to delete order",
+        variant: "destructive",
+      })
+    } finally {
+      setDeletingOrder(false)
     }
   }
 
@@ -862,31 +966,35 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
       }
 
       if (editingProcedure) {
-        // Note: Update API doesn't exist yet for procedures
-        toast({
-          title: "Info",
-          description: "Update functionality requires backend API support",
-          variant: "default",
+        // Update existing procedure
+        await proceduresApi.updatePatientProcedure(editingProcedure.patientProcedureId.toString(), {
+          procedureId: parseInt(procedureForm.procedureId),
+          procedureDate: procedureForm.procedureDate,
+          performedBy: parseInt(procedureForm.performedBy),
+          notes: procedureForm.notes || null,
+          complications: procedureForm.complications || null,
         })
-        setProcedureDialogOpen(false)
-        setEditingProcedure(null)
-        return
+        toast({
+          title: "Success",
+          description: "Procedure updated successfully",
+        })
+      } else {
+        // Create new procedure
+        await proceduresApi.createPatientProcedure({
+          patientId: patientId.toString(),
+          procedureId: parseInt(procedureForm.procedureId),
+          procedureDate: procedureForm.procedureDate,
+          performedBy: parseInt(procedureForm.performedBy),
+          notes: procedureForm.notes || null,
+          complications: procedureForm.complications || null,
+          admissionId: admissionId,
+        })
+
+        toast({
+          title: "Success",
+          description: "Procedure created successfully",
+        })
       }
-
-      await proceduresApi.createPatientProcedure({
-        patientId: patientId.toString(),
-        procedureId: parseInt(procedureForm.procedureId),
-        procedureDate: procedureForm.procedureDate,
-        performedBy: parseInt(procedureForm.performedBy),
-        notes: procedureForm.notes || null,
-        complications: procedureForm.complications || null,
-        admissionId: admissionId,
-      })
-
-      toast({
-        title: "Success",
-        description: "Procedure created successfully",
-      })
       setProcedureDialogOpen(false)
       setEditingProcedure(null)
       setProcedureForm({
@@ -900,7 +1008,7 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
     } catch (error: any) {
       toast({
         title: "Error",
-        description: error.message || "Failed to create procedure",
+        description: error.message || (editingProcedure ? "Failed to update procedure" : "Failed to create procedure"),
         variant: "destructive",
       })
     } finally {
@@ -2836,7 +2944,8 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                   <TableHeader>
                     <TableRow>
                       <TableHead>Order Date</TableHead>
-                      <TableHead>Test</TableHead>
+                      <TableHead>Test Name</TableHead>
+                      <TableHead>Clinical Indication</TableHead>
                       <TableHead>Priority</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Ordered By</TableHead>
@@ -2848,7 +2957,8 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                       overview.labOrders.map((order: any) => (
                         <TableRow key={order.orderId}>
                           <TableCell>{format(new Date(order.orderDate), "PP")}</TableCell>
-                          <TableCell>{order.clinicalIndication || "N/A"}</TableCell>
+                          <TableCell>{order.testName || order.items?.[0]?.testTypeName || "N/A"}</TableCell>
+                          <TableCell className="max-w-xs truncate">{order.clinicalIndication || "N/A"}</TableCell>
                           <TableCell>
                             <Badge variant={order.priority === "stat" ? "destructive" : order.priority === "urgent" ? "default" : "secondary"}>
                               {order.priority}
@@ -2882,7 +2992,7 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                       ))
                     ) : (
                       <TableRow>
-                        <TableCell colSpan={6} className="text-center text-muted-foreground">
+                        <TableCell colSpan={7} className="text-center text-muted-foreground">
                           No lab orders yet
                         </TableCell>
                       </TableRow>
@@ -2897,14 +3007,24 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
           <TabsContent value="orders" className="space-y-4">
             <div className="flex justify-between items-center">
               <h3 className="text-lg font-semibold">Orders & Consumables</h3>
-              <Dialog open={orderDialogOpen} onOpenChange={setOrderDialogOpen}>
+              <Dialog open={orderDialogOpen} onOpenChange={(open) => {
+                setOrderDialogOpen(open)
+                if (!open) {
+                  setEditingOrder(null)
+                  setOrderForm({
+                    chargeId: "",
+                    quantity: 1,
+                    notes: "",
+                  })
+                }
+              }}>
                 <DialogTrigger asChild>
                   <Button><Plus className="mr-2 h-4 w-4" />Add Order</Button>
                 </DialogTrigger>
                 <DialogContent>
                   <DialogHeader>
-                    <DialogTitle>Order Consumable</DialogTitle>
-                    <DialogDescription>Order consumables/medical supplies for this patient</DialogDescription>
+                    <DialogTitle>{editingOrder ? "Edit Order" : "Order Consumable"}</DialogTitle>
+                    <DialogDescription>{editingOrder ? "Update consumable order" : "Order consumables/medical supplies for this patient"}</DialogDescription>
                   </DialogHeader>
                   <div className="space-y-4">
                     <div>
@@ -2963,9 +3083,17 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                     )}
 
                     <div className="flex justify-end gap-2">
-                      <Button variant="outline" onClick={() => setOrderDialogOpen(false)}>Cancel</Button>
+                      <Button variant="outline" onClick={() => {
+                        setOrderDialogOpen(false)
+                        setEditingOrder(null)
+                        setOrderForm({
+                          chargeId: "",
+                          quantity: 1,
+                          notes: "",
+                        })
+                      }}>Cancel</Button>
                       <Button onClick={handleSaveOrder} disabled={savingOrder}>
-                        {savingOrder ? "Creating..." : "Create Order"}
+                        {savingOrder ? (editingOrder ? "Updating..." : "Creating...") : editingOrder ? "Update Order" : "Create Order"}
                       </Button>
                     </div>
                   </div>
@@ -2984,6 +3112,7 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                       <TableHead>Unit Price</TableHead>
                       <TableHead>Total</TableHead>
                       <TableHead>Status</TableHead>
+                      <TableHead className="w-[100px]">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -3001,12 +3130,32 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                                 {invoice.status || "pending"}
                               </Badge>
                             </TableCell>
+                            <TableCell>
+                              <div className="flex gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleEditOrder(invoice, item)}
+                                  title="Edit order"
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleDeleteOrder(invoice)}
+                                  title="Delete order"
+                                >
+                                  <Trash2 className="h-4 w-4 text-destructive" />
+                                </Button>
+                              </div>
+                            </TableCell>
                           </TableRow>
                         )) || []
                       )
                     ) : (
                       <TableRow>
-                        <TableCell colSpan={6} className="text-center text-muted-foreground">
+                        <TableCell colSpan={7} className="text-center text-muted-foreground">
                           No orders yet
                         </TableCell>
                       </TableRow>
@@ -3085,10 +3234,10 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                         />
                       </div>
                       <div>
-                        <Label>Quantity</Label>
+                        <Label>Quantity <span className="text-xs text-muted-foreground font-normal">(Auto: Frequency × Duration)</span></Label>
                         <Input
                           type="number"
-                          placeholder="Auto-calculated"
+                          placeholder="Auto-calculated from frequency × duration"
                           value={prescriptionForm.quantity}
                           onChange={(e) => {
                             setPrescriptionForm({ ...prescriptionForm, quantity: e.target.value })
@@ -3096,6 +3245,11 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                           }}
                           onFocus={() => setIsQuantityManuallyEdited(true)}
                         />
+                        {prescriptionForm.quantity && !isQuantityManuallyEdited && (
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Calculated automatically
+                          </p>
+                        )}
                       </div>
                     </div>
                     <div>
@@ -3137,6 +3291,9 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                       <TableHead>Date</TableHead>
                       <TableHead>Prescription Number</TableHead>
                       <TableHead>Medications</TableHead>
+                      <TableHead>Dosage</TableHead>
+                      <TableHead>Frequency</TableHead>
+                      <TableHead>Duration</TableHead>
                       <TableHead>Doctor</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead className="w-[100px]">Actions</TableHead>
@@ -3144,40 +3301,46 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                   </TableHeader>
                   <TableBody>
                     {overview.prescriptions?.length > 0 ? (
-                      overview.prescriptions.map((prescription: any) => (
-                        <TableRow key={prescription.prescriptionId}>
-                          <TableCell>{format(new Date(prescription.prescriptionDate), "PP")}</TableCell>
-                          <TableCell>{prescription.prescriptionNumber}</TableCell>
-                          <TableCell>{prescription.medicationNames || "N/A"}</TableCell>
-                          <TableCell>{prescription.doctorFirstName} {prescription.doctorLastName}</TableCell>
-                          <TableCell>
-                            <Badge variant="outline">{prescription.status || "active"}</Badge>
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex gap-1">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => handleViewPrescription(prescription)}
-                                title="View details"
-                              >
-                                <Eye className="h-4 w-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => handleEditPrescription(prescription)}
-                                title="Edit prescription"
-                              >
-                                <Pencil className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))
+                      overview.prescriptions.map((prescription: any) => {
+                        const firstItem = prescription.items?.[0]
+                        return (
+                          <TableRow key={prescription.prescriptionId}>
+                            <TableCell>{format(new Date(prescription.prescriptionDate), "PP")}</TableCell>
+                            <TableCell>{prescription.prescriptionNumber}</TableCell>
+                            <TableCell>{prescription.medicationNames || "N/A"}</TableCell>
+                            <TableCell>{firstItem?.dosage || "N/A"}</TableCell>
+                            <TableCell>{firstItem?.frequency || "N/A"}</TableCell>
+                            <TableCell>{firstItem?.duration || "N/A"}</TableCell>
+                            <TableCell>{prescription.doctorFirstName} {prescription.doctorLastName}</TableCell>
+                            <TableCell>
+                              <Badge variant="outline">{prescription.status || "active"}</Badge>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleViewPrescription(prescription)}
+                                  title="View details"
+                                >
+                                  <Eye className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleEditPrescription(prescription)}
+                                  title="Edit prescription"
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })
                     ) : (
                       <TableRow>
-                        <TableCell colSpan={6} className="text-center text-muted-foreground">
+                        <TableCell colSpan={9} className="text-center text-muted-foreground">
                           No prescriptions yet
                         </TableCell>
                       </TableRow>
@@ -3491,6 +3654,58 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
             )}
           </DialogContent>
         </Dialog>
+
+        {/* Delete Order Confirmation Dialog */}
+        <AlertDialog open={deleteOrderDialogOpen} onOpenChange={setDeleteOrderDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete Order?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Are you sure you want to delete this order? This action cannot be undone.
+                {orderToDelete && (
+                  <div className="mt-4 p-3 bg-muted rounded-md space-y-2">
+                    <div className="grid grid-cols-2 gap-2 text-sm">
+                      <div>
+                        <span className="font-medium">Invoice Date:</span>{" "}
+                        {format(new Date(orderToDelete.invoiceDate), "PP")}
+                      </div>
+                      <div>
+                        <span className="font-medium">Status:</span>{" "}
+                        <Badge variant={orderToDelete.status === "paid" ? "default" : orderToDelete.status === "waived" ? "secondary" : "outline"}>
+                          {orderToDelete.status || "pending"}
+                        </Badge>
+                      </div>
+                      {orderToDelete.items && orderToDelete.items.length > 0 && (
+                        <>
+                          <div>
+                            <span className="font-medium">Item:</span> {orderToDelete.items[0].description || "N/A"}
+                          </div>
+                          <div>
+                            <span className="font-medium">Quantity:</span> {orderToDelete.items[0].quantity || 1}
+                          </div>
+                          <div>
+                            <span className="font-medium">Total:</span>{" "}
+                            KES {orderToDelete.items[0].totalPrice ? parseFloat(orderToDelete.items[0].totalPrice).toFixed(2) : "0.00"}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={deletingOrder}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={confirmDeleteOrder}
+                disabled={deletingOrder}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                {deletingOrder ? "Deleting..." : "Delete"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         {/* Delete Vital Confirmation Dialog */}
         <AlertDialog open={deleteVitalDialogOpen} onOpenChange={setDeleteVitalDialogOpen}>

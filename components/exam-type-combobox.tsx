@@ -58,6 +58,15 @@ export function ExamTypeCombobox({
     }
   }, [open, category])
 
+  // Load exam types when value is provided (for editing) but list is empty
+  React.useEffect(() => {
+    if (value && examTypes.length === 0 && !loading && !open) {
+      // Load exam types to find the selected one when editing
+      loadExamTypes("")
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value])
+
   // Debounced search - reload when search query changes
   React.useEffect(() => {
     if (!open) return

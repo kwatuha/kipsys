@@ -168,7 +168,7 @@ export function generateLabResultHTML(result: LabTestResult): string {
       </head>
       <body>
         <div class="header">
-          <img src="${window.location.origin}/logo.png" alt="Medical Centre" style="max-width: 150px; height: auto; margin-bottom: 10px;" onerror="this.style.display='none';" />
+          <img src="${window.location.origin}/logo.png" alt="Kiplombe Medical Centre" style="max-width: 250px; height: auto; margin-bottom: 15px; display: block; margin-left: auto; margin-right: auto;" onerror="this.style.display='none';" />
           <h1>LABORATORY TEST RESULT</h1>
           <h2>${result.testName}</h2>
         </div>
@@ -377,7 +377,7 @@ export function generateLabOrderHTML(order: LabTestOrder): string {
       </head>
       <body>
         <div class="header">
-          <img src="${window.location.origin}/logo.png" alt="Medical Centre" style="max-width: 150px; height: auto; margin-bottom: 10px;" onerror="this.style.display='none';" />
+          <img src="${window.location.origin}/logo.png" alt="Kiplombe Medical Centre" style="max-width: 250px; height: auto; margin-bottom: 15px; display: block; margin-left: auto; margin-right: auto;" onerror="this.style.display='none';" />
           <h1>LABORATORY TEST ORDER</h1>
           <h2>Order Number: ${order.orderNumber}</h2>
         </div>
