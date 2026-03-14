@@ -53,7 +53,7 @@ import {
   SidebarRail,
 } from "@/components/ui/sidebar"
 import { ModeToggle } from "./mode-toggle"
-import { HospitalLogoWithIcon } from "./hospital-logo-with-icon"
+import { HospitalLogoImage } from "./hospital-logo-image"
 import { memo } from "react"
 
 interface AppSidebarProps {
@@ -92,9 +92,13 @@ export const AppSidebar = memo(function AppSidebar({ activeCategory }: AppSideba
   return (
     <Sidebar style={{ backgroundColor: "#0f4c75" }} className="text-white">
       <SidebarHeader className="flex items-center justify-center py-4 border-b border-white/10">
-        <div className="flex items-center justify-center w-full">
-          <HospitalLogoWithIcon />
-        </div>
+        <Link href="/" className="flex flex-col items-center justify-center w-full gap-2">
+          <HospitalLogoImage variant="sidebar" className="max-w-[180px]" />
+          <div className="flex flex-col items-center text-center">
+            <span className="text-lg font-bold tracking-tight text-white">KIPLOMBE</span>
+            <span className="text-xs font-medium text-white/90">Medical Centre</span>
+          </div>
+        </Link>
       </SidebarHeader>
       <SidebarContent>
         {hasQuickLinks && (

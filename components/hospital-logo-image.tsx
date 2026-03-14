@@ -7,7 +7,7 @@ interface HospitalLogoImageProps {
   className?: string
   width?: number
   height?: number
-  variant?: "default" | "print" | "compact"
+  variant?: "default" | "print" | "compact" | "sidebar"
 }
 
 export function HospitalLogoImage({
@@ -20,18 +20,21 @@ export function HospitalLogoImage({
   const [triedSvg, setTriedSvg] = useState(false)
 
   // Default dimensions based on variant
-  const defaultWidth = width || (variant === "compact" ? 120 : variant === "print" ? 150 : 240)
-  const defaultHeight = height || (variant === "compact" ? 40 : variant === "print" ? 50 : 80)
+  const defaultWidth = width || (variant === "compact" || variant === "sidebar" ? 120 : variant === "print" ? 150 : 240)
+  const defaultHeight = height || (variant === "compact" || variant === "sidebar" ? 40 : variant === "print" ? 50 : 80)
 
-  // If image failed to load, show text fallback
+  // If image failed to load, show text fallback (white for sidebar on dark background)
   if (imageError && triedSvg) {
+    const isSidebar = variant === "sidebar"
     return (
       <div className={`flex flex-col items-center justify-center ${className}`}>
-        <div className="text-xl font-bold tracking-tight text-[#0f4c75]">
+        <div className={`text-xl font-bold tracking-tight ${isSidebar ? "text-white" : "text-[#0f4c75]"}`}>
           KIPLOMBE
         </div>
-        <div className="text-xs text-gray-600 font-medium">Medical Centre</div>
-        <div className="text-xs text-blue-500 italic font-normal">For Quality Healthcare Service Delivery</div>
+        <div className={`text-xs font-medium ${isSidebar ? "text-white/90" : "text-gray-600"}`}>Medical Centre</div>
+        {!isSidebar && (
+          <div className="text-xs text-blue-500 italic font-normal">For Quality Healthcare Service Delivery</div>
+        )}
       </div>
     )
   }
