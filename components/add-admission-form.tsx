@@ -458,17 +458,9 @@ export function AddAdmissionForm({ open, onOpenChange, onSuccess, admission, adm
 
         if (wardsResult.status === "fulfilled") {
           const loadedWards = wardsResult.value || []
-          // Deduplicate wards by wardName and wardType combination
-          // Use a Map to track unique wards, keeping the first occurrence
-          const uniqueWardsMap = new Map<string, any>()
-          loadedWards.forEach((ward: any) => {
-            const key = `${ward.wardName || ""}_${ward.wardType || ""}`.toLowerCase()
-            if (!uniqueWardsMap.has(key)) {
-              uniqueWardsMap.set(key, ward)
-            }
-          })
-          const uniqueWards = Array.from(uniqueWardsMap.values())
-          setWards(uniqueWards)
+          // Deduplicate by wardId so each ward appears once
+          const byId = new Map((loadedWards as any[]).map((w: any) => [w.wardId, w]))
+          setWards(Array.from(byId.values()))
         } else {
           console.error("Error loading wards:", wardsResult.reason)
         }

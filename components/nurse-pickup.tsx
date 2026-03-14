@@ -17,11 +17,17 @@ import {
   Eye,
   History,
   User,
+  Users,
   Calendar,
   FileText,
   Pill,
-  AlertCircle
+  AlertCircle,
+  Clock,
+  Inbox,
+  ArrowRightCircle,
+  XCircle
 } from "lucide-react"
+import Link from "next/link"
 import { pharmacyApi } from "@/lib/api"
 import { useAuth } from "@/lib/auth/auth-context"
 import { useToast } from "@/hooks/use-toast"
@@ -33,6 +39,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import {
   Tabs,
   TabsContent,
@@ -54,11 +70,35 @@ export function NursePickup() {
   const [selectedPickup, setSelectedPickup] = useState<any>(null)
   const [searchQuery, setSearchQuery] = useState("")
   const [activeTab, setActiveTab] = useState("ready")
+  const [pendingRequests, setPendingRequests] = useState<any[]>([])
+  const [pendingLoading, setPendingLoading] = useState(false)
+  const [pendingDetailsOpen, setPendingDetailsOpen] = useState(false)
+  const [selectedPendingRequest, setSelectedPendingRequest] = useState<any>(null)
+  const [dispensingPickupId, setDispensingPickupId] = useState<string | null>(null)
+  const [cancelPickupId, setCancelPickupId] = useState<string | null>(null)
+  const [cancelling, setCancelling] = useState(false)
 
   useEffect(() => {
     loadReadyPrescriptions()
     loadPickupHistory()
+    loadPendingRequests()
   }, [])
+
+  const loadPendingRequests = async () => {
+    try {
+      setPendingLoading(true)
+      const data = await pharmacyApi.getNursePickups({ status: "pending", limit: 100 })
+      setPendingRequests(data?.pickups || [])
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to load pending requests",
+        variant: "destructive",
+      })
+    } finally {
+      setPendingLoading(false)
+    }
+  }
 
   const loadReadyPrescriptions = async () => {
     try {
@@ -73,6 +113,39 @@ export function NursePickup() {
       })
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleCancelPickup = async (pickupId: string) => {
+    try {
+      setCancelling(true)
+      await pharmacyApi.cancelNursePickup(pickupId)
+      toast({ title: "Cancelled", description: "Pickup has been cancelled. If it was already picked up, quantities were returned to inventory." })
+      setCancelPickupId(null)
+      await Promise.all([loadPickupHistory(), loadReadyPrescriptions(), loadPendingRequests()])
+    } catch (error: any) {
+      toast({ title: "Error", description: error?.message || "Failed to cancel pickup", variant: "destructive" })
+    } finally {
+      setCancelling(false)
+    }
+  }
+
+  const markAsDispensed = async (pickupId: string) => {
+    try {
+      setDispensingPickupId(pickupId)
+      await pharmacyApi.markNursePickupReadyForPickup(pickupId)
+      toast({ title: "Updated", description: "Request moved to history (ready for pickup)." })
+      setPendingDetailsOpen(false)
+      setSelectedPendingRequest(null)
+      await Promise.all([loadPendingRequests(), loadPickupHistory(), loadReadyPrescriptions()])
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to update request",
+        variant: "destructive",
+      })
+    } finally {
+      setDispensingPickupId(null)
     }
   }
 
@@ -200,6 +273,7 @@ export function NursePickup() {
       // Reload data
       await loadReadyPrescriptions()
       await loadPickupHistory()
+      await loadPendingRequests()
     } catch (error: any) {
       toast({
         title: "Error",
@@ -280,6 +354,10 @@ export function NursePickup() {
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
+          <TabsTrigger value="pending">
+            <Inbox className="h-4 w-4 mr-1" />
+            Pending requests ({pendingRequests.length})
+          </TabsTrigger>
           <TabsTrigger value="ready">
             Ready for Pickup ({readyPrescriptions.length})
           </TabsTrigger>
@@ -287,6 +365,184 @@ export function NursePickup() {
             Pickup History ({pickupHistory.length})
           </TabsTrigger>
         </TabsList>
+
+        <TabsContent value="pending" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Clock className="h-5 w-5" />
+                Pending requests from nurses
+              </CardTitle>
+              <CardDescription>
+                Nurses have requested these prescriptions. Dispense the prescription (Prescriptions tab or Dispense flow), then go to &quot;Ready for Pickup&quot; to record when the nurse collects the drugs.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {pendingLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : pendingRequests.length === 0 ? (
+                <p className="text-muted-foreground text-center py-6">No pending requests from nurses.</p>
+              ) : (
+                <>
+                <div className="rounded-md border overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Requested</TableHead>
+                        <TableHead>Patient</TableHead>
+                        <TableHead>Requested by (nurse)</TableHead>
+                        <TableHead>Items</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {pendingRequests.map((p: any) => (
+                        <TableRow key={p.pickupId}>
+                          <TableCell className="whitespace-nowrap">
+                            {p.createdAt ? format(new Date(p.createdAt), "PPp") : "—"}
+                          </TableCell>
+                          <TableCell>
+                            {p.patientFirstName} {p.patientLastName} ({p.patientNumber})
+                          </TableCell>
+                          <TableCell>
+                            {p.nurseFirstName} {p.nurseLastName}
+                            {p.nurseUsername ? ` (@${p.nurseUsername})` : ""}
+                          </TableCell>
+                          <TableCell>{p.itemCount ?? p.items?.length ?? 0} item(s)</TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex justify-end gap-2">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => {
+                                  setSelectedPendingRequest(p)
+                                  setPendingDetailsOpen(true)
+                                }}
+                              >
+                                <Eye className="h-4 w-4 mr-1" />
+                                View details
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={dispensingPickupId === p.pickupId?.toString()}
+                                onClick={() => markAsDispensed(p.pickupId?.toString() ?? "")}
+                              >
+                                {dispensingPickupId === p.pickupId?.toString() ? (
+                                  <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                                ) : (
+                                  <CheckCircle2 className="h-4 w-4 mr-1" />
+                                )}
+                                Mark dispensed
+                              </Button>
+                              <Button variant="ghost" size="sm" asChild>
+                                <Link href={`/pharmacy?tab=prescriptions&prescriptionId=${p.prescriptionId}`}>
+                                  Open prescription
+                                </Link>
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+
+                <Dialog open={pendingDetailsOpen} onOpenChange={setPendingDetailsOpen}>
+                  <DialogContent className="sm:max-w-lg">
+                    <DialogHeader>
+                      <DialogTitle>Request details</DialogTitle>
+                      <DialogDescription>
+                        {selectedPendingRequest && (
+                          <>
+                            {selectedPendingRequest.patientFirstName} {selectedPendingRequest.patientLastName} •{" "}
+                            {selectedPendingRequest.prescriptionNumber} •{" "}
+                            {selectedPendingRequest.createdAt
+                              ? format(new Date(selectedPendingRequest.createdAt), "PPp")
+                              : ""}
+                          </>
+                        )}
+                      </DialogDescription>
+                    </DialogHeader>
+                    {selectedPendingRequest && (
+                      <div className="space-y-4">
+                        <div className="grid grid-cols-2 gap-2 text-sm">
+                          <div className="text-muted-foreground">Patient</div>
+                          <div>
+                            {selectedPendingRequest.patientFirstName} {selectedPendingRequest.patientLastName} (
+                            {selectedPendingRequest.patientNumber})
+                          </div>
+                          <div className="text-muted-foreground">Prescription</div>
+                          <div>{selectedPendingRequest.prescriptionNumber}</div>
+                          <div className="text-muted-foreground">Admission</div>
+                          <div>{selectedPendingRequest.admissionNumber || "—"}</div>
+                          <div className="text-muted-foreground">Requested by</div>
+                          <div>
+                            {selectedPendingRequest.nurseFirstName} {selectedPendingRequest.nurseLastName}
+                          </div>
+                        </div>
+                        <div>
+                          <h4 className="font-medium text-sm mb-2">Requested items</h4>
+                          <ul className="rounded-md border divide-y text-sm">
+                            {(selectedPendingRequest.items || []).length === 0 ? (
+                              <li className="p-3 text-muted-foreground">No items</li>
+                            ) : (
+                              (selectedPendingRequest.items || []).map((item: any, idx: number) => (
+                                <li key={item.pickupItemId ?? idx} className="p-3 flex items-center gap-2">
+                                  <Pill className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                                  <div>
+                                    <span className="font-medium">{item.medicationName || "—"}</span>
+                                    <span className="text-muted-foreground ml-2">
+                                      {[item.dosage, item.frequency, item.duration].filter(Boolean).join(" • ")}
+                                      {item.quantityPickedUp != null ? ` • Qty: ${item.quantityPickedUp}` : ""}
+                                    </span>
+                                  </div>
+                                </li>
+                              ))
+                            )}
+                          </ul>
+                        </div>
+                        {selectedPendingRequest.notes && (
+                          <div>
+                            <h4 className="font-medium text-sm mb-2">Notes from nurse</h4>
+                            <p className="text-sm text-muted-foreground rounded-md border p-3 bg-muted/30">
+                              {selectedPendingRequest.notes}
+                            </p>
+                          </div>
+                        )}
+                        <div className="flex justify-end gap-2 pt-2">
+                          <Button
+                            size="sm"
+                            disabled={dispensingPickupId === selectedPendingRequest.pickupId?.toString()}
+                            onClick={() => markAsDispensed(selectedPendingRequest.pickupId?.toString() ?? "")}
+                          >
+                            {dispensingPickupId === selectedPendingRequest.pickupId?.toString() ? (
+                              <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                            ) : (
+                              <CheckCircle2 className="h-4 w-4 mr-1" />
+                            )}
+                            Mark dispensed
+                          </Button>
+                          <Button variant="outline" size="sm" asChild>
+                            <Link
+                              href={`/pharmacy?tab=prescriptions&prescriptionId=${selectedPendingRequest.prescriptionId}`}
+                              onClick={() => setPendingDetailsOpen(false)}
+                            >
+                              Open prescription
+                            </Link>
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </DialogContent>
+                </Dialog>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
 
         <TabsContent value="ready" className="space-y-4">
           <Card>
@@ -357,6 +613,15 @@ export function NursePickup() {
                                       <Badge variant="secondary">Admission: {prescription.admissionNumber}</Badge>
                                     )}
                                   </div>
+                                  {prescription.requestingNurses?.length > 0 && (
+                                    <div className="flex items-center gap-1 text-sm mt-1">
+                                      <Users className="h-3 w-3 text-muted-foreground" />
+                                      <span className="text-muted-foreground">Requested by:</span>
+                                      <span>
+                                        {prescription.requestingNurses.map((n: any) => `${n.nurseFirstName} ${n.nurseLastName}${n.nurseUsername ? ` (@${n.nurseUsername})` : ""}`).join(", ")}
+                                      </span>
+                                    </div>
+                                  )}
                                 </div>
                                 <div className="text-right text-sm">
                                   <div className="text-muted-foreground">Doctor</div>
@@ -461,7 +726,9 @@ export function NursePickup() {
                       <TableHead>Prescription</TableHead>
                       <TableHead>Admission</TableHead>
                       <TableHead>Items</TableHead>
+                      <TableHead>Status</TableHead>
                       <TableHead>Nurse</TableHead>
+                      <TableHead>Pharmacist</TableHead>
                       <TableHead>Actions</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -500,16 +767,41 @@ export function NursePickup() {
                           <Badge variant="outline">{pickup.itemCount} items</Badge>
                         </TableCell>
                         <TableCell>
-                          {pickup.nurseFirstName} {pickup.nurseLastName}
+                          <Badge variant={pickup.status === "picked_up" ? "default" : "secondary"}>
+                            {pickup.status === "ready_for_pickup" ? "Ready for pickup" : pickup.status}
+                          </Badge>
                         </TableCell>
                         <TableCell>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleViewPickup(pickup.pickupId.toString())}
-                          >
-                            <Eye className="h-4 w-4" />
-                          </Button>
+                          {pickup.nurseFirstName} {pickup.nurseLastName}
+                          {pickup.nurseUsername ? ` (@${pickup.nurseUsername})` : ""}
+                        </TableCell>
+                        <TableCell>
+                          {pickup.pharmacistFirstName != null ? (
+                            <span>{pickup.pharmacistFirstName} {pickup.pharmacistLastName}{pickup.pharmacistUsername ? ` (@${pickup.pharmacistUsername})` : ""}</span>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleViewPickup(pickup.pickupId.toString())}
+                            >
+                              <Eye className="h-4 w-4" />
+                            </Button>
+                            {(pickup.status === "picked_up" || pickup.status === "ready_for_pickup") && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="text-destructive hover:text-destructive"
+                                onClick={() => setCancelPickupId(pickup.pickupId.toString())}
+                              >
+                                <XCircle className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -520,6 +812,29 @@ export function NursePickup() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      <AlertDialog open={cancelPickupId != null} onOpenChange={(open) => !open && setCancelPickupId(null)}>
+        <AlertDialogContent>
+          <AlertDialogTitle>Cancel pickup</AlertDialogTitle>
+          <AlertDialogDescription>
+            Cancel this nurse pickup? If it was already recorded as picked up, the drug quantities will be returned to inventory and the prescription status reverted to dispensed.
+          </AlertDialogDescription>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={cancelling}>Keep</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={(e) => {
+                e.preventDefault()
+                if (cancelPickupId) handleCancelPickup(cancelPickupId)
+              }}
+              disabled={cancelling}
+            >
+              {cancelling ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              Cancel pickup
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* View Pickup Dialog */}
       <Dialog open={viewPickupDialogOpen} onOpenChange={setViewPickupDialogOpen}>
@@ -540,8 +855,8 @@ export function NursePickup() {
                 <div>
                   <Label className="text-sm font-semibold">Status</Label>
                   <p>
-                    <Badge variant={selectedPickup.status === 'picked_up' ? 'default' : 'outline'}>
-                      {selectedPickup.status}
+                    <Badge variant={selectedPickup.status === 'picked_up' ? 'default' : 'secondary'}>
+                      {selectedPickup.status === 'ready_for_pickup' ? 'Ready for pickup' : selectedPickup.status}
                     </Badge>
                   </p>
                 </div>
@@ -563,11 +878,21 @@ export function NursePickup() {
                   </div>
                 )}
                 <div>
-                  <Label className="text-sm font-semibold">Picked Up By</Label>
+                  <Label className="text-sm font-semibold">Nurse</Label>
                   <p>
                     {selectedPickup.nurseFirstName} {selectedPickup.nurseLastName}
+                    {selectedPickup.nurseUsername ? ` (@${selectedPickup.nurseUsername})` : ""}
                   </p>
                 </div>
+                {(selectedPickup.pharmacistFirstName != null || selectedPickup.pharmacistLastName != null) && (
+                  <div>
+                    <Label className="text-sm font-semibold">Issuing Pharmacist</Label>
+                    <p>
+                      {selectedPickup.pharmacistFirstName} {selectedPickup.pharmacistLastName}
+                      {selectedPickup.pharmacistUsername ? ` (@${selectedPickup.pharmacistUsername})` : ""}
+                    </p>
+                  </div>
+                )}
               </div>
 
               {selectedPickup.items && selectedPickup.items.length > 0 && (

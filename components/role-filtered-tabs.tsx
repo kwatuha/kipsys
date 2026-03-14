@@ -15,7 +15,10 @@ interface TabItem {
 interface RoleFilteredTabsProps {
   tabs: TabItem[]
   pagePath: string
+  /** Uncontrolled: initial tab (only used when value is not provided) */
   defaultValue?: string
+  /** Controlled: current tab (when provided, tab is driven by this and onValueChange) */
+  value?: string
   onValueChange?: (value: string) => void
   children: React.ReactNode
   className?: string
@@ -33,6 +36,7 @@ export function RoleFilteredTabs({
   tabs,
   pagePath,
   defaultValue,
+  value: controlledValue,
   onValueChange,
   children,
   className,
@@ -68,10 +72,19 @@ export function RoleFilteredTabs({
     ? defaultValue
     : allowedTabs[0]?.value
 
+  // Controlled: value must be allowed; fallback to first allowed tab
+  const safeValue = controlledValue && allowedTabs.some(t => t.value === controlledValue)
+    ? controlledValue
+    : allowedTabs[0]?.value
+
+  const isControlled = controlledValue !== undefined && controlledValue !== null
+
   return (
     <Tabs
-      defaultValue={safeDefaultValue}
-      onValueChange={onValueChange}
+      {...(isControlled
+        ? { value: safeValue, onValueChange }
+        : { defaultValue: safeDefaultValue, onValueChange }
+      )}
       className={className}
     >
       <TabsList className="flex flex-wrap w-full h-auto p-1 gap-1">

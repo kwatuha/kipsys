@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useRef } from "react"
 import { zodResolver } from "@hookform/resolvers/zod"
-import { useForm } from "react-hook-form"
+import { useForm, useFieldArray } from "react-hook-form"
 import * as z from "zod"
 import { Button } from "@/components/ui/button"
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form"
@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { roleApi } from "@/lib/api"
 import { toast } from "@/components/ui/use-toast"
-import { Loader2 } from "lucide-react"
+import { Loader2, Plus, Trash2 } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -27,6 +27,12 @@ import * as LucideIcons from "lucide-react"
 import Link from "next/link"
 import { DASHBOARD_CARDS } from "@/lib/dashboard-cards-config"
 
+const quickLinkSchema = z.object({
+  label: z.string().min(1, "Label is required"),
+  url: z.string().min(1, "URL is required"),
+  icon: z.string().optional(),
+})
+
 const formSchema = z.object({
   roleName: z.string().min(1, "Role name is required"),
   description: z.string().optional(),
@@ -38,6 +44,7 @@ const formSchema = z.object({
   landingPageIcon: z.string().nullable().optional(),
   landingPageDescription: z.string().nullable().optional(),
   defaultServicePoint: z.string().nullable().optional(),
+  landingQuickLinks: z.array(quickLinkSchema).optional().default([]),
   dashboardCards: z.record(z.string(), z.boolean()).optional(),
 })
 
@@ -73,9 +80,24 @@ export function RoleForm({ open, onOpenChange, onSuccess, role, privileges }: Ro
       landingPageIcon: null,
       landingPageDescription: null,
       defaultServicePoint: null,
+      landingQuickLinks: [],
       dashboardCards: {},
     },
   })
+
+  const { fields: quickLinkFields, append: appendQuickLink, remove: removeQuickLink } = useFieldArray({
+    control: form.control,
+    name: "landingQuickLinks",
+  })
+
+  // Keep a ref in sync with quick links so submit always has the latest (avoids stale closure / unmount issues)
+  const landingQuickLinksRef = useRef<{ label?: string; url?: string; icon?: string }[]>([])
+  const watchedQuickLinks = form.watch("landingQuickLinks")
+  useEffect(() => {
+    if (Array.isArray(watchedQuickLinks)) {
+      landingQuickLinksRef.current = watchedQuickLinks
+    }
+  }, [watchedQuickLinks])
 
   // Group privileges by module (memoized) - Must be defined before useEffect that uses it
   // If module is null, infer from privilege name
@@ -176,6 +198,14 @@ export function RoleForm({ open, onOpenChange, onSuccess, role, privileges }: Ro
           landingPageIcon: role.landingPageIcon ?? null,
           landingPageDescription: role.landingPageDescription ?? null,
           defaultServicePoint: role.defaultServicePoint ?? null,
+          landingQuickLinks: (() => {
+            const raw = role.landingQuickLinks
+            if (!raw) return []
+            try {
+              const arr = typeof raw === 'string' ? JSON.parse(raw) : raw
+              return Array.isArray(arr) ? arr : []
+            } catch { return [] }
+          })(),
           dashboardCards: dashboardCardsConfig,
         })
       } else {
@@ -196,6 +226,7 @@ export function RoleForm({ open, onOpenChange, onSuccess, role, privileges }: Ro
           landingPageIcon: null,
           landingPageDescription: null,
           defaultServicePoint: null,
+          landingQuickLinks: [],
           dashboardCards: defaultDashboardCards,
         })
       }
@@ -231,6 +262,17 @@ export function RoleForm({ open, onOpenChange, onSuccess, role, privileges }: Ro
         dashboardCardsConfig[card.id] = data.dashboardCards?.[card.id] ?? true
       })
       
+      // Read quick links from ref (kept in sync via watch) so we never lose them on submit
+      const rawQuickLinks =
+        (landingQuickLinksRef.current?.length ? landingQuickLinksRef.current : null) ??
+        data.landingQuickLinks ??
+        form.getValues("landingQuickLinks") ??
+        []
+      const landingQuickLinks =
+        data.landingPageType === "app_view" && Array.isArray(rawQuickLinks)
+          ? rawQuickLinks.filter((l: { label?: string; url?: string }) => l?.label?.trim() && l?.url?.trim())
+          : []
+      
       const payload = {
         roleName: data.roleName,
         description: data.description || null,
@@ -242,6 +284,7 @@ export function RoleForm({ open, onOpenChange, onSuccess, role, privileges }: Ro
         landingPageIcon: data.landingPageType !== 'dashboard' ? data.landingPageIcon : null,
         landingPageDescription: data.landingPageType !== 'dashboard' ? data.landingPageDescription : null,
         defaultServicePoint: data.defaultServicePoint || null,
+        landingQuickLinks,
         dashboardCards: dashboardCardsConfig,
       }
 
@@ -628,6 +671,81 @@ export function RoleForm({ open, onOpenChange, onSuccess, role, privileges }: Ro
                     </FormItem>
                   )}
                 />
+                <FormField
+                  control={form.control}
+                  name="landingQuickLinks"
+                  render={() => (
+                    <FormItem>
+                      <FormLabel>Quick links (multiple buttons)</FormLabel>
+                      <FormDescription>
+                        Add multiple buttons on the landing page (e.g. Inpatient and Nursing Department). If any are set, they are shown instead of the single button above.
+                      </FormDescription>
+                      <div className="space-y-3">
+                        {quickLinkFields.map((field, index) => (
+                          <Card key={field.id} className="p-3">
+                            <div className="grid grid-cols-1 md:grid-cols-12 gap-2 items-end">
+                              <FormField
+                                control={form.control}
+                                name={`landingQuickLinks.${index}.label`}
+                                render={({ field: f }) => (
+                                  <FormItem className="md:col-span-4">
+                                    <FormLabel className="text-xs">Label</FormLabel>
+                                    <FormControl>
+                                      <Input placeholder="e.g. Inpatient" {...f} />
+                                    </FormControl>
+                                  </FormItem>
+                                )}
+                              />
+                              <FormField
+                                control={form.control}
+                                name={`landingQuickLinks.${index}.url`}
+                                render={({ field: f }) => (
+                                  <FormItem className="md:col-span-4">
+                                    <FormLabel className="text-xs">URL</FormLabel>
+                                    <FormControl>
+                                      <Input placeholder="e.g. /inpatient" {...f} />
+                                    </FormControl>
+                                  </FormItem>
+                                )}
+                              />
+                              <FormField
+                                control={form.control}
+                                name={`landingQuickLinks.${index}.icon`}
+                                render={({ field: f }) => (
+                                  <FormItem className="md:col-span-3">
+                                    <FormLabel className="text-xs">Icon (optional)</FormLabel>
+                                    <FormControl>
+                                      <Input placeholder="e.g. Bed, Users" {...f} />
+                                    </FormControl>
+                                  </FormItem>
+                                )}
+                              />
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="md:col-span-1 text-destructive"
+                                onClick={() => removeQuickLink(index)}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </Card>
+                        ))}
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => appendQuickLink({ label: "", url: "", icon: "" })}
+                        >
+                          <Plus className="h-4 w-4 mr-2" />
+                          Add link
+                        </Button>
+                      </div>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
               </>
             )}
 
@@ -936,6 +1054,81 @@ export function RoleForm({ open, onOpenChange, onSuccess, role, privileges }: Ro
                           <FormDescription>
                             The default service point for this role. If the landing page URL is /queue/service, this will automatically filter to show only this service point.
                           </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="landingQuickLinks"
+                      render={() => (
+                        <FormItem>
+                          <FormLabel>Quick links (multiple buttons)</FormLabel>
+                          <FormDescription>
+                            Add multiple buttons on the landing page (e.g. Inpatient and Nursing Department). If any are set, they are shown instead of the single button above.
+                          </FormDescription>
+                          <div className="space-y-3">
+                            {quickLinkFields.map((field, index) => (
+                              <Card key={field.id} className="p-3">
+                                <div className="grid grid-cols-1 md:grid-cols-12 gap-2 items-end">
+                                  <FormField
+                                    control={form.control}
+                                    name={`landingQuickLinks.${index}.label`}
+                                    render={({ field: f }) => (
+                                      <FormItem className="md:col-span-4">
+                                        <FormLabel className="text-xs">Label</FormLabel>
+                                        <FormControl>
+                                          <Input placeholder="e.g. Inpatient" {...f} />
+                                        </FormControl>
+                                      </FormItem>
+                                    )}
+                                  />
+                                  <FormField
+                                    control={form.control}
+                                    name={`landingQuickLinks.${index}.url`}
+                                    render={({ field: f }) => (
+                                      <FormItem className="md:col-span-4">
+                                        <FormLabel className="text-xs">URL</FormLabel>
+                                        <FormControl>
+                                          <Input placeholder="e.g. /inpatient" {...f} />
+                                        </FormControl>
+                                      </FormItem>
+                                    )}
+                                  />
+                                  <FormField
+                                    control={form.control}
+                                    name={`landingQuickLinks.${index}.icon`}
+                                    render={({ field: f }) => (
+                                      <FormItem className="md:col-span-3">
+                                        <FormLabel className="text-xs">Icon (optional)</FormLabel>
+                                        <FormControl>
+                                          <Input placeholder="e.g. Bed, Users" {...f} />
+                                        </FormControl>
+                                      </FormItem>
+                                    )}
+                                  />
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    className="md:col-span-1 text-destructive"
+                                    onClick={() => removeQuickLink(index)}
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                </div>
+                              </Card>
+                            ))}
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => appendQuickLink({ label: "", url: "", icon: "" })}
+                            >
+                              <Plus className="h-4 w-4 mr-2" />
+                              Add link
+                            </Button>
+                          </div>
                           <FormMessage />
                         </FormItem>
                       )}

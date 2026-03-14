@@ -69,7 +69,8 @@ export function RoleBasedLanding() {
             url: data.landingPageUrl,
             icon: data.landingPageIcon,
             description: data.landingPageDescription,
-            servicePoint: data.defaultServicePoint || null
+            servicePoint: data.defaultServicePoint || null,
+            quickLinks: Array.isArray(data.landingQuickLinks) ? data.landingQuickLinks : []
           }
           setLandingConfig(transformedConfig)
         } else {

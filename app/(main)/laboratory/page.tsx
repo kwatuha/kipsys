@@ -5,7 +5,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { TabsContent } from "@/components/ui/tabs"
+import { RoleFilteredTabs } from "@/components/role-filtered-tabs"
 import { Badge } from "@/components/ui/badge"
 import { Search, Plus, Download, Loader2, MoreVertical, Eye, CheckCircle, XCircle, FlaskConical, Edit, FileText, AlertTriangle, Trash2, Settings, Printer, ArrowRight, MoreHorizontal } from "lucide-react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -833,13 +834,16 @@ export default function LaboratoryPage() {
         </div>
       </div>
 
-      <Tabs defaultValue="tests" className="w-full">
-        <TabsList className="grid w-full grid-cols-3">
-          <TabsTrigger value="tests">Test Requests</TabsTrigger>
-          <TabsTrigger value="queue">Queue</TabsTrigger>
-          <TabsTrigger value="catalog">Test Catalog</TabsTrigger>
-        </TabsList>
-
+      <RoleFilteredTabs
+        tabs={[
+          { value: "tests", label: "Test Requests" },
+          { value: "queue", label: "Queue" },
+          { value: "catalog", label: "Test Catalog" },
+        ]}
+        pagePath="/laboratory"
+        defaultValue="tests"
+        className="w-full"
+      >
         <TabsContent value="tests" className="space-y-4 mt-4">
           <Card>
             <CardHeader>
@@ -1282,9 +1286,7 @@ export default function LaboratoryPage() {
             </CardContent>
           </Card>
         </TabsContent>
-
-        </Tabs>
-
+      </RoleFilteredTabs>
 
       <AddTestRequestForm
         open={addTestRequestOpen}

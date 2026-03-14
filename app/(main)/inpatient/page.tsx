@@ -5,12 +5,14 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { TabsContent } from "@/components/ui/tabs"
+import { RoleFilteredTabs } from "@/components/role-filtered-tabs"
 import { Badge } from "@/components/ui/badge"
 import { Search, Plus, FileText, BedDouble, Loader2, Edit, Trash2, Eye, MoreVertical } from "lucide-react"
 import { AddAdmissionForm } from "@/components/add-admission-form"
 import { InpatientManagement } from "@/components/inpatient-management"
-import { inpatientApi } from "@/lib/api"
+import { inpatientApi, nursingApi } from "@/lib/api"
+import { useAuth } from "@/lib/auth/auth-context"
 import { format } from "date-fns"
 import { toast } from "@/components/ui/use-toast"
 import {
@@ -68,10 +70,12 @@ interface Admission {
 }
 
 export default function InpatientPage() {
+  const { user } = useAuth()
   const [showAdmissionForm, setShowAdmissionForm] = useState(false)
   const [admissions, setAdmissions] = useState<Admission[]>([])
   const [beds, setBeds] = useState<any[]>([])
   const [wards, setWards] = useState<any[]>([])
+  const [nurseAssignedWards, setNurseAssignedWards] = useState<Array<{ wardId: number; wardName: string; wardType?: string }> | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadingBeds, setLoadingBeds] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -181,11 +185,30 @@ export default function InpatientPage() {
   const loadWards = async () => {
     try {
       const data = await inpatientApi.getWards()
-      setWards(data)
+      // Dedupe by wardId so each ward name appears once
+      const byId = new Map((data || []).map((w: any) => [w.wardId, w]))
+      setWards(Array.from(byId.values()))
     } catch (err: any) {
       console.error('Error loading wards:', err)
     }
   }
+
+  const roleName = (user?.role ?? (user as any)?.roleName ?? '').toString().toLowerCase()
+  const isNurse = roleName === 'nurse'
+
+  useEffect(() => {
+    if (!isNurse) {
+      setNurseAssignedWards(null)
+      return
+    }
+    let cancelled = false
+    nursingApi.getAssignedWards().then((data) => {
+      if (!cancelled && Array.isArray(data)) setNurseAssignedWards(data)
+    }).catch(() => {
+      if (!cancelled) setNurseAssignedWards([])
+    })
+    return () => { cancelled = true }
+  }, [isNurse])
 
   const filteredAdmissions = admissions.filter((admission) => {
     if (search) {
@@ -199,6 +222,13 @@ export default function InpatientPage() {
     }
     return true
   })
+
+  const wardsForInpatientFilter = useMemo(() => {
+    if (nurseAssignedWards && nurseAssignedWards.length > 0) {
+      return nurseAssignedWards.map((w) => ({ wardId: w.wardId, wardName: w.wardName, wardType: w.wardType, admittedPatients: undefined as number | undefined }))
+    }
+    return wards
+  }, [nurseAssignedWards, wards])
 
   // Filter wards by ward type for Bed Management
   const filteredWardsForBeds = useMemo(() => {
@@ -715,14 +745,17 @@ export default function InpatientPage() {
         </Card>
       </div>
 
-      <Tabs defaultValue="patients" className="w-full">
-        <TabsList className="grid w-full grid-cols-4">
-          <TabsTrigger value="patients">Inpatients</TabsTrigger>
-          <TabsTrigger value="beds">Bed Management</TabsTrigger>
-          <TabsTrigger value="ward-status">Ward Status</TabsTrigger>
-          <TabsTrigger value="wards">Ward Management</TabsTrigger>
-        </TabsList>
-
+      <RoleFilteredTabs
+        tabs={[
+          { value: "patients", label: "Inpatients" },
+          { value: "beds", label: "Bed Management" },
+          { value: "ward-status", label: "Ward Status" },
+          { value: "wards", label: "Ward Management" },
+        ]}
+        pagePath="/inpatient"
+        defaultValue="patients"
+        className="w-full"
+      >
         <TabsContent value="patients" className="space-y-4 mt-4">
           <Card>
             <CardHeader>
@@ -769,17 +802,18 @@ export default function InpatientPage() {
                     onValueChange={(value) => setWardFilter(value === "all" ? "" : value)}
                   >
                     <SelectTrigger className="w-[280px]">
-                      <SelectValue placeholder="All Wards" />
+                      <SelectValue placeholder={nurseAssignedWards?.length ? "My wards" : "All Wards"} />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="all">All Wards</SelectItem>
-                      {wards.map((ward) => {
-                        const patientCount = ward.admittedPatients || 0;
+                      <SelectItem value="all">{nurseAssignedWards?.length ? "All my wards" : "All Wards"}</SelectItem>
+                      {wardsForInpatientFilter.map((ward) => {
+                        const patientCount = ward.admittedPatients ?? 0
+                        const countLabel = ward.admittedPatients != null ? ` - ${patientCount} ${patientCount === 1 ? 'patient' : 'patients'}` : ''
                         return (
                           <SelectItem key={ward.wardId} value={ward.wardId.toString()}>
-                            {ward.wardName} {ward.wardType ? `(${ward.wardType})` : ''} - {patientCount} {patientCount === 1 ? 'patient' : 'patients'}
+                            {ward.wardName} {ward.wardType ? `(${ward.wardType})` : ''}{countLabel}
                           </SelectItem>
-                        );
+                        )
                       })}
                     </SelectContent>
                   </Select>
@@ -1287,7 +1321,7 @@ export default function InpatientPage() {
             </CardContent>
           </Card>
         </TabsContent>
-      </Tabs>
+      </RoleFilteredTabs>
 
       <AddAdmissionForm
         open={showAdmissionForm}
@@ -1330,7 +1364,11 @@ export default function InpatientPage() {
         <InpatientManagement
           admissionId={viewingAdmission.admissionId.toString()}
           open={viewAdmissionOpen}
-          onOpenChange={setViewAdmissionOpen}
+          onOpenChange={(open) => {
+            setViewAdmissionOpen(open)
+            if (!open) setViewingAdmission(null)
+          }}
+          onAdmissionUpdated={loadAdmissions}
         />
       )}
 

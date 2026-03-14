@@ -155,7 +155,8 @@ export function AddMaternityAdmissionForm({
       }
 
       if (wardsResult.status === 'fulfilled') {
-        const wards = wardsResult.value || []
+        const raw = wardsResult.value || []
+        const wards = Array.from(new Map((raw as any[]).map((w: any) => [w.wardId, w])).values())
         console.log('Loaded wards:', wards)
         // Find maternity ward
         const maternityWard = wards.find((w: any) => 

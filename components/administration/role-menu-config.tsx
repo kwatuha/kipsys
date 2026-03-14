@@ -72,14 +72,24 @@ const PAGE_TABS: Record<string, Array<{ value: string; label: string }>> = {
     { value: "performance", label: "Performance" },
   ],
   "/inpatient": [
-    { value: "overview", label: "Overview" },
-    { value: "reviews", label: "Reviews" },
-    { value: "nursing", label: "Nursing" },
-    { value: "vitals", label: "Vitals" },
-    { value: "procedures", label: "Procedures" },
-    { value: "labs", label: "Labs" },
-    { value: "orders", label: "Orders" },
+    { value: "patients", label: "Inpatients" },
+    { value: "beds", label: "Bed Management" },
+    { value: "ward-status", label: "Ward Status" },
+    { value: "wards", label: "Ward Management" },
+  ],
+  "/pharmacy": [
+    { value: "prescriptions", label: "Prescriptions" },
     { value: "medications", label: "Medications" },
+    { value: "drug-inventory", label: "Drug Inventory" },
+    { value: "drug-inventory-summary", label: "Inventory Summary" },
+    { value: "batch-trace", label: "Batch Trace" },
+    { value: "drug-history", label: "Drug History" },
+    { value: "nurse-pickup", label: "Nurse Pickup" },
+  ],
+  "/laboratory": [
+    { value: "tests", label: "Test Requests" },
+    { value: "queue", label: "Queue" },
+    { value: "catalog", label: "Test Catalog" },
   ],
 }
 

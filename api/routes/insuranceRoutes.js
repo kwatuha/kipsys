@@ -230,25 +230,35 @@ router.put('/providers/:id', async (req, res) => {
 
 /**
  * @route DELETE /api/insurance/providers/:id
- * @description Delete an insurance provider
+ * @description Delete an insurance provider (only when it has no policies and no packages)
  */
 router.delete('/providers/:id', async (req, res) => {
     try {
         const { id } = req.params;
 
-        // Check if provider exists
         const [existing] = await pool.execute('SELECT providerId FROM insurance_providers WHERE providerId = ?', [id]);
         if (existing.length === 0) {
             return res.status(404).json({ message: 'Insurance provider not found' });
         }
 
-        // Check if provider has active policies
         const [policies] = await pool.execute(
-            'SELECT COUNT(*) as count FROM patient_insurance WHERE providerId = ? AND isActive = 1 AND (coverageEndDate IS NULL OR coverageEndDate >= CURDATE())',
+            'SELECT COUNT(*) as count FROM patient_insurance WHERE providerId = ?',
             [id]
         );
         if (policies[0].count > 0) {
-            return res.status(400).json({ error: 'Cannot delete provider with active policies. Deactivate the provider instead.' });
+            return res.status(400).json({
+                error: 'Cannot delete provider that has patient policies. Remove or reassign all policies for this provider first (Insurance → Policies, or from patient records).',
+            });
+        }
+
+        const [packages] = await pool.execute(
+            'SELECT COUNT(*) as count FROM insurance_packages WHERE providerId = ?',
+            [id]
+        );
+        if (packages[0].count > 0) {
+            return res.status(400).json({
+                error: 'Cannot delete provider that has packages. Delete or reassign all packages for this provider first (Insurance → Packages).',
+            });
         }
 
         await pool.execute('DELETE FROM insurance_providers WHERE providerId = ?', [id]);
@@ -257,6 +267,698 @@ router.delete('/providers/:id', async (req, res) => {
     } catch (error) {
         console.error('Error deleting insurance provider:', error);
         res.status(500).json({ message: 'Error deleting insurance provider', error: error.message });
+    }
+});
+
+/**
+ * @route POST /api/insurance/providers/cleanup-duplicates
+ * @description Remove duplicate providers, keeping one per unique provider name (case-insensitive)
+ */
+router.post('/providers/cleanup-duplicates', async (req, res) => {
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
+
+        const [keepRows] = await connection.execute(`
+            SELECT MIN(providerId) AS providerId, LOWER(TRIM(providerName)) AS name_key
+            FROM insurance_providers
+            GROUP BY LOWER(TRIM(providerName))
+        `);
+
+        const nameKeyToKeeper = new Map(keepRows.map((r) => [r.name_key, r.providerId]));
+
+        const [allProviders] = await connection.execute(
+            'SELECT providerId, providerName FROM insurance_providers'
+        );
+
+        const toDelete = allProviders.filter((p) => {
+            const key = (p.providerName || '').toLowerCase().trim();
+            const keeper = nameKeyToKeeper.get(key);
+            return keeper != null && keeper !== p.providerId;
+        });
+
+        if (toDelete.length === 0) {
+            await connection.commit();
+            return res.status(200).json({
+                message: 'No duplicate providers found',
+                deleted: 0,
+                kept: allProviders.length,
+            });
+        }
+
+        for (const dup of toDelete) {
+            const key = (dup.providerName || '').toLowerCase().trim();
+            const keeperId = nameKeyToKeeper.get(key);
+            if (!keeperId) continue;
+
+            await connection.execute(
+                'UPDATE patient_insurance SET providerId = ? WHERE providerId = ?',
+                [keeperId, dup.providerId]
+            );
+            await connection.execute(
+                'UPDATE claim_requirement_templates SET providerId = ? WHERE providerId = ?',
+                [keeperId, dup.providerId]
+            );
+            await connection.execute(
+                'UPDATE insurance_packages SET providerId = ? WHERE providerId = ?',
+                [keeperId, dup.providerId]
+            );
+            await connection.execute(
+                'DELETE FROM insurance_providers WHERE providerId = ?',
+                [dup.providerId]
+            );
+        }
+
+        await connection.commit();
+        res.status(200).json({
+            message: 'Duplicate providers removed; one provider kept per unique name.',
+            deleted: toDelete.length,
+            kept: keepRows.length,
+        });
+    } catch (error) {
+        await connection.rollback();
+        console.error('Error cleaning up duplicate providers:', error);
+        res.status(500).json({
+            message: 'Error cleaning up duplicate providers',
+            error: error.message,
+        });
+    } finally {
+        connection.release();
+    }
+});
+
+// ============================================
+// INSURANCE PACKAGES
+// ============================================
+
+/**
+ * @route GET /api/insurance/packages
+ * @description Get all insurance packages with optional filters
+ */
+router.get('/packages', async (req, res) => {
+    try {
+        const { providerId, status, search } = req.query;
+
+        let query = `
+            SELECT pkg.*, ip.providerName, ip.providerCode
+            FROM insurance_packages pkg
+            LEFT JOIN insurance_providers ip ON pkg.providerId = ip.providerId
+            WHERE 1=1
+        `;
+        const params = [];
+
+        if (providerId) {
+            query += ' AND pkg.providerId = ?';
+            params.push(providerId);
+        }
+
+        if (status === 'active') {
+            query += ' AND pkg.isActive = 1';
+        } else if (status === 'inactive') {
+            query += ' AND pkg.isActive = 0';
+        }
+
+        if (search) {
+            query += ' AND (pkg.packageName LIKE ? OR pkg.packageCode LIKE ? OR ip.providerName LIKE ?)';
+            const searchTerm = `%${search}%`;
+            params.push(searchTerm, searchTerm, searchTerm);
+        }
+
+        query += ' ORDER BY ip.providerName ASC, pkg.packageName ASC';
+
+        const [rows] = await pool.execute(query, params);
+
+        res.status(200).json(rows);
+    } catch (error) {
+        console.error('Error fetching insurance packages:', error);
+        res.status(500).json({ message: 'Error fetching insurance packages', error: error.message });
+    }
+});
+
+/**
+ * @route POST /api/insurance/packages/cleanup-duplicates
+ * @description Remove duplicate packages, keeping one per (provider + package name), case-insensitive
+ */
+router.post('/packages/cleanup-duplicates', async (req, res) => {
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
+
+        const [rows] = await connection.execute(
+            'SELECT packageId, providerId, packageName FROM insurance_packages'
+        );
+
+        const key = (p) => `${p.providerId}\t${(p.packageName || '').toLowerCase().trim()}`;
+        const keepByKey = new Map();
+        for (const p of rows) {
+            const k = key(p);
+            if (!keepByKey.has(k) || p.packageId < keepByKey.get(k)) keepByKey.set(k, p.packageId);
+        }
+
+        const toDelete = rows.filter((p) => {
+            const keeper = keepByKey.get(key(p));
+            return keeper != null && keeper !== p.packageId;
+        });
+
+        if (toDelete.length === 0) {
+            await connection.commit();
+            return res.status(200).json({
+                message: 'No duplicate packages found',
+                deleted: 0,
+                kept: rows.length,
+            });
+        }
+
+        for (const dup of toDelete) {
+            const keeperId = keepByKey.get(key(dup));
+            if (!keeperId) continue;
+            await connection.execute(
+                'UPDATE patient_insurance SET packageId = ? WHERE packageId = ?',
+                [keeperId, dup.packageId]
+            );
+            await connection.execute(
+                'DELETE FROM insurance_packages WHERE packageId = ?',
+                [dup.packageId]
+            );
+        }
+
+        await connection.commit();
+        res.status(200).json({
+            message: 'Duplicate packages removed; one package kept per provider and name.',
+            deleted: toDelete.length,
+            kept: keepByKey.size,
+        });
+    } catch (error) {
+        await connection.rollback();
+        console.error('Error cleaning up duplicate packages:', error);
+        res.status(500).json({
+            message: 'Error cleaning up duplicate packages',
+            error: error.message,
+        });
+    } finally {
+        connection.release();
+    }
+});
+
+/**
+ * @route GET /api/insurance/packages/:id
+ * @description Get a single insurance package by ID
+ */
+router.get('/packages/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const [rows] = await pool.execute(
+            `SELECT pkg.*, ip.providerName, ip.providerCode
+             FROM insurance_packages pkg
+             LEFT JOIN insurance_providers ip ON pkg.providerId = ip.providerId
+             WHERE pkg.packageId = ?`,
+            [id]
+        );
+
+        if (rows.length === 0) {
+            return res.status(404).json({ message: 'Insurance package not found' });
+        }
+
+        res.status(200).json(rows[0]);
+    } catch (error) {
+        console.error('Error fetching insurance package:', error);
+        res.status(500).json({ message: 'Error fetching insurance package', error: error.message });
+    }
+});
+
+/**
+ * @route POST /api/insurance/packages
+ * @description Create a new insurance package
+ */
+router.post('/packages', async (req, res) => {
+    try {
+        const {
+            providerId,
+            packageCode,
+            packageName,
+            coverageType = 'both',
+            coverageLimit,
+            coPayPercentage = 0,
+            coPayAmount = 0,
+            isActive = true,
+            description
+        } = req.body;
+
+        if (!providerId || !packageName) {
+            return res.status(400).json({ error: 'Provider ID and package name are required' });
+        }
+
+        const [result] = await pool.execute(
+            `INSERT INTO insurance_packages (
+                providerId, packageCode, packageName, coverageType, coverageLimit,
+                coPayPercentage, coPayAmount, isActive, description
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                providerId,
+                packageCode || null,
+                packageName,
+                coverageType,
+                coverageLimit != null ? coverageLimit : null,
+                coPayPercentage != null ? coPayPercentage : 0,
+                coPayAmount != null ? coPayAmount : 0,
+                isActive,
+                description || null
+            ]
+        );
+
+        const [newPackage] = await pool.execute(
+            `SELECT pkg.*, ip.providerName, ip.providerCode
+             FROM insurance_packages pkg
+             LEFT JOIN insurance_providers ip ON pkg.providerId = ip.providerId
+             WHERE pkg.packageId = ?`,
+            [result.insertId]
+        );
+
+        res.status(201).json(newPackage[0]);
+    } catch (error) {
+        console.error('Error creating insurance package:', error);
+        res.status(500).json({ message: 'Error creating insurance package', error: error.message });
+    }
+});
+
+/**
+ * @route PUT /api/insurance/packages/:id
+ * @description Update an insurance package
+ */
+router.put('/packages/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const {
+            providerId,
+            packageCode,
+            packageName,
+            coverageType,
+            coverageLimit,
+            coPayPercentage,
+            coPayAmount,
+            isActive,
+            description
+        } = req.body;
+
+        const [existing] = await pool.execute('SELECT packageId FROM insurance_packages WHERE packageId = ?', [id]);
+        if (existing.length === 0) {
+            return res.status(404).json({ message: 'Insurance package not found' });
+        }
+
+        const updates = [];
+        const values = [];
+
+        if (providerId !== undefined) { updates.push('providerId = ?'); values.push(providerId); }
+        if (packageCode !== undefined) { updates.push('packageCode = ?'); values.push(packageCode || null); }
+        if (packageName !== undefined) { updates.push('packageName = ?'); values.push(packageName); }
+        if (coverageType !== undefined) { updates.push('coverageType = ?'); values.push(coverageType); }
+        if (coverageLimit !== undefined) { updates.push('coverageLimit = ?'); values.push(coverageLimit != null ? coverageLimit : null); }
+        if (coPayPercentage !== undefined) { updates.push('coPayPercentage = ?'); values.push(coPayPercentage != null ? coPayPercentage : 0); }
+        if (coPayAmount !== undefined) { updates.push('coPayAmount = ?'); values.push(coPayAmount != null ? coPayAmount : 0); }
+        if (isActive !== undefined) { updates.push('isActive = ?'); values.push(isActive); }
+        if (description !== undefined) { updates.push('description = ?'); values.push(description || null); }
+
+        if (updates.length === 0) {
+            return res.status(400).json({ error: 'No fields to update' });
+        }
+
+        values.push(id);
+        await pool.execute(
+            `UPDATE insurance_packages SET ${updates.join(', ')}, updatedAt = NOW() WHERE packageId = ?`,
+            values
+        );
+
+        const [updated] = await pool.execute(
+            `SELECT pkg.*, ip.providerName, ip.providerCode
+             FROM insurance_packages pkg
+             LEFT JOIN insurance_providers ip ON pkg.providerId = ip.providerId
+             WHERE pkg.packageId = ?`,
+            [id]
+        );
+
+        res.status(200).json(updated[0]);
+    } catch (error) {
+        console.error('Error updating insurance package:', error);
+        res.status(500).json({ message: 'Error updating insurance package', error: error.message });
+    }
+});
+
+/**
+ * @route DELETE /api/insurance/packages/:id
+ * @description Delete an insurance package (patient_insurance.packageId will be set to NULL for references)
+ */
+router.delete('/packages/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const [existing] = await pool.execute('SELECT packageId FROM insurance_packages WHERE packageId = ?', [id]);
+        if (existing.length === 0) {
+            return res.status(404).json({ message: 'Insurance package not found' });
+        }
+
+        await pool.execute('UPDATE patient_insurance SET packageId = NULL WHERE packageId = ?', [id]);
+        await pool.execute('DELETE FROM insurance_packages WHERE packageId = ?', [id]);
+
+        res.status(200).json({ message: 'Insurance package deleted successfully' });
+    } catch (error) {
+        console.error('Error deleting insurance package:', error);
+        res.status(500).json({ message: 'Error deleting insurance package', error: error.message });
+    }
+});
+
+// ============================================
+// INSURANCE CHARGE RATES (insurer-specific rates per charge, over time)
+// ============================================
+
+/**
+ * @route GET /api/insurance/charge-rates
+ * @description List insurance charge rates; optional providerId, chargeId, asOf (date) for current only
+ */
+router.get('/charge-rates', async (req, res) => {
+    try {
+        const { providerId, chargeId, asOf } = req.query;
+        let query = `
+            SELECT r.*, sc.chargeCode, sc.name AS chargeName, sc.category AS chargeCategory,
+                   ip.providerName, ip.providerCode
+            FROM insurance_charge_rates r
+            LEFT JOIN service_charges sc ON r.chargeId = sc.chargeId
+            LEFT JOIN insurance_providers ip ON r.providerId = ip.providerId
+            WHERE 1=1
+        `;
+        const params = [];
+        if (providerId) { query += ' AND r.providerId = ?'; params.push(providerId); }
+        if (chargeId) { query += ' AND r.chargeId = ?'; params.push(chargeId); }
+        if (asOf) {
+            query += ' AND r.startDate <= ? AND (r.endDate IS NULL OR r.endDate >= ?)';
+            params.push(asOf, asOf);
+        }
+        query += ' ORDER BY ip.providerName, sc.name, r.startDate DESC';
+        const [rows] = await pool.execute(query, params);
+        res.status(200).json(rows);
+    } catch (error) {
+        console.error('Error fetching insurance charge rates:', error);
+        res.status(500).json({ message: 'Error fetching insurance charge rates', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/insurance/charge-rates/effective
+ * @description Get the effective rate for (chargeId, providerId) on a date (default today)
+ */
+router.get('/charge-rates/effective', async (req, res) => {
+    try {
+        const { chargeId, providerId, date } = req.query;
+        if (!chargeId || !providerId) {
+            return res.status(400).json({ error: 'chargeId and providerId are required' });
+        }
+        const asOf = date || new Date().toISOString().slice(0, 10);
+        const [rows] = await pool.execute(
+            `SELECT r.*, sc.name AS chargeName, ip.providerName
+             FROM insurance_charge_rates r
+             LEFT JOIN service_charges sc ON r.chargeId = sc.chargeId
+             LEFT JOIN insurance_providers ip ON r.providerId = ip.providerId
+             WHERE r.chargeId = ? AND r.providerId = ? AND r.startDate <= ? AND (r.endDate IS NULL OR r.endDate >= ?)
+             ORDER BY r.startDate DESC LIMIT 1`,
+            [chargeId, providerId, asOf, asOf]
+        );
+        if (rows.length === 0) return res.status(404).json({ message: 'No rate found for this charge and provider on the given date' });
+        res.status(200).json(rows[0]);
+    } catch (error) {
+        console.error('Error fetching effective rate:', error);
+        res.status(500).json({ message: 'Error fetching effective rate', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/insurance/charge-rates/:id
+ */
+router.get('/charge-rates/:id', async (req, res) => {
+    try {
+        const [rows] = await pool.execute(
+            `SELECT r.*, sc.chargeCode, sc.name AS chargeName, ip.providerName, ip.providerCode
+             FROM insurance_charge_rates r
+             LEFT JOIN service_charges sc ON r.chargeId = sc.chargeId
+             LEFT JOIN insurance_providers ip ON r.providerId = ip.providerId
+             WHERE r.rateId = ?`,
+            [req.params.id]
+        );
+        if (rows.length === 0) return res.status(404).json({ message: 'Insurance charge rate not found' });
+        res.status(200).json(rows[0]);
+    } catch (error) {
+        console.error('Error fetching insurance charge rate:', error);
+        res.status(500).json({ message: 'Error fetching insurance charge rate', error: error.message });
+    }
+});
+
+/**
+ * @route POST /api/insurance/charge-rates
+ */
+router.post('/charge-rates', async (req, res) => {
+    try {
+        const { chargeId, providerId, amount, startDate, endDate, notes } = req.body;
+        if (!chargeId || !providerId || amount == null || !startDate) {
+            return res.status(400).json({ error: 'chargeId, providerId, amount, and startDate are required' });
+        }
+        const [result] = await pool.execute(
+            `INSERT INTO insurance_charge_rates (chargeId, providerId, amount, startDate, endDate, notes)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [chargeId, providerId, amount, startDate, endDate || null, notes || null]
+        );
+        const [rows] = await pool.execute(
+            `SELECT r.*, sc.chargeCode, sc.name AS chargeName, ip.providerName
+             FROM insurance_charge_rates r
+             LEFT JOIN service_charges sc ON r.chargeId = sc.chargeId
+             LEFT JOIN insurance_providers ip ON r.providerId = ip.providerId
+             WHERE r.rateId = ?`,
+            [result.insertId]
+        );
+        res.status(201).json(rows[0]);
+    } catch (error) {
+        console.error('Error creating insurance charge rate:', error);
+        res.status(500).json({ message: 'Error creating insurance charge rate', error: error.message });
+    }
+});
+
+/**
+ * @route PUT /api/insurance/charge-rates/:id
+ */
+router.put('/charge-rates/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { amount, startDate, endDate, notes } = req.body;
+        const [existing] = await pool.execute('SELECT rateId FROM insurance_charge_rates WHERE rateId = ?', [id]);
+        if (existing.length === 0) return res.status(404).json({ message: 'Insurance charge rate not found' });
+        const updates = []; const values = [];
+        if (amount != null) { updates.push('amount = ?'); values.push(amount); }
+        if (startDate != null) { updates.push('startDate = ?'); values.push(startDate); }
+        if (endDate !== undefined) { updates.push('endDate = ?'); values.push(endDate || null); }
+        if (notes !== undefined) { updates.push('notes = ?'); values.push(notes || null); }
+        if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
+        values.push(id);
+        await pool.execute(`UPDATE insurance_charge_rates SET ${updates.join(', ')}, updatedAt = NOW() WHERE rateId = ?`, values);
+        const [rows] = await pool.execute(
+            `SELECT r.*, sc.chargeCode, sc.name AS chargeName, ip.providerName
+             FROM insurance_charge_rates r LEFT JOIN service_charges sc ON r.chargeId = sc.chargeId
+             LEFT JOIN insurance_providers ip ON r.providerId = ip.providerId WHERE r.rateId = ?`,
+            [id]
+        );
+        res.status(200).json(rows[0]);
+    } catch (error) {
+        console.error('Error updating insurance charge rate:', error);
+        res.status(500).json({ message: 'Error updating insurance charge rate', error: error.message });
+    }
+});
+
+/**
+ * @route DELETE /api/insurance/charge-rates/:id
+ */
+router.delete('/charge-rates/:id', async (req, res) => {
+    try {
+        const [result] = await pool.execute('DELETE FROM insurance_charge_rates WHERE rateId = ?', [req.params.id]);
+        if (result.affectedRows === 0) return res.status(404).json({ message: 'Insurance charge rate not found' });
+        res.status(200).json({ message: 'Insurance charge rate deleted' });
+    } catch (error) {
+        console.error('Error deleting insurance charge rate:', error);
+        res.status(500).json({ message: 'Error deleting insurance charge rate', error: error.message });
+    }
+});
+
+// ============================================
+// INPATIENT CHARGE RATES (cash-paying inpatients; can vary by ward/ward type)
+// ============================================
+
+/**
+ * @route GET /api/insurance/inpatient-charge-rates
+ * @description List inpatient charge rates; optional chargeId, wardId, wardType, asOf
+ */
+router.get('/inpatient-charge-rates', async (req, res) => {
+    try {
+        const { chargeId, wardId, wardType, asOf } = req.query;
+        let query = `
+            SELECT r.*, sc.chargeCode, sc.name AS chargeName, sc.category,
+                   w.wardName, w.wardType AS wardTypeName
+            FROM inpatient_charge_rates r
+            LEFT JOIN service_charges sc ON r.chargeId = sc.chargeId
+            LEFT JOIN wards w ON r.wardId = w.wardId
+            WHERE 1=1
+        `;
+        const params = [];
+        if (chargeId) { query += ' AND r.chargeId = ?'; params.push(chargeId); }
+        if (wardId) { query += ' AND r.wardId = ?'; params.push(wardId); }
+        if (wardType) { query += ' AND r.wardType = ?'; params.push(wardType); }
+        if (asOf) {
+            query += ' AND r.startDate <= ? AND (r.endDate IS NULL OR r.endDate >= ?)';
+            params.push(asOf, asOf);
+        }
+        query += ' ORDER BY sc.name, w.wardName, r.wardType, r.startDate DESC';
+        const [rows] = await pool.execute(query, params);
+        res.status(200).json(rows);
+    } catch (error) {
+        console.error('Error fetching inpatient charge rates:', error);
+        res.status(500).json({ message: 'Error fetching inpatient charge rates', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/insurance/inpatient-charge-rates/effective
+ * @description Get effective rate for cash inpatient: chargeId, optional wardId/wardType, date. Precedence: wardId > wardType > default.
+ */
+router.get('/inpatient-charge-rates/effective', async (req, res) => {
+    try {
+        const { chargeId, wardId, wardType, date } = req.query;
+        if (!chargeId) return res.status(400).json({ error: 'chargeId is required' });
+        const asOf = date || new Date().toISOString().slice(0, 10);
+        let rate = null;
+        if (wardId) {
+            const [rows] = await pool.execute(
+                `SELECT r.* FROM inpatient_charge_rates r
+                 WHERE r.chargeId = ? AND r.wardId = ? AND r.startDate <= ? AND (r.endDate IS NULL OR r.endDate >= ?)
+                 ORDER BY r.startDate DESC LIMIT 1`,
+                [chargeId, wardId, asOf, asOf]
+            );
+            if (rows.length > 0) rate = rows[0];
+        }
+        if (!rate && wardType) {
+            const [rows] = await pool.execute(
+                `SELECT r.* FROM inpatient_charge_rates r
+                 WHERE r.chargeId = ? AND r.wardId IS NULL AND r.wardType = ? AND r.startDate <= ? AND (r.endDate IS NULL OR r.endDate >= ?)
+                 ORDER BY r.startDate DESC LIMIT 1`,
+                [chargeId, wardType, asOf, asOf]
+            );
+            if (rows.length > 0) rate = rows[0];
+        }
+        if (!rate) {
+            const [rows] = await pool.execute(
+                `SELECT r.* FROM inpatient_charge_rates r
+                 WHERE r.chargeId = ? AND r.wardId IS NULL AND r.wardType IS NULL AND r.startDate <= ? AND (r.endDate IS NULL OR r.endDate >= ?)
+                 ORDER BY r.startDate DESC LIMIT 1`,
+                [chargeId, asOf, asOf]
+            );
+            if (rows.length > 0) rate = rows[0];
+        }
+        if (!rate) return res.status(404).json({ message: 'No inpatient rate found for this charge (and ward/type) on the given date' });
+        res.status(200).json(rate);
+    } catch (error) {
+        console.error('Error fetching effective inpatient rate:', error);
+        res.status(500).json({ message: 'Error fetching effective inpatient rate', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/insurance/inpatient-charge-rates/:id
+ */
+router.get('/inpatient-charge-rates/:id', async (req, res) => {
+    try {
+        const [rows] = await pool.execute(
+            `SELECT r.*, sc.chargeCode, sc.name AS chargeName, w.wardName
+             FROM inpatient_charge_rates r
+             LEFT JOIN service_charges sc ON r.chargeId = sc.chargeId
+             LEFT JOIN wards w ON r.wardId = w.wardId
+             WHERE r.rateId = ?`,
+            [req.params.id]
+        );
+        if (rows.length === 0) return res.status(404).json({ message: 'Inpatient charge rate not found' });
+        res.status(200).json(rows[0]);
+    } catch (error) {
+        console.error('Error fetching inpatient charge rate:', error);
+        res.status(500).json({ message: 'Error fetching inpatient charge rate', error: error.message });
+    }
+});
+
+/**
+ * @route POST /api/insurance/inpatient-charge-rates
+ */
+router.post('/inpatient-charge-rates', async (req, res) => {
+    try {
+        const { chargeId, wardId, wardType, amount, startDate, endDate, notes } = req.body;
+        if (!chargeId || amount == null || !startDate) {
+            return res.status(400).json({ error: 'chargeId, amount, and startDate are required' });
+        }
+        const [result] = await pool.execute(
+            `INSERT INTO inpatient_charge_rates (chargeId, wardId, wardType, amount, startDate, endDate, notes)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [chargeId, wardId || null, wardType || null, amount, startDate, endDate || null, notes || null]
+        );
+        const [rows] = await pool.execute(
+            `SELECT r.*, sc.chargeCode, sc.name AS chargeName, w.wardName
+             FROM inpatient_charge_rates r
+             LEFT JOIN service_charges sc ON r.chargeId = sc.chargeId
+             LEFT JOIN wards w ON r.wardId = w.wardId
+             WHERE r.rateId = ?`,
+            [result.insertId]
+        );
+        res.status(201).json(rows[0]);
+    } catch (error) {
+        console.error('Error creating inpatient charge rate:', error);
+        res.status(500).json({ message: 'Error creating inpatient charge rate', error: error.message });
+    }
+});
+
+/**
+ * @route PUT /api/insurance/inpatient-charge-rates/:id
+ */
+router.put('/inpatient-charge-rates/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { wardId, wardType, amount, startDate, endDate, notes } = req.body;
+        const [existing] = await pool.execute('SELECT rateId FROM inpatient_charge_rates WHERE rateId = ?', [id]);
+        if (existing.length === 0) return res.status(404).json({ message: 'Inpatient charge rate not found' });
+        const updates = []; const values = [];
+        if (wardId !== undefined) { updates.push('wardId = ?'); values.push(wardId || null); }
+        if (wardType !== undefined) { updates.push('wardType = ?'); values.push(wardType || null); }
+        if (amount != null) { updates.push('amount = ?'); values.push(amount); }
+        if (startDate != null) { updates.push('startDate = ?'); values.push(startDate); }
+        if (endDate !== undefined) { updates.push('endDate = ?'); values.push(endDate || null); }
+        if (notes !== undefined) { updates.push('notes = ?'); values.push(notes || null); }
+        if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
+        values.push(id);
+        await pool.execute(`UPDATE inpatient_charge_rates SET ${updates.join(', ')}, updatedAt = NOW() WHERE rateId = ?`, values);
+        const [rows] = await pool.execute(
+            `SELECT r.*, sc.chargeCode, sc.name AS chargeName, w.wardName
+             FROM inpatient_charge_rates r LEFT JOIN service_charges sc ON r.chargeId = sc.chargeId
+             LEFT JOIN wards w ON r.wardId = w.wardId WHERE r.rateId = ?`,
+            [id]
+        );
+        res.status(200).json(rows[0]);
+    } catch (error) {
+        console.error('Error updating inpatient charge rate:', error);
+        res.status(500).json({ message: 'Error updating inpatient charge rate', error: error.message });
+    }
+});
+
+/**
+ * @route DELETE /api/insurance/inpatient-charge-rates/:id
+ */
+router.delete('/inpatient-charge-rates/:id', async (req, res) => {
+    try {
+        const [result] = await pool.execute('DELETE FROM inpatient_charge_rates WHERE rateId = ?', [req.params.id]);
+        if (result.affectedRows === 0) return res.status(404).json({ message: 'Inpatient charge rate not found' });
+        res.status(200).json({ message: 'Inpatient charge rate deleted' });
+    } catch (error) {
+        console.error('Error deleting inpatient charge rate:', error);
+        res.status(500).json({ message: 'Error deleting inpatient charge rate', error: error.message });
     }
 });
 

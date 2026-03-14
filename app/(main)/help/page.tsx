@@ -428,6 +428,72 @@ export default function HelpPage() {
               </div>
             </CardContent>
           </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Pill className="h-5 w-5" />
+                Nurse drug pickup request (end-to-end)
+              </CardTitle>
+              <CardDescription>
+                How nurses request medications for inpatients and how pharmacy fulfils and records the pickup
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                <div className="flex items-start gap-3">
+                  <Badge variant="outline" className="mt-0.5">1</Badge>
+                  <div>
+                    <p className="font-medium">Nurse: Create a pickup request</p>
+                    <p className="text-sm text-muted-foreground">
+                      Go to <strong>Departments → Nursing → Drug Pickup Requests</strong>. Under &quot;New request&quot;, you see patients in your assigned wards with pending prescriptions. Select the items to request, add optional notes, and click <strong>Send Pickup Request</strong>.
+                    </p>
+                    <Badge variant="outline" className="mt-2">Location: Departments → Nursing → Drug Pickup Requests</Badge>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <Badge variant="outline" className="mt-0.5">2</Badge>
+                  <div>
+                    <p className="font-medium">Nurse: Track your requests</p>
+                    <p className="text-sm text-muted-foreground">
+                      Open the <strong>My request history</strong> tab to see all your requests. Status shows <strong>Pending</strong> (pharmacy not yet dispensed / not yet collected), <strong>Picked up</strong> (you have collected the drugs), or <strong>Cancelled</strong>.
+                    </p>
+                    <Badge variant="outline" className="mt-2">Location: Departments → Nursing → Drug Pickup Requests → My request history</Badge>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <Badge variant="outline" className="mt-0.5">3</Badge>
+                  <div>
+                    <p className="font-medium">Pharmacy: View pending requests</p>
+                    <p className="text-sm text-muted-foreground">
+                      Go to <strong>Pharmacy → Nurse Pickup</strong>. The <strong>Pending requests</strong> tab lists all requests from nurses. Dispense the prescription using the Prescriptions tab or the normal dispense flow.
+                    </p>
+                    <Badge variant="outline" className="mt-2">Location: Pharmacy → Nurse Pickup → Pending requests</Badge>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <Badge variant="outline" className="mt-0.5">4</Badge>
+                  <div>
+                    <p className="font-medium">Pharmacy: Record pickup when nurse collects</p>
+                    <p className="text-sm text-muted-foreground">
+                      After dispensing, the prescription appears under <strong>Ready for Pickup</strong>. When the nurse comes to collect, select the prescription and items and click <strong>Record Pickup</strong>. The system updates the nurse’s original request to <strong>Picked up</strong>.
+                    </p>
+                    <Badge variant="outline" className="mt-2">Location: Pharmacy → Nurse Pickup → Ready for Pickup</Badge>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <Badge variant="outline" className="mt-0.5">5</Badge>
+                  <div>
+                    <p className="font-medium">Nurse: Request shows as Picked up</p>
+                    <p className="text-sm text-muted-foreground">
+                      In <strong>My request history</strong>, the request status changes to <strong>Picked up</strong> once pharmacy has recorded the pickup. Pharmacy can also view <strong>Pickup History</strong> for a full list of all nurse pickups.
+                    </p>
+                    <Badge variant="outline" className="mt-2">Location: Departments → Nursing → Drug Pickup Requests (nurse); Pharmacy → Nurse Pickup → Pickup History (pharmacy)</Badge>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         </TabsContent>
 
         <TabsContent value="modules" className="space-y-6 mt-6">

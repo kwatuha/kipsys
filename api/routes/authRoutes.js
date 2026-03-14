@@ -106,7 +106,8 @@ router.post('/login', async (req, res) => {
                         landingPageUrl,
                         landingPageIcon,
                         landingPageDescription,
-                        defaultServicePoint
+                        defaultServicePoint,
+                        landingQuickLinks
                     FROM roles 
                     WHERE roleId = ? AND isActive = 1`,
                     [user.roleId]
@@ -117,13 +118,21 @@ router.post('/login', async (req, res) => {
                 if (landingRows.length > 0) {
                     const config = landingRows[0];
                     console.log('[AUTH LOGIN] Raw config from DB:', config);
+                    let quickLinks = [];
+                    if (config.landingQuickLinks) {
+                        try {
+                            quickLinks = typeof config.landingQuickLinks === 'string' ? JSON.parse(config.landingQuickLinks) : config.landingQuickLinks;
+                            if (!Array.isArray(quickLinks)) quickLinks = [];
+                        } catch (e) { quickLinks = []; }
+                    }
                     landingConfig = {
                         type: config.landingPageType || 'dashboard',
                         label: config.landingPageLabel || null,
                         url: config.landingPageUrl || null,
                         icon: config.landingPageIcon || 'Home',
                         description: config.landingPageDescription || null,
-                        servicePoint: config.defaultServicePoint || null
+                        servicePoint: config.defaultServicePoint || null,
+                        quickLinks: quickLinks
                     };
                     console.log('[AUTH LOGIN] Transformed landingConfig:', landingConfig);
                 } else {
@@ -342,7 +351,8 @@ router.get('/verify', async (req, res) => {
                         landingPageUrl,
                         landingPageIcon,
                         landingPageDescription,
-                        defaultServicePoint
+                        defaultServicePoint,
+                        landingQuickLinks
                     FROM roles 
                     WHERE roleId = ? AND isActive = 1`,
                     [user.roleId]
@@ -353,13 +363,21 @@ router.get('/verify', async (req, res) => {
                 if (landingRows.length > 0) {
                     const config = landingRows[0];
                     console.log('[AUTH VERIFY] Raw config from DB:', config);
+                    let quickLinks = [];
+                    if (config.landingQuickLinks) {
+                        try {
+                            quickLinks = typeof config.landingQuickLinks === 'string' ? JSON.parse(config.landingQuickLinks) : config.landingQuickLinks;
+                            if (!Array.isArray(quickLinks)) quickLinks = [];
+                        } catch (e) { quickLinks = []; }
+                    }
                     landingConfig = {
                         type: config.landingPageType || 'dashboard',
                         label: config.landingPageLabel || null,
                         url: config.landingPageUrl || null,
                         icon: config.landingPageIcon || 'Home',
                         description: config.landingPageDescription || null,
-                        servicePoint: config.defaultServicePoint || null
+                        servicePoint: config.defaultServicePoint || null,
+                        quickLinks: quickLinks
                     };
                     console.log('[AUTH VERIFY] Transformed landingConfig:', landingConfig);
                 } else {

@@ -46,7 +46,8 @@ router.get('/:roleName/landing-config', async (req, res) => {
                 landingPageUrl,
                 landingPageIcon,
                 landingPageDescription,
-                defaultServicePoint
+                defaultServicePoint,
+                landingQuickLinks
             FROM roles 
             WHERE LOWER(roleName) = LOWER(?) AND isActive = 1`,
             [roleName]
@@ -57,6 +58,13 @@ router.get('/:roleName/landing-config', async (req, res) => {
         }
         
         const role = rows[0];
+        let quickLinks = [];
+        if (role.landingQuickLinks) {
+            try {
+                quickLinks = typeof role.landingQuickLinks === 'string' ? JSON.parse(role.landingQuickLinks) : role.landingQuickLinks;
+                if (!Array.isArray(quickLinks)) quickLinks = [];
+            } catch (e) { quickLinks = []; }
+        }
         
         // Return landing page config with defaults
         res.status(200).json({
@@ -66,7 +74,8 @@ router.get('/:roleName/landing-config', async (req, res) => {
             landingPageUrl: role.landingPageUrl || null,
             landingPageIcon: role.landingPageIcon || 'Home',
             landingPageDescription: role.landingPageDescription || null,
-            defaultServicePoint: role.defaultServicePoint || null
+            defaultServicePoint: role.defaultServicePoint || null,
+            landingQuickLinks: quickLinks
         });
     } catch (error) {
         console.error('Error fetching role landing config:', error);
@@ -170,6 +179,7 @@ router.post('/', async (req, res) => {
             landingPageIcon = null,
             landingPageDescription = null,
             defaultServicePoint = null,
+            landingQuickLinks = null,
             dashboardCards = {}
         } = req.body;
 
@@ -188,6 +198,7 @@ router.post('/', async (req, res) => {
         }
 
         // Insert role with landing page configuration
+        const quickLinksJson = Array.isArray(landingQuickLinks) ? JSON.stringify(landingQuickLinks) : null;
         const [result] = await pool.execute(
             `INSERT INTO roles (
                 roleName, 
@@ -198,8 +209,9 @@ router.post('/', async (req, res) => {
                 landingPageUrl,
                 landingPageIcon,
                 landingPageDescription,
-                defaultServicePoint
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                defaultServicePoint,
+                landingQuickLinks
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 roleName, 
                 description || null, 
@@ -209,7 +221,8 @@ router.post('/', async (req, res) => {
                 landingPageUrl,
                 landingPageIcon,
                 landingPageDescription,
-                defaultServicePoint
+                defaultServicePoint,
+                quickLinksJson
             ]
         );
 
@@ -255,6 +268,7 @@ router.put('/:id', async (req, res) => {
             landingPageIcon,
             landingPageDescription,
             defaultServicePoint,
+            landingQuickLinks,
             dashboardCards
         } = req.body;
 
@@ -324,6 +338,21 @@ router.put('/:id', async (req, res) => {
         if (defaultServicePoint !== undefined) {
             updates.push('defaultServicePoint = ?');
             values.push(defaultServicePoint);
+        }
+        
+        // Only add landingQuickLinks if column exists (migration add_landing_quick_links.sql)
+        let hasLandingQuickLinksColumn = false;
+        if (landingQuickLinks !== undefined) {
+            try {
+                const [colRows] = await pool.query(
+                    "SHOW COLUMNS FROM roles LIKE 'landingQuickLinks'"
+                );
+                hasLandingQuickLinksColumn = colRows.length > 0;
+            } catch (e) { /* ignore */ }
+            if (hasLandingQuickLinksColumn) {
+                updates.push('landingQuickLinks = ?');
+                values.push(Array.isArray(landingQuickLinks) ? JSON.stringify(landingQuickLinks) : null);
+            }
         }
 
         // Start transaction for atomic updates

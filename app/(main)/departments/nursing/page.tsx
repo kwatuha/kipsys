@@ -6,6 +6,8 @@ import { NursingQuickActions } from "@/components/nursing-quick-actions"
 import { PatientCareTasks } from "@/components/patient-care-tasks"
 import { WardOccupancy } from "@/components/ward-occupancy"
 import { ShiftSchedule } from "@/components/shift-schedule"
+import { NurseWardAssignments } from "@/components/nurse-ward-assignments"
+import { NursePickupRequests } from "@/components/nurse-pickup-requests"
 
 export const metadata: Metadata = {
   title: "Nursing Department | Kiplombe Medical Centre",
@@ -31,6 +33,7 @@ export default function NursingDepartmentPage() {
         <TabsList>
           <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
           <TabsTrigger value="tasks">Patient Care</TabsTrigger>
+          <TabsTrigger value="medications">Drug Pickup Requests</TabsTrigger>
           <TabsTrigger value="wards">Ward Management</TabsTrigger>
           <TabsTrigger value="staff">Staff Schedule</TabsTrigger>
           <TabsTrigger value="reports">Reports</TabsTrigger>
@@ -53,8 +56,23 @@ export default function NursingDepartmentPage() {
           <PatientCareTasks />
         </TabsContent>
 
+        <TabsContent value="medications" className="space-y-4">
+          <NursePickupRequests />
+        </TabsContent>
+
         <TabsContent value="wards" className="space-y-4">
-          <WardOccupancy />
+          <Tabs defaultValue="occupancy" className="space-y-4">
+            <TabsList>
+              <TabsTrigger value="occupancy">Ward Occupancy</TabsTrigger>
+              <TabsTrigger value="assignments">Nurse Assignments</TabsTrigger>
+            </TabsList>
+            <TabsContent value="occupancy">
+              <WardOccupancy />
+            </TabsContent>
+            <TabsContent value="assignments">
+              <NurseWardAssignments />
+            </TabsContent>
+          </Tabs>
         </TabsContent>
 
         <TabsContent value="staff" className="space-y-4">

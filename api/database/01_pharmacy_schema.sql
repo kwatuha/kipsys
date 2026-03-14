@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS prescriptions (
     patientId INT NOT NULL,
     doctorId INT NOT NULL,
     prescriptionDate DATE NOT NULL,
-    status ENUM('pending', 'dispensed', 'cancelled', 'expired') DEFAULT 'pending',
+    status ENUM('pending', 'dispensed', 'picked_up', 'cancelled', 'expired') DEFAULT 'pending',
     notes TEXT,
     createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

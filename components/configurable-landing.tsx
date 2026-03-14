@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth/auth-context"
 import { ComprehensiveDashboard } from "@/components/comprehensive-dashboard"
@@ -15,6 +15,12 @@ import { MainLayoutContent } from "@/components/main-layout-content"
 import { useRoleMenuAccess } from "@/lib/hooks/use-role-menu-access"
 import { NavigationProvider } from "@/lib/navigation-context"
 
+interface LandingQuickLink {
+  label: string
+  url: string
+  icon?: string
+}
+
 interface ConfigurableLandingProps {
   landingConfig?: {
     type: 'dashboard' | 'app_view' | 'redirect'
@@ -23,15 +29,25 @@ interface ConfigurableLandingProps {
     icon: string | null
     description: string | null
     servicePoint?: string | null
+    quickLinks?: LandingQuickLink[]
   } | null
 }
+
+const LANDING_ENTERED_KEY = "landing_entered"
 
 export function ConfigurableLanding({ landingConfig }: ConfigurableLandingProps) {
   const { user, isLoading } = useAuth()
   const router = useRouter()
+  const [hasEnteredApp, setHasEnteredApp] = useState(false)
   // Only fetch menu access if user exists and has an id
   const userId = user?.id ? String(user.id) : undefined
   const { menuAccess, loading: menuLoading } = useRoleMenuAccess(userId)
+
+  // Restore "entered" state from session so refresh keeps user in the app
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    setHasEnteredApp(sessionStorage.getItem(LANDING_ENTERED_KEY) === "1")
+  }, [])
 
   // Check if user has top menu access (has categories)
   const hasTopMenuAccess = menuAccess && menuAccess.categories && menuAccess.categories.length > 0
@@ -48,7 +64,8 @@ export function ConfigurableLanding({ landingConfig }: ConfigurableLandingProps)
       url: (normalizedConfig as any).landingPageUrl || null,
       icon: (normalizedConfig as any).landingPageIcon || 'Home',
       description: (normalizedConfig as any).landingPageDescription || null,
-      servicePoint: (normalizedConfig as any).servicePoint || (normalizedConfig as any).defaultServicePoint || null
+      servicePoint: (normalizedConfig as any).servicePoint || (normalizedConfig as any).defaultServicePoint || null,
+      quickLinks: Array.isArray((normalizedConfig as any).quickLinks) ? (normalizedConfig as any).quickLinks : []
     }
   }
 
@@ -59,8 +76,10 @@ export function ConfigurableLanding({ landingConfig }: ConfigurableLandingProps)
     url: null,
     icon: 'Home',
     description: null,
-    servicePoint: null
+    servicePoint: null,
+    quickLinks: [] as LandingQuickLink[]
   }
+  const quickLinks = Array.isArray((config as any).quickLinks) ? (config as any).quickLinks : []
 
   // ALL HOOKS MUST BE CALLED BEFORE ANY CONDITIONAL RETURNS
   // Redirect to login if not authenticated
@@ -133,6 +152,56 @@ export function ConfigurableLanding({ landingConfig }: ConfigurableLandingProps)
     // User has no menu access - show app view
     // Get icon component dynamically
     const IconComponent = (Icons as any)[config.icon || 'Activity'] || Activity
+
+    // Quick links: show one button that opens the app; links live in sidebar/top bar
+    if (quickLinks.length > 0) {
+      const enterApp = () => {
+        if (typeof window !== "undefined") sessionStorage.setItem(LANDING_ENTERED_KEY, "1")
+        setHasEnteredApp(true)
+      }
+
+      if (hasEnteredApp) {
+        return (
+          <NavigationProvider>
+            <MainLayoutContent>
+              <ComprehensiveDashboard />
+            </MainLayoutContent>
+          </NavigationProvider>
+        )
+      }
+
+      return (
+        <CriticalNotificationsProvider>
+          <div className="flex flex-col h-screen">
+            <Header />
+            <main className="flex-1 overflow-auto">
+              <div className="flex flex-col items-center justify-center min-h-[60vh] gap-6 p-6">
+                <Card className="w-full max-w-md border-2 border-primary">
+                  <CardHeader className="text-center">
+                    <div className="mx-auto mb-4 w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
+                      <IconComponent className="h-8 w-8 text-primary" />
+                    </div>
+                    <CardTitle className="text-2xl">{config.label || "Open"}</CardTitle>
+                    {config.description && (
+                      <CardDescription>{config.description}</CardDescription>
+                    )}
+                  </CardHeader>
+                  <CardContent>
+                    <Button className="w-full" size="lg" onClick={enterApp}>
+                      Open
+                      <ArrowRight className="ml-2 h-4 w-4" />
+                    </Button>
+                    <p className="text-xs text-muted-foreground text-center mt-3">
+                      Your links will appear in the menu and sidebar.
+                    </p>
+                  </CardContent>
+                </Card>
+              </div>
+            </main>
+          </div>
+        </CriticalNotificationsProvider>
+      )
+    }
 
     // If URL is provided, show a single app card with header
     if (config.url) {

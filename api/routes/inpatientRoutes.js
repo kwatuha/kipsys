@@ -1,16 +1,63 @@
 // Inpatient routes - Full CRUD operations
 const express = require('express');
+const jwt = require('jsonwebtoken');
 const router = express.Router();
 const pool = require('../config/db');
+const { resolveChargeRate } = require('../lib/chargeRateResolver');
+
+require('dotenv').config();
+const JWT_SECRET = process.env.JWT_SECRET || 'your_fallback_secret_for_dev_only_change_this_asap';
+
+/**
+ * Get current user id from req.user (when auth middleware is on) or from JWT in Authorization header.
+ * When auth is disabled, the frontend still sends the token; we decode it here to apply nurse filtering.
+ */
+function getUserId(req) {
+    if (req.user?.id != null) return req.user.id;
+    if (req.user?.userId != null) return req.user.userId;
+    const authHeader = req.header('Authorization');
+    if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
+    const token = authHeader.split(' ')[1];
+    if (!token) return null;
+    try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        const user = decoded?.user ?? decoded;
+        return user?.id ?? user?.userId ?? null;
+    } catch (err) {
+        return null;
+    }
+}
+
+/**
+ * If the current user is a Nurse, return their assigned ward IDs; otherwise return null (no restriction).
+ */
+async function getNurseAssignedWardIds(pool, userId) {
+    if (!userId) return null;
+    const [userRows] = await pool.execute(
+        'SELECT r.roleName FROM users u INNER JOIN roles r ON r.roleId = u.roleId WHERE u.userId = ?',
+        [userId]
+    );
+    if (userRows.length === 0) return null;
+    const roleName = (userRows[0].roleName || '').toLowerCase();
+    if (!roleName.includes('nurse') || roleName.includes('doctor')) return null;
+    const [wardRows] = await pool.execute(
+        'SELECT wardId FROM nurse_ward_assignments WHERE nurseUserId = ? AND isActive = 1',
+        [userId]
+    );
+    const wardIds = wardRows.map(r => r.wardId);
+    if (wardIds.length === 0) return []; // nurse with no assignments sees no admissions
+    return wardIds;
+}
 
 /**
  * @route GET /api/inpatient/admissions
- * @description Get all admissions
+ * @description Get all admissions. Nurses only see admissions in their assigned wards.
  */
 router.get('/admissions', async (req, res) => {
     try {
         const { status, wardId, page = 1, limit = 50, search, patientId } = req.query;
         const offset = (page - 1) * limit;
+        const userId = getUserId(req);
 
         let query = `
             SELECT a.*,
@@ -26,6 +73,16 @@ router.get('/admissions', async (req, res) => {
             WHERE 1=1
         `;
         const params = [];
+
+        const nurseWardIds = await getNurseAssignedWardIds(pool, userId);
+        if (Array.isArray(nurseWardIds) && nurseWardIds.length === 0) {
+            res.status(200).json([]);
+            return;
+        }
+        if (Array.isArray(nurseWardIds) && nurseWardIds.length > 0) {
+            query += ` AND w.wardId IN (${nurseWardIds.map(() => '?').join(',')})`;
+            params.push(...nurseWardIds);
+        }
 
         if (status) {
             query += ` AND a.status = ?`;
@@ -190,11 +247,12 @@ router.put('/admissions/:id', async (req, res) => {
         await connection.beginTransaction();
 
         const { id } = req.params;
-        const { bedId, admissionDiagnosis, admissionReason, expectedDischargeDate, notes, status, diagnoses } = req.body;
+        const { bedId, admissionDiagnosis, admissionReason, expectedDischargeDate, dischargeDate, notes, status, diagnoses, transferReason } = req.body;
+        const userId = getUserId(req);
 
         // Check if admission exists
         const [existing] = await connection.execute(
-            'SELECT bedId, status FROM admissions WHERE admissionId = ?',
+            'SELECT bedId, status, admittingDoctorId FROM admissions WHERE admissionId = ?',
             [id]
         );
 
@@ -240,6 +298,14 @@ router.put('/admissions/:id', async (req, res) => {
             values.push(status);
         }
 
+        // When discharging, set dischargeDate (use provided or now)
+        if (status === 'discharged') {
+            const d = dischargeDate ? new Date(dischargeDate) : new Date();
+            const dischargeDateVal = d.toISOString().slice(0, 19).replace('T', ' ');
+            updates.push('dischargeDate = ?');
+            values.push(dischargeDateVal);
+        }
+
         if (updates.length > 0) {
             updates.push('updatedAt = NOW()');
             values.push(id);
@@ -249,7 +315,15 @@ router.put('/admissions/:id', async (req, res) => {
             );
         }
 
-        // Update bed statuses if bed changed
+        // When status becomes discharged: free the current bed
+        if (status === 'discharged' && oldStatus === 'admitted') {
+            await connection.execute(
+                'UPDATE beds SET status = ? WHERE bedId = ?',
+                ['available', oldBedId]
+            );
+        }
+
+        // Update bed statuses if bed changed (transfer)
         if (bedId !== undefined && bedId !== oldBedId) {
             // Free old bed
             await connection.execute(
@@ -261,6 +335,23 @@ router.put('/admissions/:id', async (req, res) => {
                 'UPDATE beds SET status = ? WHERE bedId = ?',
                 ['occupied', bedId]
             );
+            // Record ward transfer if table exists and we have a user
+            try {
+                const [oldBedRows] = await connection.execute('SELECT wardId FROM beds WHERE bedId = ?', [oldBedId]);
+                const [newBedRows] = await connection.execute('SELECT wardId FROM beds WHERE bedId = ?', [bedId]);
+                const fromWardId = oldBedRows[0]?.wardId;
+                const toWardId = newBedRows[0]?.wardId;
+                const transferredBy = userId ?? existing[0].admittingDoctorId;
+                if (fromWardId != null && toWardId != null && transferredBy != null) {
+                    await connection.execute(
+                        `INSERT INTO ward_transfers (admissionId, fromWardId, toWardId, fromBedId, toBedId, transferDate, transferReason, transferredBy)
+                         VALUES (?, ?, ?, ?, ?, NOW(), ?, ?)`,
+                        [id, fromWardId, toWardId, oldBedId, bedId, transferReason || null, transferredBy]
+                    );
+                }
+            } catch (err) {
+                console.warn('ward_transfers insert skipped:', err.message);
+            }
         }
 
         // Update diagnoses if provided
@@ -668,7 +759,15 @@ router.get('/wards', async (req, res) => {
 
         query += ` GROUP BY w.wardId ORDER BY w.wardName LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset)}`;
 
-        const [wards] = await pool.execute(query, params);
+        const [rows] = await pool.execute(query, params);
+
+        // Ensure unique wards by wardId (in case GROUP BY yields duplicates in some MySQL configs)
+        const seen = new Set();
+        const wards = rows.filter((w) => {
+            if (seen.has(w.wardId)) return false;
+            seen.add(w.wardId);
+            return true;
+        });
 
         res.status(200).json(wards);
     } catch (error) {
@@ -1157,7 +1256,7 @@ router.get('/admissions/:id/overview', async (req, res) => {
             [id]
         );
 
-        // Get prescription items with medication names for each prescription
+        // Get prescription items and nurse pickup info (when status = picked_up) for each prescription
         const prescriptions = await Promise.all(prescriptionsRaw.map(async (prescription) => {
             const [items] = await pool.execute(
                 `SELECT pi.*, m.name as medicationNameFromCatalog
@@ -1167,14 +1266,37 @@ router.get('/admissions/:id/overview', async (req, res) => {
                  ORDER BY pi.itemId`,
                 [prescription.prescriptionId]
             );
-            // For display, use medication names from items or catalog
             const medicationNames = items.map((item) =>
                 item.medicationNameFromCatalog || item.medicationName
             ).filter(Boolean);
+
+            let pickupInfo = null;
+            const [pickupRows] = await pool.execute(
+                `SELECT np.pickupId, np.pickupDate, np.status as pickupStatus,
+                        nurse.firstName as nurseFirstName, nurse.lastName as nurseLastName,
+                        ph.firstName as pharmacistFirstName, ph.lastName as pharmacistLastName
+                 FROM nurse_pickups np
+                 LEFT JOIN users nurse ON np.pickedUpBy = nurse.userId
+                 LEFT JOIN users ph ON np.recordedPickupBy = ph.userId
+                 WHERE np.prescriptionId = ? AND np.status = 'picked_up'
+                 ORDER BY np.pickupDate DESC LIMIT 1`,
+                [prescription.prescriptionId]
+            );
+            if (pickupRows.length > 0) {
+                const r = pickupRows[0];
+                pickupInfo = {
+                    pickupDate: r.pickupDate,
+                    nurseName: [r.nurseFirstName, r.nurseLastName].filter(Boolean).join(' ') || null,
+                    pharmacistName: [r.pharmacistFirstName, r.pharmacistLastName].filter(Boolean).join(' ') || null,
+                };
+            }
+
             return {
                 ...prescription,
+                status: pickupInfo ? 'picked_up' : (prescription.status || null),
                 items: items || [],
-                medicationNames: medicationNames.length > 0 ? medicationNames.join(', ') : null
+                medicationNames: medicationNames.length > 0 ? medicationNames.join(', ') : null,
+                pickupInfo,
             };
         }));
 
@@ -1229,6 +1351,200 @@ router.get('/admissions/:id/overview', async (req, res) => {
     } catch (error) {
         console.error('Error fetching admission overview:', error);
         res.status(500).json({ message: 'Error fetching admission overview', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/inpatient/admissions/:id/bill
+ * @description Get comprehensive bill for admission: all invoices in period + bed charge + consultant charges. Resolves prices by patient type (insurance/cash) using latest applicable rate.
+ */
+router.get('/admissions/:id/bill', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const [admissions] = await pool.execute(
+            `SELECT a.*,
+                    pt.firstName, pt.lastName, pt.patientNumber, pt.patientType,
+                    w.wardName, w.wardType, w.wardId,
+                    b.bedNumber, b.bedId
+             FROM admissions a
+             LEFT JOIN patients pt ON a.patientId = pt.patientId
+             LEFT JOIN beds b ON a.bedId = b.bedId
+             LEFT JOIN wards w ON b.wardId = w.wardId
+             WHERE a.admissionId = ?`,
+            [id]
+        );
+        if (admissions.length === 0) {
+            return res.status(404).json({ message: 'Admission not found' });
+        }
+        const admission = admissions[0];
+        const patientId = admission.patientId;
+        const wardId = admission.wardId ?? null;
+        const wardType = admission.wardType ?? null;
+        const admissionDate = (admission.admissionDate || '').toString().slice(0, 10);
+        const dischargeDate = admission.dischargeDate ? (admission.dischargeDate + '').slice(0, 10) : null;
+        const admissionEnd = dischargeDate || new Date().toISOString().slice(0, 10);
+        const wardOptions = (wardId != null || wardType != null) ? { wardId, wardType } : {};
+
+        let insuranceProviderName = null;
+        if (admission.patientType === 'insurance') {
+            const [ins] = await pool.execute(
+                `SELECT ip.providerName FROM patient_insurance pi
+                 LEFT JOIN insurance_providers ip ON pi.providerId = ip.providerId
+                 WHERE pi.patientId = ? AND pi.isActive = 1
+                   AND (pi.coverageEndDate IS NULL OR pi.coverageEndDate >= ?)
+                 ORDER BY pi.coverageStartDate DESC LIMIT 1`,
+                [patientId, admissionEnd]
+            );
+            if (ins.length > 0) insuranceProviderName = ins[0].providerName;
+        }
+
+        const lines = [];
+        const invoiceIdsSeen = new Set();
+        let paidTotal = 0;
+
+        // (1) All invoice items for this patient in admission period (labs, medications, orders, procedures, etc.)
+        const [invoices] = await pool.execute(
+            `SELECT i.invoiceId, i.invoiceNumber, i.invoiceDate, i.status, i.paidAmount, i.totalAmount, i.notes
+             FROM invoices i
+             WHERE i.patientId = ? AND DATE(i.invoiceDate) >= DATE(?) AND DATE(i.invoiceDate) <= DATE(?)
+             ORDER BY i.invoiceDate ASC`,
+            [patientId, admissionDate, admissionEnd]
+        );
+        const categoryFromNotes = (notes) => {
+            if (!notes) return 'Other';
+            const n = (notes + '').toLowerCase();
+            if (n.includes('lab') || n.includes('lab test')) return 'Lab';
+            if (n.includes('drug') || n.includes('prescription') || n.includes('pharmacy')) return 'Medication';
+            if (n.includes('procedure')) return 'Procedure';
+            if (n.includes('consumable') || n.includes('inpatient stay')) return 'Consumables';
+            if (n.includes('radiology') || n.includes('exam')) return 'Radiology';
+            return 'Other';
+        };
+        for (const inv of invoices) {
+            invoiceIdsSeen.add(inv.invoiceId);
+            paidTotal += parseFloat(inv.paidAmount || 0);
+            const invCategory = categoryFromNotes(inv.notes);
+            const [items] = await pool.execute(
+                `SELECT ii.*, sc.name as chargeName, sc.chargeCode
+                 FROM invoice_items ii
+                 LEFT JOIN service_charges sc ON ii.chargeId = sc.chargeId
+                 WHERE ii.invoiceId = ? ORDER BY ii.itemId`,
+                [inv.invoiceId]
+            );
+            const itemDate = (inv.invoiceDate || '').toString().slice(0, 10);
+            for (const it of items) {
+                const chargeId = it.chargeId;
+                const qty = Math.max(1, parseInt(it.quantity, 10) || 1);
+                const description = it.chargeName || it.description || it.chargeCode || 'Item';
+                const linePayload = {
+                    source: 'invoice',
+                    sourceLabel: invCategory,
+                    invoiceId: inv.invoiceId,
+                    invoiceNumber: inv.invoiceNumber,
+                    date: itemDate,
+                    description,
+                    quantity: qty,
+                    unitPrice: undefined,
+                    totalPrice: undefined,
+                    chargeId: chargeId || null,
+                    status: inv.status,
+                };
+                if (chargeId) {
+                    const { unitPrice, totalPrice } = await resolveChargeRate(
+                        pool, patientId, { chargeId, quantity: qty }, itemDate, wardOptions
+                    );
+                    linePayload.unitPrice = unitPrice;
+                    linePayload.totalPrice = totalPrice;
+                } else {
+                    const up = parseFloat(it.unitPrice || 0);
+                    const tot = parseFloat(it.totalPrice || 0) || up * qty;
+                    linePayload.unitPrice = up;
+                    linePayload.totalPrice = Math.round(tot * 100) / 100;
+                }
+                lines.push(linePayload);
+            }
+        }
+
+        // (2) Bed charge (days × bed rate)
+        const days = Math.max(1, Math.floor((new Date(admissionEnd) - new Date(admissionDate)) / (24 * 60 * 60 * 1000)) + 1);
+        const [bedChargeRows] = await pool.execute(
+            `SELECT chargeId, name, chargeCode FROM service_charges
+             WHERE (chargeCode LIKE 'BED%' OR name LIKE '%bed%' OR category = 'Bed') AND (status = 'Active' OR status = 'Inactive')
+             LIMIT 1`
+        );
+        if (bedChargeRows.length > 0) {
+            const bedChargeId = bedChargeRows[0].chargeId;
+            const { unitPrice, totalPrice } = await resolveChargeRate(
+                pool, patientId, { chargeId: bedChargeId, quantity: days }, admissionDate, wardOptions
+            );
+            lines.push({
+                source: 'bed',
+                sourceLabel: 'Bed',
+                date: admissionDate,
+                description: `Bed charge (${days} day${days !== 1 ? 's' : ''})`,
+                chargeId: bedChargeId,
+                quantity: days,
+                unitPrice,
+                totalPrice,
+            });
+        }
+
+        // (3) Consultant charges (per doctor review)
+        const [reviews] = await pool.execute(
+            'SELECT reviewId, reviewDate FROM inpatient_doctor_reviews WHERE admissionId = ? ORDER BY reviewDate ASC',
+            [id]
+        );
+        const reviewCount = reviews.length;
+        if (reviewCount > 0) {
+            const [consultChargeRows] = await pool.execute(
+                `SELECT chargeId, name FROM service_charges
+                 WHERE (chargeCode LIKE 'CONSULT%' OR chargeCode LIKE 'REVIEW%' OR name LIKE '%consultant%' OR name LIKE '%review%') AND (status = 'Active' OR status = 'Inactive')
+                 LIMIT 1`
+            );
+            if (consultChargeRows.length > 0) {
+                const lastReviewDate = (reviews[reviews.length - 1].reviewDate || '').toString().slice(0, 10);
+                const consultChargeId = consultChargeRows[0].chargeId;
+                const { unitPrice, totalPrice } = await resolveChargeRate(
+                    pool, patientId, { chargeId: consultChargeId, quantity: reviewCount }, lastReviewDate, wardOptions
+                );
+                lines.push({
+                    source: 'consultant',
+                    sourceLabel: 'Consultant',
+                    date: lastReviewDate,
+                    description: `Consultant review (${reviewCount})`,
+                    chargeId: consultChargeId,
+                    quantity: reviewCount,
+                    unitPrice,
+                    totalPrice,
+                });
+            }
+        }
+
+        const subtotal = lines.reduce((sum, l) => sum + (l.totalPrice || 0), 0);
+        const balanceTotal = Math.round((subtotal - paidTotal) * 100) / 100;
+
+        res.status(200).json({
+            admission: {
+                admissionId: admission.admissionId,
+                admissionNumber: admission.admissionNumber,
+                firstName: admission.firstName,
+                lastName: admission.lastName,
+                patientNumber: admission.patientNumber,
+                wardName: admission.wardName,
+                bedNumber: admission.bedNumber,
+                admissionDate,
+                dischargeDate,
+            },
+            patientType: admission.patientType || 'paying',
+            insuranceProviderName,
+            lines,
+            subtotal: Math.round(subtotal * 100) / 100,
+            paidTotal: Math.round(paidTotal * 100) / 100,
+            balanceTotal,
+        });
+    } catch (error) {
+        console.error('Error fetching admission bill:', error);
+        res.status(500).json({ message: 'Error fetching admission bill', error: error.message });
     }
 });
 

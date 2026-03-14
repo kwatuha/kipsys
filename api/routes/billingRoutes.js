@@ -2,6 +2,19 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
+const { resolveChargeRate } = require('../lib/chargeRateResolver');
+
+/**
+ * Resolve unit price for an invoice line item (uses shared resolver; no ward override).
+ * @param {object} connection - DB connection (same transaction)
+ * @param {number} patientId - Patient ID
+ * @param {object} item - { chargeId, quantity, description } (quantity default 1)
+ * @param {string} asOfDate - Date for effective rate (YYYY-MM-DD)
+ * @returns {Promise<{ unitPrice: number, totalPrice: number }>}
+ */
+async function resolveLineItemPrice(connection, patientId, item, asOfDate) {
+    return resolveChargeRate(connection, patientId, item, asOfDate, {});
+}
 
 // Service charges
 /**
@@ -397,6 +410,31 @@ router.post('/invoices', async (req, res) => {
             return res.status(400).json({ error: 'Patient and items are required' });
         }
 
+        const asOfDate = (invoiceDate || new Date().toISOString().split('T')[0]).toString().slice(0, 10);
+        const resolvedItems = [];
+        for (const item of items) {
+            if (item.chargeId) {
+                const { unitPrice, totalPrice } = await resolveLineItemPrice(connection, patientId, item, asOfDate);
+                resolvedItems.push({
+                    chargeId: item.chargeId,
+                    description: item.description || '',
+                    quantity: Math.max(1, parseInt(item.quantity, 10) || 1),
+                    unitPrice,
+                    totalPrice
+                });
+            } else {
+                const qty = Math.max(1, parseInt(item.quantity, 10) || 1);
+                const up = parseFloat(item.unitPrice) || 0;
+                resolvedItems.push({
+                    chargeId: item.chargeId || null,
+                    description: item.description || '',
+                    quantity: qty,
+                    unitPrice: up,
+                    totalPrice: parseFloat(item.totalPrice) || Math.round(up * qty * 100) / 100
+                });
+            }
+        }
+
         // Generate invoice number if not provided
         // Use same approach as triage numbers to avoid duplicates in concurrent scenarios
         let finalInvoiceNumber = invoiceNumber;
@@ -442,8 +480,8 @@ router.post('/invoices', async (req, res) => {
             }
         }
 
-        // Calculate total amount
-        const totalAmount = items.reduce((sum, item) => sum + (parseFloat(item.totalPrice) || 0), 0);
+        // Calculate total amount from resolved items
+        const totalAmount = resolvedItems.reduce((sum, item) => sum + (parseFloat(item.totalPrice) || 0), 0);
 
         // Insert invoice (with retry on duplicate key error)
         let result;
@@ -529,8 +567,8 @@ router.post('/invoices', async (req, res) => {
 
         const invoiceId = result.insertId;
 
-        // Insert invoice items
-        for (const item of items) {
+        // Insert invoice items (using resolved prices)
+        for (const item of resolvedItems) {
             await connection.execute(
                 `INSERT INTO invoice_items (invoiceId, chargeId, description, quantity, unitPrice, totalPrice)
                  VALUES (?, ?, ?, ?, ?, ?)`,
@@ -629,11 +667,13 @@ router.put('/invoices/:id', async (req, res) => {
         const { id } = req.params;
         const { invoiceDate, dueDate, items, notes, status } = req.body;
 
-        // Check if invoice exists
-        const [existing] = await connection.execute('SELECT invoiceId FROM invoices WHERE invoiceId = ?', [id]);
+        // Check if invoice exists and get patientId for rate resolution
+        const [existing] = await connection.execute('SELECT invoiceId, patientId, invoiceDate FROM invoices WHERE invoiceId = ?', [id]);
         if (existing.length === 0) {
             return res.status(404).json({ message: 'Invoice not found' });
         }
+        const patientId = existing[0].patientId;
+        const asOfDate = (invoiceDate ?? existing[0].invoiceDate ?? new Date().toISOString().split('T')[0]).toString().slice(0, 10);
 
         // Build update query
         const updates = [];
@@ -644,10 +684,33 @@ router.put('/invoices/:id', async (req, res) => {
         if (notes !== undefined) { updates.push('notes = ?'); values.push(notes); }
         if (status !== undefined) { updates.push('status = ?'); values.push(status); }
 
-        // If items are provided, update them
+        // If items are provided, resolve prices and update them
         if (items && items.length > 0) {
-            // Calculate new total
-            const totalAmount = items.reduce((sum, item) => sum + (parseFloat(item.totalPrice) || 0), 0);
+            const resolvedItems = [];
+            for (const item of items) {
+                if (item.chargeId) {
+                    const { unitPrice, totalPrice } = await resolveLineItemPrice(connection, patientId, item, asOfDate);
+                    resolvedItems.push({
+                        chargeId: item.chargeId,
+                        description: item.description || '',
+                        quantity: Math.max(1, parseInt(item.quantity, 10) || 1),
+                        unitPrice,
+                        totalPrice
+                    });
+                } else {
+                    const qty = Math.max(1, parseInt(item.quantity, 10) || 1);
+                    const up = parseFloat(item.unitPrice) || 0;
+                    resolvedItems.push({
+                        chargeId: item.chargeId || null,
+                        description: item.description || '',
+                        quantity: qty,
+                        unitPrice: up,
+                        totalPrice: parseFloat(item.totalPrice) || Math.round(up * qty * 100) / 100
+                    });
+                }
+            }
+
+            const totalAmount = resolvedItems.reduce((sum, item) => sum + (parseFloat(item.totalPrice) || 0), 0);
 
             // Get current paid amount
             const [current] = await connection.execute('SELECT paidAmount FROM invoices WHERE invoiceId = ?', [id]);
@@ -662,8 +725,8 @@ router.put('/invoices/:id', async (req, res) => {
             // Delete existing items
             await connection.execute('DELETE FROM invoice_items WHERE invoiceId = ?', [id]);
 
-            // Insert new items
-            for (const item of items) {
+            // Insert new items (using resolved prices)
+            for (const item of resolvedItems) {
                 await connection.execute(
                     `INSERT INTO invoice_items (invoiceId, chargeId, description, quantity, unitPrice, totalPrice)
                      VALUES (?, ?, ?, ?, ?, ?)`,

@@ -1,11 +1,12 @@
 "use client"
 import { useState, useEffect } from "react"
+import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
-import { Search, Plus, Download, Edit, Trash2, Filter, Loader2 } from "lucide-react"
+import { Search, Plus, Download, Edit, Trash2, Filter, Loader2, FileText, DollarSign } from "lucide-react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { AddServiceChargeForm } from "@/components/add-service-charge-form"
@@ -286,6 +287,31 @@ export default function HospitalChargesPage() {
           </Button>
         </div>
       </div>
+
+      <Card className="border-dashed bg-muted/30">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base flex items-center gap-2">
+            <FileText className="h-4 w-4" />
+            Insurance &amp; Inpatient (cash) rates
+          </CardTitle>
+          <CardDescription>
+            Define what each insurer pays per charge and what cash-paying inpatients pay (by ward/ward type). Used when creating or updating invoices.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button variant="secondary" asChild>
+            <Link href="/insurance?tab=insurance-rates">
+              <DollarSign className="mr-2 h-4 w-4" />
+              Open Insurance rates
+            </Link>
+          </Button>
+          <Button variant="outline" className="ml-2" asChild>
+            <Link href="/insurance?tab=inpatient-rates">
+              Open Inpatient (cash) rates
+            </Link>
+          </Button>
+        </CardContent>
+      </Card>
 
       <Tabs defaultValue="service-charges" className="space-y-4">
         <TabsList>

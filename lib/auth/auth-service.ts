@@ -17,6 +17,7 @@ export interface User {
     icon?: string;
     description?: string;
     servicePoint?: string;
+    quickLinks?: Array<{ label: string; url: string; icon?: string }>;
   };
 }
 

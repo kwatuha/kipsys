@@ -3915,7 +3915,7 @@ router.get('/nurse-pickups/ready', async (req, res) => {
         const [rows] = await pool.execute(query, params);
 
         // Get detailed items for each prescription
-        const prescriptionsWithItems = await Promise.all(
+        let prescriptionsWithItems = await Promise.all(
             rows.map(async (prescription) => {
                 const [items] = await pool.execute(
                     `SELECT
@@ -3953,10 +3953,117 @@ router.get('/nurse-pickups/ready', async (req, res) => {
 
                 return {
                     ...prescription,
-                    items: items
+                    items: items,
+                    requestingNurses: []
                 };
             })
         );
+
+        // Fetch nurse_pickups with status ready_for_pickup (requesting nurse details)
+        const [readyPickups] = await pool.execute(
+            `SELECT
+                np.pickupId,
+                np.prescriptionId,
+                np.patientId,
+                np.admissionId,
+                np.notes,
+                np.createdAt,
+                u.firstName as nurseFirstName,
+                u.lastName as nurseLastName,
+                u.username as nurseUsername,
+                p.prescriptionNumber,
+                p.prescriptionDate,
+                p.status as prescriptionStatus,
+                p.doctorId,
+                pt.patientNumber,
+                pt.firstName as patientFirstName,
+                pt.lastName as patientLastName,
+                ia.admissionNumber,
+                dr.firstName as doctorFirstName,
+                dr.lastName as doctorLastName,
+                dr.username as doctorUsername
+             FROM nurse_pickups np
+             INNER JOIN users u ON np.pickedUpBy = u.userId
+             INNER JOIN prescriptions p ON np.prescriptionId = p.prescriptionId
+             INNER JOIN patients pt ON np.patientId = pt.patientId
+             LEFT JOIN admissions ia ON np.admissionId = ia.admissionId
+             LEFT JOIN users dr ON p.doctorId = dr.userId
+             WHERE np.status = 'ready_for_pickup'
+             ORDER BY np.createdAt DESC`
+        );
+
+        const prescriptionIdsInReady = new Set(rows.map(r => r.prescriptionId));
+
+        // Attach requesting nurses to existing prescriptions
+        for (const pickup of readyPickups) {
+            const nurseInfo = {
+                pickupId: pickup.pickupId,
+                nurseFirstName: pickup.nurseFirstName,
+                nurseLastName: pickup.nurseLastName,
+                nurseUsername: pickup.nurseUsername
+            };
+            const idx = prescriptionsWithItems.findIndex(p => p.prescriptionId === pickup.prescriptionId);
+            if (idx !== -1) {
+                if (!prescriptionsWithItems[idx].requestingNurses) prescriptionsWithItems[idx].requestingNurses = [];
+                prescriptionsWithItems[idx].requestingNurses.push(nurseInfo);
+            }
+        }
+
+        // Add prescriptions that are only in ready_for_pickup (not in dispensed-ready list)
+        const addedPrescriptionIds = new Set();
+        for (const pickup of readyPickups) {
+            if (prescriptionIdsInReady.has(pickup.prescriptionId)) continue;
+            if (addedPrescriptionIds.has(pickup.prescriptionId)) continue;
+            addedPrescriptionIds.add(pickup.prescriptionId);
+
+            // All ready_for_pickup pickups for this prescription (for requestingNurses)
+            const nursesForPrescription = readyPickups
+                .filter(p => p.prescriptionId === pickup.prescriptionId)
+                .map(p => ({
+                    pickupId: p.pickupId,
+                    nurseFirstName: p.nurseFirstName,
+                    nurseLastName: p.nurseLastName,
+                    nurseUsername: p.nurseUsername
+                }));
+
+            const [items] = await pool.execute(
+                `SELECT
+                    npi.prescriptionItemId as itemId,
+                    npi.prescriptionItemId,
+                    npi.quantityPickedUp as quantityDispensed,
+                    pi.medicationName,
+                    pi.dosage,
+                    pi.frequency,
+                    pi.duration,
+                    pi.quantity,
+                    pi.instructions,
+                    pi.status
+                 FROM nurse_pickup_items npi
+                 INNER JOIN prescription_items pi ON pi.itemId = npi.prescriptionItemId
+                 WHERE npi.pickupId = ?`,
+                [pickup.pickupId]
+            );
+
+            const pendingPickupItems = items.length;
+            prescriptionsWithItems.push({
+                prescriptionId: pickup.prescriptionId,
+                prescriptionNumber: pickup.prescriptionNumber,
+                prescriptionDate: pickup.prescriptionDate,
+                prescriptionStatus: pickup.prescriptionStatus || 'pending',
+                patientId: pickup.patientId,
+                patientNumber: pickup.patientNumber,
+                patientFirstName: pickup.patientFirstName,
+                patientLastName: pickup.patientLastName,
+                admissionId: pickup.admissionId,
+                admissionNumber: pickup.admissionNumber,
+                doctorFirstName: pickup.doctorFirstName,
+                doctorLastName: pickup.doctorLastName,
+                doctorUsername: pickup.doctorUsername,
+                pendingPickupItems,
+                items,
+                requestingNurses: nursesForPrescription
+            });
+        }
 
         res.status(200).json(prescriptionsWithItems);
     } catch (error) {
@@ -4025,15 +4132,32 @@ router.post('/nurse-pickups', async (req, res) => {
                 }
             }
 
-            // Create pickup record
-            const [pickupResult] = await connection.execute(
-                `INSERT INTO nurse_pickups
-                 (prescriptionId, patientId, admissionId, pickedUpBy, pickupDate, status, notes)
-                 VALUES (?, ?, ?, ?, NOW(), 'picked_up', ?)`,
-                [prescriptionId, patientId, actualAdmissionId || null, userId, notes || null]
+            // If nurse already created a pending request, update it to picked_up instead of creating a duplicate
+            const [existing] = await connection.execute(
+                `SELECT pickupId FROM nurse_pickups
+                 WHERE prescriptionId = ? AND (admissionId = ? OR (admissionId IS NULL AND ? IS NULL)) AND status = 'pending'
+                 LIMIT 1`,
+                [prescriptionId, actualAdmissionId || null, actualAdmissionId || null]
             );
 
-            const pickupId = pickupResult.insertId;
+            let pickupId;
+            const isExistingPickup = existing && existing.length > 0;
+            if (isExistingPickup) {
+                pickupId = existing[0].pickupId;
+                await connection.execute(
+                    `UPDATE nurse_pickups SET status = 'picked_up', recordedPickupBy = ?, pickupDate = NOW(), notes = COALESCE(?, notes), updatedAt = NOW() WHERE pickupId = ?`,
+                    [userId, notes || null, pickupId]
+                );
+            } else {
+                // Create new pickup record (no prior nurse request; pharmacist records pickup)
+                const [pickupResult] = await connection.execute(
+                    `INSERT INTO nurse_pickups
+                     (prescriptionId, patientId, admissionId, pickedUpBy, recordedPickupBy, pickupDate, status, notes)
+                     VALUES (?, ?, ?, ?, ?, NOW(), 'picked_up', ?)`,
+                    [prescriptionId, patientId, actualAdmissionId || null, userId, userId, notes || null]
+                );
+                pickupId = pickupResult.insertId;
+            }
 
             // Collect invoice items for billing
             const invoiceItems = [];
@@ -4131,12 +4255,19 @@ router.post('/nurse-pickups', async (req, res) => {
                     drugInventoryId: drugInventoryId
                 });
 
-                await connection.execute(
-                    `INSERT INTO nurse_pickup_items
-                     (pickupId, prescriptionItemId, dispensationId, quantityPickedUp, notes)
-                     VALUES (?, ?, ?, ?, ?)`,
-                    [pickupId, prescriptionItemId, dispensationId || null, quantityPickedUp, itemNotes || null]
-                );
+                if (isExistingPickup) {
+                    await connection.execute(
+                        `UPDATE nurse_pickup_items SET dispensationId = ?, quantityPickedUp = ?, notes = COALESCE(?, notes) WHERE pickupId = ? AND prescriptionItemId = ?`,
+                        [dispensationId || null, quantityPickedUp || 1, itemNotes || null, pickupId, prescriptionItemId]
+                    );
+                } else {
+                    await connection.execute(
+                        `INSERT INTO nurse_pickup_items
+                         (pickupId, prescriptionItemId, dispensationId, quantityPickedUp, notes)
+                         VALUES (?, ?, ?, ?, ?)`,
+                        [pickupId, prescriptionItemId, dispensationId || null, quantityPickedUp, itemNotes || null]
+                    );
+                }
 
                 // Record in drug history for audit trail (inventory already reduced during dispensing)
                 // Get dispensation details to find drug inventory batch
@@ -4385,6 +4516,7 @@ router.get('/nurse-pickups', async (req, res) => {
                 np.patientId,
                 np.admissionId,
                 np.pickedUpBy,
+                np.recordedPickupBy,
                 np.pickupDate,
                 np.status,
                 np.notes,
@@ -4397,12 +4529,16 @@ router.get('/nurse-pickups', async (req, res) => {
                 u.firstName as nurseFirstName,
                 u.lastName as nurseLastName,
                 u.username as nurseUsername,
+                ph.firstName as pharmacistFirstName,
+                ph.lastName as pharmacistLastName,
+                ph.username as pharmacistUsername,
                 ia.admissionNumber,
                 (SELECT COUNT(*) FROM nurse_pickup_items WHERE pickupId = np.pickupId) as itemCount
             FROM nurse_pickups np
             INNER JOIN prescriptions p ON np.prescriptionId = p.prescriptionId
             INNER JOIN patients pt ON np.patientId = pt.patientId
             INNER JOIN users u ON np.pickedUpBy = u.userId
+            LEFT JOIN users ph ON np.recordedPickupBy = ph.userId
             LEFT JOIN admissions ia ON np.admissionId = ia.admissionId
             WHERE 1=1
         `;
@@ -4544,11 +4680,15 @@ router.get('/nurse-pickups/:id', async (req, res) => {
                 u.firstName as nurseFirstName,
                 u.lastName as nurseLastName,
                 u.username as nurseUsername,
+                ph.firstName as pharmacistFirstName,
+                ph.lastName as pharmacistLastName,
+                ph.username as pharmacistUsername,
                 ia.admissionNumber
              FROM nurse_pickups np
              INNER JOIN prescriptions p ON np.prescriptionId = p.prescriptionId
              INNER JOIN patients pt ON np.patientId = pt.patientId
              INNER JOIN users u ON np.pickedUpBy = u.userId
+             LEFT JOIN users ph ON np.recordedPickupBy = ph.userId
              LEFT JOIN admissions ia ON np.admissionId = ia.admissionId
              WHERE np.pickupId = ?`,
             [id]
@@ -4588,6 +4728,110 @@ router.get('/nurse-pickups/:id', async (req, res) => {
     } catch (error) {
         console.error('Error fetching nurse pickup:', error);
         res.status(500).json({ message: 'Error fetching nurse pickup', error: error.message });
+    }
+});
+
+/**
+ * @route PATCH /api/pharmacy/nurse-pickups/:id
+ * @description Update nurse pickup status (e.g. pending -> ready_for_pickup when pharmacy has dispensed).
+ * Only pharmacist (pharmacy) can call this. When cancelling a picked_up pickup, quantities are returned to inventory.
+ */
+router.patch('/nurse-pickups/:id', async (req, res) => {
+    const connection = await pool.getConnection();
+    try {
+        const { id } = req.params;
+        const { status } = req.body;
+
+        if (!status || !['ready_for_pickup', 'picked_up', 'cancelled'].includes(status)) {
+            return res.status(400).json({ message: 'Invalid status. Allowed: ready_for_pickup, picked_up, cancelled' });
+        }
+
+        const [existing] = await connection.execute(
+            'SELECT pickupId, status, prescriptionId FROM nurse_pickups WHERE pickupId = ?',
+            [id]
+        );
+
+        if (existing.length === 0) {
+            return res.status(404).json({ message: 'Nurse pickup not found' });
+        }
+
+        const current = existing[0];
+        if (current.status !== 'pending' && status === 'ready_for_pickup') {
+            return res.status(400).json({ message: 'Only pending requests can be marked as ready for pickup' });
+        }
+
+        if (status === 'cancelled' && current.status === 'picked_up') {
+            await connection.beginTransaction();
+            try {
+                // Return quantities to inventory for each pickup item that has a dispensation
+                const [items] = await connection.execute(
+                    `SELECT npi.dispensationId, npi.quantityPickedUp, npi.prescriptionItemId, pi.medicationId
+                     FROM nurse_pickup_items npi
+                     INNER JOIN prescription_items pi ON pi.itemId = npi.prescriptionItemId
+                     WHERE npi.pickupId = ? AND npi.dispensationId IS NOT NULL`,
+                    [id]
+                );
+                for (const row of items) {
+                    const [disp] = await connection.execute(
+                        'SELECT batchNumber, quantityDispensed FROM dispensations WHERE dispensationId = ?',
+                        [row.dispensationId]
+                    );
+                    if (disp.length === 0) continue;
+                    const qtyToReturn = row.quantityPickedUp || disp[0].quantityDispensed || 0;
+                    if (qtyToReturn <= 0) continue;
+                    const [diRows] = await connection.execute(
+                        `SELECT drugInventoryId, quantity, status FROM drug_inventory
+                         WHERE medicationId = ? AND batchNumber = ? LIMIT 1`,
+                        [row.medicationId, disp[0].batchNumber]
+                    );
+                    if (diRows.length === 0) continue;
+                    const di = diRows[0];
+                    const newQty = (di.quantity || 0) + qtyToReturn;
+                    await connection.execute(
+                        'UPDATE drug_inventory SET quantity = ?, updatedAt = NOW() WHERE drugInventoryId = ?',
+                        [newQty, di.drugInventoryId]
+                    );
+                    if (di.status === 'exhausted' && newQty > 0) {
+                        await connection.execute(
+                            "UPDATE drug_inventory SET status = 'active', dateExhausted = NULL, updatedAt = NOW() WHERE drugInventoryId = ?",
+                            [di.drugInventoryId]
+                        ).catch(() => {});
+                    }
+                    const userId = req.user?.id || req.user?.userId || null;
+                    await connection.execute(
+                        `INSERT INTO drug_inventory_transactions
+                         (drugInventoryId, transactionType, transactionDate, quantityChange, quantityBefore, quantityAfter, balanceAfter, performedBy, notes)
+                         VALUES (?, 'RETURN', CURDATE(), ?, ?, ?, ?, ?, ?)`,
+                        [di.drugInventoryId, qtyToReturn, di.quantity, newQty, newQty, userId, `Nurse pickup cancelled - returned ${qtyToReturn} units to inventory`]
+                    );
+                }
+                // Revert prescription status from picked_up back to dispensed
+                await connection.execute(
+                    'UPDATE prescriptions SET status = "dispensed", updatedAt = NOW() WHERE prescriptionId = ?',
+                    [current.prescriptionId]
+                );
+                await connection.execute(
+                    'UPDATE nurse_pickups SET status = ?, recordedPickupBy = NULL, updatedAt = NOW() WHERE pickupId = ?',
+                    [status, id]
+                );
+                await connection.commit();
+            } catch (err) {
+                await connection.rollback();
+                throw err;
+            }
+        } else {
+            await connection.execute(
+                'UPDATE nurse_pickups SET status = ?, updatedAt = NOW() WHERE pickupId = ?',
+                [status, id]
+            );
+        }
+
+        res.status(200).json({ message: 'Nurse pickup updated', pickupId: id, status });
+    } catch (error) {
+        console.error('Error updating nurse pickup:', error);
+        res.status(500).json({ message: 'Error updating nurse pickup', error: error.message });
+    } finally {
+        connection.release();
     }
 });
 

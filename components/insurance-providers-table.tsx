@@ -57,6 +57,8 @@ export function InsuranceProvidersTable() {
   const [editingProvider, setEditingProvider] = useState<any>(null)
   const [requirementsDialogOpen, setRequirementsDialogOpen] = useState(false)
   const [selectedProviderForRequirements, setSelectedProviderForRequirements] = useState<any>(null)
+  const [cleanupDialogOpen, setCleanupDialogOpen] = useState(false)
+  const [cleanupLoading, setCleanupLoading] = useState(false)
 
   useEffect(() => {
     loadProviders()
@@ -117,9 +119,10 @@ export function InsuranceProvidersTable() {
       setDeletingProvider(null)
       loadProviders()
     } catch (error: any) {
+      const msg = error?.message || error?.response?.error || "Failed to delete provider"
       toast({
-        title: "Error",
-        description: error.message || "Failed to delete provider",
+        title: "Cannot delete",
+        description: msg,
         variant: "destructive",
       })
     } finally {
@@ -130,6 +133,29 @@ export function InsuranceProvidersTable() {
   const handleProviderSaved = () => {
     loadProviders()
     setEditingProvider(null)
+  }
+
+  const handleCleanupDuplicates = async () => {
+    try {
+      setCleanupLoading(true)
+      const result = await insuranceApi.cleanupDuplicateProviders()
+      toast({
+        title: "Cleanup complete",
+        description: result.deleted
+          ? `Removed ${result.deleted} duplicate(s). ${result.kept} unique providers kept.`
+          : result.message,
+      })
+      setCleanupDialogOpen(false)
+      loadProviders()
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error?.message ?? "Cleanup failed",
+        variant: "destructive",
+      })
+    } finally {
+      setCleanupLoading(false)
+    }
   }
 
   // Deduplicate providers by providerId, name, or code
@@ -172,13 +198,21 @@ export function InsuranceProvidersTable() {
             onChange={(e) => setSearchQuery(e.target.value)}
           />
         </div>
-        <Button onClick={() => {
-          setEditingProvider(null)
-          setOpenAddForm(true)
-        }}>
-          <Plus className="mr-2 h-4 w-4" />
-          Add Provider
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            onClick={() => setCleanupDialogOpen(true)}
+          >
+            Clean up duplicates
+          </Button>
+          <Button onClick={() => {
+            setEditingProvider(null)
+            setOpenAddForm(true)
+          }}>
+            <Plus className="mr-2 h-4 w-4" />
+            Add Provider
+          </Button>
+        </div>
       </div>
 
       <div className="rounded-md border">
@@ -329,12 +363,32 @@ export function InsuranceProvidersTable() {
         </Dialog>
       )}
 
+      <AlertDialog open={cleanupDialogOpen} onOpenChange={setCleanupDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Clean up duplicate providers?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will keep one provider per unique name (case-insensitive) and remove duplicates.
+              Policies, packages, and claim requirements will be reassigned to the kept provider.
+              This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={cleanupLoading}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleCleanupDuplicates} disabled={cleanupLoading}>
+              {cleanupLoading ? "Running..." : "Clean up"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Provider?</AlertDialogTitle>
             <AlertDialogDescription>
               Are you sure you want to delete this insurance provider? This action cannot be undone.
+              The provider must have no patient policies and no packages (remove them under Insurance → Policies and Packages first).
               {deletingProvider && (
                 <div className="mt-2 p-2 bg-muted rounded">
                   <p className="font-medium">Provider: {deletingProvider.providerCode}</p>

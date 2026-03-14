@@ -62,10 +62,33 @@ export default function DepartmentsPage() {
       setLoading(true)
       setError(null)
       const data = await departmentApi.getAll(searchTerm || undefined)
-      // Remove duplicates by departmentId
-      const uniqueDepartments = Array.from(
-        new Map(data.map((dept: any) => [dept.departmentId, dept])).values()
-      )
+
+      // Remove duplicates by departmentName, keeping the most recent active one
+      const departmentMap = new Map<string, any>()
+
+      data.forEach((dept: any) => {
+        const key = dept.departmentName?.toLowerCase().trim() || ''
+        if (!key) return
+
+        const existing = departmentMap.get(key)
+
+        // Prefer active departments over inactive ones
+        if (!existing) {
+          departmentMap.set(key, dept)
+        } else {
+          // If both are active or both inactive, prefer the one with higher ID (more recent)
+          if (dept.isActive && !existing.isActive) {
+            departmentMap.set(key, dept)
+          } else if (dept.isActive === existing.isActive && dept.departmentId > existing.departmentId) {
+            departmentMap.set(key, dept)
+          }
+        }
+      })
+
+      const uniqueDepartments = Array.from(departmentMap.values())
+        .filter(dept => dept.isActive) // Only show active departments
+        .sort((a, b) => (a.departmentName || '').localeCompare(b.departmentName || ''))
+
       setDepartments(uniqueDepartments)
     } catch (err: any) {
       setError(err.message || 'Failed to load departments')
@@ -134,9 +157,9 @@ export default function DepartmentsPage() {
     return departments.map(dept => {
       const iconName = dept.departmentName.split(' ')[0]
       const Icon = departmentIcons[dept.departmentName] || departmentIcons[iconName] || Building2
-      
+
       const href = `/departments/${dept.departmentName.toLowerCase().replace(/\s+/g, '-')}`
-      
+
       return {
         ...dept,
         icon: Icon,
@@ -363,7 +386,7 @@ export default function DepartmentsPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Deactivate Department</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to deactivate {departmentToDelete?.departmentName}? 
+              Are you sure you want to deactivate {departmentToDelete?.departmentName}?
               This will mark the department as inactive. You can reactivate it later by editing.
             </AlertDialogDescription>
           </AlertDialogHeader>

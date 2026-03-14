@@ -7,7 +7,7 @@ const API_BASE_URL = typeof window !== 'undefined'
   : (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001');  // Server-side needs absolute URL
 
 interface ApiOptions {
-  method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: any;
   headers?: Record<string, string>;
 }
@@ -387,6 +387,20 @@ export const pharmacyApi = {
 
   getNursePickup: (id: string) =>
     apiRequest<any>(`/api/pharmacy/nurse-pickups/${id}`),
+
+  /** Mark a pending nurse pickup as ready for pickup (pharmacy has dispensed). Removes from Pending, appears in History. */
+  markNursePickupReadyForPickup: (pickupId: string) =>
+    apiRequest<{ message: string; pickupId: string; status: string }>(
+      `/api/pharmacy/nurse-pickups/${pickupId}`,
+      { method: 'PATCH', body: { status: 'ready_for_pickup' } }
+    ),
+
+  /** Cancel a nurse pickup (pharmacist only). If status was picked_up, quantities are returned to inventory. */
+  cancelNursePickup: (pickupId: string) =>
+    apiRequest<{ message: string; pickupId: string; status: string }>(
+      `/api/pharmacy/nurse-pickups/${pickupId}`,
+      { method: 'PATCH', body: { status: 'cancelled' } }
+    ),
 };
 
 // Notification API
@@ -532,6 +546,9 @@ export const inpatientApi = {
   // Inpatient Management
   getAdmissionOverview: (id: string) =>
     apiRequest<any>(`/api/inpatient/admissions/${id}/overview`),
+
+  getAdmissionBill: (id: string) =>
+    apiRequest<any>(`/api/inpatient/admissions/${id}/bill`),
 
   getDoctorReviews: (id: string) =>
     apiRequest<any[]>(`/api/inpatient/admissions/${id}/reviews`),
@@ -1749,6 +1766,77 @@ export const insuranceApi = {
   deleteProvider: (id: string) =>
     apiRequest<any>(`/api/insurance/providers/${id}`, { method: 'DELETE' }),
 
+  /** Remove duplicate providers (keep one per unique name, case-insensitive) */
+  cleanupDuplicateProviders: () =>
+    apiRequest<{ message: string; deleted: number; kept: number }>(
+      '/api/insurance/providers/cleanup-duplicates',
+      { method: 'POST' }
+    ),
+
+  // Packages
+  getPackages: (providerId?: string, status?: string, search?: string) => {
+    const params = new URLSearchParams();
+    if (providerId) params.append('providerId', providerId);
+    if (status) params.append('status', status);
+    if (search) params.append('search', search);
+    return apiRequest<any[]>(`/api/insurance/packages?${params.toString()}`);
+  },
+
+  getPackageById: (id: string) =>
+    apiRequest<any>(`/api/insurance/packages/${id}`),
+
+  createPackage: (data: any) =>
+    apiRequest<any>('/api/insurance/packages', { method: 'POST', body: data }),
+
+  updatePackage: (id: string, data: any) =>
+    apiRequest<any>(`/api/insurance/packages/${id}`, { method: 'PUT', body: data }),
+
+  deletePackage: (id: string) =>
+    apiRequest<any>(`/api/insurance/packages/${id}`, { method: 'DELETE' }),
+
+  /** Remove duplicate packages (keep one per provider + package name, case-insensitive) */
+  cleanupDuplicatePackages: () =>
+    apiRequest<{ message: string; deleted: number; kept: number }>(
+      '/api/insurance/packages/cleanup-duplicates',
+      { method: 'POST' }
+    ),
+
+  // Insurance charge rates (insurer-specific rates per charge, over time)
+  getChargeRates: (providerId?: string, chargeId?: string, asOf?: string) => {
+    const params = new URLSearchParams();
+    if (providerId) params.append('providerId', providerId);
+    if (chargeId) params.append('chargeId', chargeId);
+    if (asOf) params.append('asOf', asOf);
+    return apiRequest<any[]>(`/api/insurance/charge-rates?${params.toString()}`);
+  },
+  getChargeRateEffective: (chargeId: string, providerId: string, date?: string) =>
+    apiRequest<any>(`/api/insurance/charge-rates/effective?chargeId=${chargeId}&providerId=${providerId}${date ? `&date=${date}` : ''}`),
+  getChargeRateById: (id: string) => apiRequest<any>(`/api/insurance/charge-rates/${id}`),
+  createChargeRate: (data: any) => apiRequest<any>('/api/insurance/charge-rates', { method: 'POST', body: data }),
+  updateChargeRate: (id: string, data: any) => apiRequest<any>(`/api/insurance/charge-rates/${id}`, { method: 'PUT', body: data }),
+  deleteChargeRate: (id: string) => apiRequest<any>(`/api/insurance/charge-rates/${id}`, { method: 'DELETE' }),
+
+  // Inpatient charge rates (cash-paying inpatients; can vary by ward/ward type)
+  getInpatientChargeRates: (chargeId?: string, wardId?: string, wardType?: string, asOf?: string) => {
+    const params = new URLSearchParams();
+    if (chargeId) params.append('chargeId', chargeId);
+    if (wardId) params.append('wardId', wardId);
+    if (wardType) params.append('wardType', wardType);
+    if (asOf) params.append('asOf', asOf);
+    return apiRequest<any[]>(`/api/insurance/inpatient-charge-rates?${params.toString()}`);
+  },
+  getInpatientChargeRateEffective: (chargeId: string, wardId?: string, wardType?: string, date?: string) => {
+    const params = new URLSearchParams({ chargeId });
+    if (wardId) params.append('wardId', wardId);
+    if (wardType) params.append('wardType', wardType);
+    if (date) params.append('date', date);
+    return apiRequest<any>(`/api/insurance/inpatient-charge-rates/effective?${params.toString()}`);
+  },
+  getInpatientChargeRateById: (id: string) => apiRequest<any>(`/api/insurance/inpatient-charge-rates/${id}`),
+  createInpatientChargeRate: (data: any) => apiRequest<any>('/api/insurance/inpatient-charge-rates', { method: 'POST', body: data }),
+  updateInpatientChargeRate: (id: string, data: any) => apiRequest<any>(`/api/insurance/inpatient-charge-rates/${id}`, { method: 'PUT', body: data }),
+  deleteInpatientChargeRate: (id: string) => apiRequest<any>(`/api/insurance/inpatient-charge-rates/${id}`, { method: 'DELETE' }),
+
   // Policies
   getPolicies: (patientId?: string, providerId?: string, status?: string, search?: string) => {
     const params = new URLSearchParams();
@@ -2095,3 +2183,42 @@ export const userApi = {
     apiRequest<any>(`/api/users/${id}/password`, { method: 'PUT', body: data }),
 };
 
+// Nursing API
+export const nursingApi = {
+  getAssignedWards: () =>
+    apiRequest<any[]>('/api/nursing/wards/assigned'),
+
+  getNurseAssignments: (nurseUserId: number) =>
+    apiRequest<any[]>(`/api/nursing/wards/nurse/${nurseUserId}`),
+
+  assignWards: (nurseUserId: number, wardIds: number[]) =>
+    apiRequest<any>('/api/nursing/wards/assign', { method: 'POST', body: { nurseUserId, wardIds } }),
+
+  /** List nurses (users with nurse-related roles) for dropdowns */
+  getNurses: () =>
+    apiRequest<any[]>('/api/nursing/nurses'),
+
+  /** Get shift schedule: { morning, evening, night } arrays of staff with ward info */
+  getShiftSchedule: () =>
+    apiRequest<{ morning: any[]; evening: any[]; night: any[] }>('/api/nursing/shift-schedule'),
+
+  /** Assign a nurse to a shift (morning | evening | night). One shift per nurse. */
+  assignNurseShift: (nurseUserId: number, shiftType: 'morning' | 'evening' | 'night') =>
+    apiRequest<any>('/api/nursing/shift-schedule/assign', { method: 'POST', body: { nurseUserId, shiftType } }),
+
+  getReadyPickupRequests: () =>
+    apiRequest<any[]>('/api/nursing/pickup-requests/ready'),
+
+  getMyPickupRequests: () =>
+    apiRequest<any[]>('/api/nursing/pickup-requests'),
+
+  createPickupRequest: (data: any) =>
+    apiRequest<any>('/api/nursing/pickup-requests', { method: 'POST', body: data }),
+
+  /** Nurse cancels their own pickup request (only pending or ready_for_pickup). */
+  cancelPickupRequest: (pickupId: string) =>
+    apiRequest<{ message: string; pickupId: string; status: string }>(
+      `/api/nursing/pickup-requests/${pickupId}/cancel`,
+      { method: 'POST' }
+    ),
+};

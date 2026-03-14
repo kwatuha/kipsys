@@ -1,11 +1,13 @@
 "use client"
 
 import React, { useState, useEffect } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { TabsContent } from "@/components/ui/tabs"
+import { RoleFilteredTabs } from "@/components/role-filtered-tabs"
 import { Badge } from "@/components/ui/badge"
 import { Search, FileText, Package, Plus, Edit, Loader2, MoreVertical, Eye, CheckCircle, XCircle, Trash2, History, ArrowRight, Sliders, Download, Printer, Pill, AlertCircle, Calendar, Users, List } from "lucide-react"
 import Link from "next/link"
@@ -96,6 +98,14 @@ interface DrugInventoryItem {
 }
 
 export default function PharmacyPage() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const currentTab = searchParams.get("tab") || "prescriptions"
+  const setPharmacyTab = (tab: string) => {
+    const params = new URLSearchParams(searchParams.toString())
+    params.set("tab", tab)
+    router.replace(`/pharmacy?${params.toString()}`)
+  }
   const [addPrescriptionOpen, setAddPrescriptionOpen] = useState(false)
   const [prescriptions, setPrescriptions] = useState<Prescription[]>([])
   const [medications, setMedications] = useState<Medication[]>([])
@@ -1297,66 +1307,26 @@ export default function PharmacyPage() {
               </div>
             </div>
 
-            ${prescriptionsWithDetails.map((prescription) => {
-              const patientName = getPatientName(prescription)
-              const doctorName = getDoctorName(prescription)
-              const prescriptionDate = prescription.prescriptionDate
-                ? new Date(prescription.prescriptionDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
-                : 'N/A'
-              const items = prescription.items || []
-
-              return `
-                <div class="prescription-section">
-                  <div class="prescription-info">
-                    <div class="info-section">
-                      <h3>Patient Information</h3>
-                      <p><strong>Name:</strong> ${patientName}</p>
-                      ${prescription.patientNumber ? `<p><strong>Patient ID:</strong> ${prescription.patientNumber}</p>` : ''}
-                    </div>
-                    <div class="info-section">
-                      <h3>Prescription Details</h3>
-                      <p><strong>Prescription #:</strong> ${prescription.prescriptionNumber || 'N/A'}</p>
-                      <p><strong>Date:</strong> ${prescriptionDate}</p>
-                      <p><strong>Doctor:</strong> ${doctorName}</p>
-                      <p><strong>Status:</strong> ${(prescription.status || 'pending').charAt(0).toUpperCase() + (prescription.status || 'pending').slice(1)}</p>
-                    </div>
-                  </div>
-
-                  ${items.length > 0 ? `
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>#</th>
-                          <th>Medication</th>
-                          <th>Dosage</th>
-                          <th>Frequency</th>
-                          <th>Duration</th>
-                          <th>Instructions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        ${items.map((item: any, itemIndex: number) => `
-                          <tr>
-                            <td>${itemIndex + 1}</td>
-                            <td><strong>${item.medicationName || 'Unknown'}</strong></td>
-                            <td>${item.dosage || '-'}</td>
-                            <td>${item.frequency || '-'}</td>
-                            <td>${item.duration || '-'}</td>
-                            <td>${item.instructions || '-'}</td>
-                          </tr>
-                        `).join('')}
-                      </tbody>
-                    </table>
-                  ` : '<p>No medications prescribed.</p>'}
-
-                  ${prescription.notes ? `
-                    <div style="margin-top: 15px; padding: 10px; background-color: #f9f9f9; border-radius: 5px;">
-                      <strong>Notes:</strong> ${prescription.notes}
-                    </div>
-                  ` : ''}
-                </div>
-              `
-            }).join('')}
+            ${(function () {
+              return prescriptionsWithDetails.map((prescription) => {
+                const patientName = getPatientName(prescription)
+                const doctorName = getDoctorName(prescription)
+                const prescriptionDate = prescription.prescriptionDate
+                  ? new Date(prescription.prescriptionDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+                  : 'N/A'
+                const items = prescription.items || []
+                const itemsRows = items.map((item: any, itemIndex: number) =>
+                  '<tr><td>' + (itemIndex + 1) + '</td><td><strong>' + (item.medicationName || 'Unknown') + '</strong></td><td>' + (item.dosage || '-') + '</td><td>' + (item.frequency || '-') + '</td><td>' + (item.duration || '-') + '</td><td>' + (item.instructions || '-') + '</td></tr>'
+                ).join('')
+                const notesHtml = prescription.notes
+                  ? '<div style="margin-top: 15px; padding: 10px; background-color: #f9f9f9; border-radius: 5px;"><strong>Notes:</strong> ' + prescription.notes + '</div>'
+                  : ''
+                const tableHtml = items.length > 0
+                  ? '<table><thead><tr><th>#</th><th>Medication</th><th>Dosage</th><th>Frequency</th><th>Duration</th><th>Instructions</th></tr></thead><tbody>' + itemsRows + '</tbody></table>'
+                  : '<p>No medications prescribed.</p>'
+                return '<div class="prescription-section"><div class="prescription-info"><div class="info-section"><h3>Patient Information</h3><p><strong>Name:</strong> ' + patientName + '</p>' + (prescription.patientNumber ? '<p><strong>Patient ID:</strong> ' + prescription.patientNumber + '</p>' : '') + '</div><div class="info-section"><h3>Prescription Details</h3><p><strong>Prescription #:</strong> ' + (prescription.prescriptionNumber || 'N/A') + '</p><p><strong>Date:</strong> ' + prescriptionDate + '</p><p><strong>Doctor:</strong> ' + doctorName + '</p><p><strong>Status:</strong> ' + (prescription.status || 'pending').charAt(0).toUpperCase() + (prescription.status || 'pending').slice(1) + '</p></div></div>' + tableHtml + notesHtml + '</div>'
+              }).join('')
+            })()}
 
             <div class="footer">
               <p>End of Report | Generated on ${new Date().toLocaleString()}</p>
@@ -1407,17 +1377,21 @@ export default function PharmacyPage() {
         </div>
       </div>
 
-      <Tabs defaultValue="prescriptions" className="w-full">
-        <TabsList className="grid w-full grid-cols-7">
-          <TabsTrigger value="prescriptions">Prescriptions</TabsTrigger>
-          <TabsTrigger value="medications">Medications</TabsTrigger>
-          <TabsTrigger value="drug-inventory">Drug Inventory</TabsTrigger>
-          <TabsTrigger value="drug-inventory-summary">Inventory Summary</TabsTrigger>
-          <TabsTrigger value="batch-trace">Batch Trace</TabsTrigger>
-          <TabsTrigger value="drug-history">Drug History</TabsTrigger>
-          <TabsTrigger value="nurse-pickup">Nurse Pickup</TabsTrigger>
-        </TabsList>
-
+      <RoleFilteredTabs
+        tabs={[
+          { value: "prescriptions", label: "Prescriptions" },
+          { value: "medications", label: "Medications" },
+          { value: "drug-inventory", label: "Drug Inventory" },
+          { value: "drug-inventory-summary", label: "Inventory Summary" },
+          { value: "batch-trace", label: "Batch Trace" },
+          { value: "drug-history", label: "Drug History" },
+          { value: "nurse-pickup", label: "Nurse Pickup" },
+        ]}
+        pagePath="/pharmacy"
+        value={currentTab}
+        onValueChange={setPharmacyTab}
+        className="w-full"
+      >
         <TabsContent value="prescriptions" className="space-y-4 mt-4">
           <Card>
             <CardHeader>
@@ -2167,7 +2141,7 @@ export default function PharmacyPage() {
         <TabsContent value="nurse-pickup" className="space-y-4 mt-4">
           <NursePickup />
         </TabsContent>
-      </Tabs>
+      </RoleFilteredTabs>
 
       <AddPrescriptionForm
         open={addPrescriptionOpen}

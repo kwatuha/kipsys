@@ -11,9 +11,9 @@ router.get('/', async (req, res) => {
     try {
         const { search } = req.query;
 
-        // Use DISTINCT and filter by isActive to avoid duplicates
+        // Group by departmentName to avoid duplicates, keeping the most recent active one
         let query = `
-            SELECT DISTINCT 
+            SELECT
                 d.departmentId,
                 d.departmentCode,
                 d.departmentName,
@@ -27,6 +27,12 @@ router.get('/', async (req, res) => {
             FROM departments d
             LEFT JOIN users u ON d.headOfDepartmentId = u.userId
             WHERE d.isActive = TRUE
+            AND d.departmentId IN (
+                SELECT MAX(d2.departmentId)
+                FROM departments d2
+                WHERE d2.isActive = TRUE
+                GROUP BY LOWER(TRIM(d2.departmentName))
+            )
         `;
         const params = [];
 
@@ -54,38 +60,38 @@ router.get('/', async (req, res) => {
 router.get('/:id/employees', async (req, res) => {
     try {
         const { id } = req.params;
-        
+
         // First, get the department ID
         let deptQuery = 'SELECT departmentId FROM departments WHERE departmentId = ?';
         let deptParams = [id];
-        
+
         if (isNaN(id)) {
             const departmentName = id
                 .split('-')
                 .map(word => word.charAt(0).toUpperCase() + word.slice(1))
                 .join(' ');
-            
+
             deptQuery = `
-                SELECT departmentId FROM departments 
-                WHERE LOWER(REPLACE(departmentName, ' ', '-')) = LOWER(?) 
+                SELECT departmentId FROM departments
+                WHERE LOWER(REPLACE(departmentName, ' ', '-')) = LOWER(?)
                    OR LOWER(departmentName) = LOWER(?)
                    OR departmentCode = ?
                 LIMIT 1
             `;
             deptParams = [id, departmentName, id.toUpperCase()];
         }
-        
+
         const [deptRows] = await pool.query(deptQuery, deptParams);
-        
+
         if (deptRows.length === 0) {
             return res.status(404).json({ message: 'Department not found' });
         }
-        
+
         const departmentId = deptRows[0].departmentId;
-        
+
         // Get employees in this department
         const [employees] = await pool.query(`
-            SELECT 
+            SELECT
                 e.*,
                 d.departmentName,
                 p.positionTitle,
@@ -96,7 +102,7 @@ router.get('/:id/employees', async (req, res) => {
             WHERE e.departmentId = ? AND e.status = 'active'
             ORDER BY e.firstName, e.lastName
         `, [departmentId]);
-        
+
         res.status(200).json(employees);
     } catch (error) {
         console.error('Error fetching department employees:', error);
@@ -112,38 +118,38 @@ router.get('/:id/employees', async (req, res) => {
 router.get('/:id/positions', async (req, res) => {
     try {
         const { id } = req.params;
-        
+
         // First, get the department ID
         let deptQuery = 'SELECT departmentId FROM departments WHERE departmentId = ?';
         let deptParams = [id];
-        
+
         if (isNaN(id)) {
             const departmentName = id
                 .split('-')
                 .map(word => word.charAt(0).toUpperCase() + word.slice(1))
                 .join(' ');
-            
+
             deptQuery = `
-                SELECT departmentId FROM departments 
-                WHERE LOWER(REPLACE(departmentName, ' ', '-')) = LOWER(?) 
+                SELECT departmentId FROM departments
+                WHERE LOWER(REPLACE(departmentName, ' ', '-')) = LOWER(?)
                    OR LOWER(departmentName) = LOWER(?)
                    OR departmentCode = ?
                 LIMIT 1
             `;
             deptParams = [id, departmentName, id.toUpperCase()];
         }
-        
+
         const [deptRows] = await pool.query(deptQuery, deptParams);
-        
+
         if (deptRows.length === 0) {
             return res.status(404).json({ message: 'Department not found' });
         }
-        
+
         const departmentId = deptRows[0].departmentId;
-        
+
         // Get positions in this department
         const [positions] = await pool.query(`
-            SELECT 
+            SELECT
                 p.*,
                 COUNT(e.employeeId) as employeeCount
             FROM employee_positions p
@@ -152,7 +158,7 @@ router.get('/:id/positions', async (req, res) => {
             GROUP BY p.positionId
             ORDER BY p.positionTitle
         `, [departmentId]);
-        
+
         res.status(200).json(positions);
     } catch (error) {
         console.error('Error fetching department positions:', error);
@@ -168,11 +174,11 @@ router.get('/:id/positions', async (req, res) => {
 router.get('/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        
+
         // Try to find by ID first (if it's a number)
         let query = 'SELECT * FROM departments WHERE departmentId = ?';
         let params = [id];
-        
+
         // If not a number, try to find by slug (department name converted to slug)
         if (isNaN(id)) {
             // Convert slug back to department name (e.g., "administration" -> "Administration")
@@ -180,14 +186,14 @@ router.get('/:id', async (req, res) => {
                 .split('-')
                 .map(word => word.charAt(0).toUpperCase() + word.slice(1))
                 .join(' ');
-            
+
             query = `
-                SELECT 
+                SELECT
                     d.*,
                     CONCAT(u.firstName, ' ', u.lastName) as headOfDepartmentName
                 FROM departments d
                 LEFT JOIN users u ON d.headOfDepartmentId = u.userId
-                WHERE LOWER(REPLACE(d.departmentName, ' ', '-')) = LOWER(?) 
+                WHERE LOWER(REPLACE(d.departmentName, ' ', '-')) = LOWER(?)
                    OR LOWER(d.departmentName) = LOWER(?)
                    OR d.departmentCode = ?
                 LIMIT 1
@@ -196,7 +202,7 @@ router.get('/:id', async (req, res) => {
         } else {
             // For numeric ID, include head of department name
             query = `
-                SELECT 
+                SELECT
                     d.*,
                     CONCAT(u.firstName, ' ', u.lastName) as headOfDepartmentName
                 FROM departments d
@@ -204,9 +210,9 @@ router.get('/:id', async (req, res) => {
                 WHERE d.departmentId = ?
             `;
         }
-        
+
         const [rows] = await pool.query(query, params);
-        
+
         if (rows.length > 0) {
             res.status(200).json(rows[0]);
         } else {

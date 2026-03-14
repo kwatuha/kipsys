@@ -8,9 +8,10 @@ CREATE TABLE IF NOT EXISTS nurse_pickups (
     prescriptionId INT NOT NULL,
     patientId INT NOT NULL,
     admissionId INT, -- Link to inpatient admission
-    pickedUpBy INT NOT NULL, -- Nurse who picked up the drugs
+    pickedUpBy INT NOT NULL, -- Nurse who requested / picked up the drugs
+    recordedPickupBy INT NULL, -- Pharmacist who recorded the pickup (when status = picked_up)
     pickupDate DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    status ENUM('pending', 'picked_up', 'cancelled') DEFAULT 'pending',
+    status ENUM('pending', 'ready_for_pickup', 'picked_up', 'cancelled') DEFAULT 'pending',
     notes TEXT,
     createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -19,6 +20,7 @@ CREATE TABLE IF NOT EXISTS nurse_pickups (
     FOREIGN KEY (patientId) REFERENCES patients(patientId) ON DELETE RESTRICT,
     FOREIGN KEY (admissionId) REFERENCES admissions(admissionId) ON DELETE SET NULL,
     FOREIGN KEY (pickedUpBy) REFERENCES users(userId) ON DELETE RESTRICT,
+    FOREIGN KEY (recordedPickupBy) REFERENCES users(userId) ON DELETE SET NULL,
     INDEX idx_prescription (prescriptionId),
     INDEX idx_patient (patientId),
     INDEX idx_admission (admissionId),

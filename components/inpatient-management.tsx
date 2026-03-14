@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
-import { Plus, Clock, Activity, Stethoscope, Pill, FlaskConical, Calendar, User, FileText, AlertCircle, Eye, Package, Scan, Pencil, Trash2 } from "lucide-react"
+import { Plus, Clock, Activity, Stethoscope, Pill, FlaskConical, Calendar, User, FileText, AlertCircle, Eye, Package, Scan, Pencil, Trash2, LogOut, ArrowRightLeft, Printer, Receipt, Download, Loader2 } from "lucide-react"
 import { inpatientApi, laboratoryApi, userApi, doctorsApi, serviceChargeApi, billingApi, proceduresApi, pharmacyApi, radiologyApi, roleApi } from "@/lib/api"
 import { format } from "date-fns"
 import { toast } from "@/components/ui/use-toast"
@@ -20,14 +20,17 @@ import { useAuth } from "@/lib/auth/auth-context"
 import { ProcedureCombobox } from "@/components/procedure-combobox"
 import { TestTypeCombobox } from "@/components/test-type-combobox"
 import { ExamTypeCombobox } from "@/components/exam-type-combobox"
+import { DischargeSummary } from "@/components/discharge-summary"
 
 interface InpatientManagementProps {
   admissionId: string
   open: boolean
   onOpenChange: (open: boolean) => void
+  /** Called after discharge or transfer so parent can refresh lists */
+  onAdmissionUpdated?: () => void
 }
 
-export function InpatientManagement({ admissionId, open, onOpenChange }: InpatientManagementProps) {
+export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissionUpdated }: InpatientManagementProps) {
   const { user } = useAuth()
   const [loading, setLoading] = useState(true)
   const [overview, setOverview] = useState<any>(null)
@@ -149,6 +152,10 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
   const [deleteOrderDialogOpen, setDeleteOrderDialogOpen] = useState(false)
   const [deletingOrder, setDeletingOrder] = useState(false)
 
+  // Bill (comprehensive) state
+  const [billData, setBillData] = useState<any>(null)
+  const [billLoading, setBillLoading] = useState(false)
+
   // View review dialog states
   const [viewReviewDialogOpen, setViewReviewDialogOpen] = useState(false)
   const [viewingReview, setViewingReview] = useState<any>(null)
@@ -179,6 +186,23 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
   const [viewLabOrderDialogOpen, setViewLabOrderDialogOpen] = useState(false)
   const [viewingPrescription, setViewingPrescription] = useState<any>(null)
   const [viewPrescriptionDialogOpen, setViewPrescriptionDialogOpen] = useState(false)
+
+  // Discharge dialog
+  const [dischargeDialogOpen, setDischargeDialogOpen] = useState(false)
+  const [dischargeDate, setDischargeDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [dischargeNotes, setDischargeNotes] = useState("")
+  const [savingDischarge, setSavingDischarge] = useState(false)
+
+  // Transfer dialog
+  const [transferDialogOpen, setTransferDialogOpen] = useState(false)
+  const [transferWardId, setTransferWardId] = useState<string>("")
+  const [transferBedId, setTransferBedId] = useState<string>("")
+  const [transferReason, setTransferReason] = useState("")
+  const [transferWards, setTransferWards] = useState<any[]>([])
+  const [transferBeds, setTransferBeds] = useState<any[]>([])
+  const [savingTransfer, setSavingTransfer] = useState(false)
+
+  const [dischargeSummaryOpen, setDischargeSummaryOpen] = useState(false)
 
   useEffect(() => {
     if (open && admissionId) {
@@ -266,6 +290,26 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
       loadConsumables()
     }
   }, [orderDialogOpen, editingOrder])
+
+  const loadBill = async () => {
+    if (!admissionId) return
+    try {
+      setBillLoading(true)
+      const data = await inpatientApi.getAdmissionBill(admissionId)
+      setBillData(data)
+    } catch (e: any) {
+      toast({ title: "Error", description: e?.message ?? "Failed to load bill", variant: "destructive" })
+      setBillData(null)
+    } finally {
+      setBillLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (activeTab === "bill" && admissionId) {
+      loadBill()
+    }
+  }, [activeTab, admissionId])
 
   useEffect(() => {
     if (radiologyOrderDialogOpen) {
@@ -375,6 +419,89 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
       setVitalsSchedule(schedule)
     } catch (error) {
       console.error("Error creating vitals schedule:", error)
+    }
+  }
+
+  const handleDischarge = async () => {
+    try {
+      setSavingDischarge(true)
+      await inpatientApi.updateAdmission(admissionId, {
+        status: "discharged",
+        dischargeDate: dischargeDate || new Date().toISOString().slice(0, 10),
+        notes: dischargeNotes || undefined,
+      })
+      toast({ title: "Success", description: "Patient discharged successfully." })
+      setDischargeDialogOpen(false)
+      setDischargeDate(new Date().toISOString().slice(0, 10))
+      setDischargeNotes("")
+      onAdmissionUpdated?.()
+      onOpenChange(false)
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to discharge",
+        variant: "destructive",
+      })
+    } finally {
+      setSavingDischarge(false)
+    }
+  }
+
+  const handleTransfer = async () => {
+    if (!transferBedId) {
+      toast({ title: "Select a bed", description: "Please select destination ward and bed.", variant: "destructive" })
+      return
+    }
+    try {
+      setSavingTransfer(true)
+      await inpatientApi.updateAdmission(admissionId, {
+        bedId: parseInt(transferBedId, 10),
+        transferReason: transferReason || undefined,
+      })
+      toast({ title: "Success", description: "Patient transferred successfully." })
+      setTransferDialogOpen(false)
+      setTransferWardId("")
+      setTransferBedId("")
+      setTransferReason("")
+      setTransferBeds([])
+      onAdmissionUpdated?.()
+      await loadOverview(false)
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to transfer",
+        variant: "destructive",
+      })
+    } finally {
+      setSavingTransfer(false)
+    }
+  }
+
+  const openTransferDialog = async () => {
+    setTransferDialogOpen(true)
+    setTransferWardId("")
+    setTransferBedId("")
+    setTransferReason("")
+    setTransferBeds([])
+    try {
+      const wardsList = await inpatientApi.getWards(undefined, 1, 100)
+      setTransferWards(Array.isArray(wardsList) ? wardsList : [])
+    } catch {
+      setTransferWards([])
+    }
+  }
+
+  const loadTransferBeds = async (wardId: string) => {
+    if (!wardId) {
+      setTransferBeds([])
+      return
+    }
+    try {
+      const bedsList = await inpatientApi.getBeds(wardId, "available", 1, 200)
+      const list = Array.isArray(bedsList) ? bedsList : []
+      setTransferBeds(list.filter((b: any) => b.status === "available"))
+    } catch {
+      setTransferBeds([])
     }
   }
 
@@ -1463,10 +1590,14 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
     }
   }
 
-  const handleViewPrescription = async (prescription: any) => {
+  const handleViewPrescription = async (prescription: any, overviewPrescriptions?: any[]) => {
     try {
       const fullPrescription = await pharmacyApi.getPrescription(prescription.prescriptionId.toString())
-      setViewingPrescription(fullPrescription)
+      const fromOverview = overviewPrescriptions?.find((p: any) => p.prescriptionId === prescription.prescriptionId)
+      const merged = fromOverview?.pickupInfo
+        ? { ...fullPrescription, status: 'picked_up', pickupInfo: fromOverview.pickupInfo }
+        : fullPrescription
+      setViewingPrescription(merged)
       setViewPrescriptionDialogOpen(true)
     } catch (error: any) {
       toast({
@@ -1512,13 +1643,31 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
               {admission.status}
             </Badge>
           </DialogTitle>
-          <DialogDescription>
-            {admission.firstName} {admission.lastName} - {admission.wardName} - Bed {admission.bedNumber}
+          <DialogDescription className="flex flex-wrap items-center justify-between gap-2">
+            <span>{admission.firstName} {admission.lastName} - {admission.wardName} - Bed {admission.bedNumber}</span>
+            <div className="flex gap-2 flex-shrink-0">
+              <Button variant="outline" size="sm" onClick={() => setDischargeSummaryOpen(true)}>
+                <Printer className="h-4 w-4 mr-2" />
+                Print discharge summary
+              </Button>
+              {admission.status === "admitted" && (
+                <>
+                  <Button variant="outline" size="sm" onClick={() => { setDischargeDate(new Date().toISOString().slice(0, 10)); setDischargeNotes(""); setDischargeDialogOpen(true); }}>
+                    <LogOut className="h-4 w-4 mr-2" />
+                    Discharge
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={openTransferDialog}>
+                    <ArrowRightLeft className="h-4 w-4 mr-2" />
+                    Transfer
+                  </Button>
+                </>
+              )}
+            </div>
           </DialogDescription>
         </DialogHeader>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-9">
+          <TabsList className="flex flex-wrap h-auto gap-1 p-1">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="reviews">Reviews</TabsTrigger>
             <TabsTrigger value="nursing">Nursing</TabsTrigger>
@@ -1528,6 +1677,7 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
             <TabsTrigger value="labs">Labs</TabsTrigger>
             <TabsTrigger value="orders">Orders</TabsTrigger>
             <TabsTrigger value="medications">Medications</TabsTrigger>
+            <TabsTrigger value="bill">Bill</TabsTrigger>
           </TabsList>
 
           {/* Overview Tab */}
@@ -3166,6 +3316,238 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
             </Card>
           </TabsContent>
 
+          {/* Bill Tab */}
+          <TabsContent value="bill" className="space-y-4">
+            <div className="flex justify-between items-center flex-wrap gap-2">
+              <h3 className="text-lg font-semibold">Bill</h3>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={() => loadBill()} disabled={billLoading}>
+                  {billLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  {billLoading ? "Loading..." : "Refresh"}
+                </Button>
+                {(() => {
+                  const safeFormat = (d: string | number | Date | null | undefined, fmt: string) => {
+                    if (d == null) return "—"
+                    const date = typeof d === "object" ? d : new Date(d)
+                    if (Number.isNaN(date.getTime())) return "—"
+                    try { return format(date, fmt) } catch { return "—" }
+                  }
+                  const openPrintBill = () => {
+                    try {
+                      if (!billData?.lines?.length) {
+                        toast({ title: "No bill", description: "No charges to print yet.", variant: "destructive" })
+                        return
+                      }
+                      const adm = billData.admission || admission
+                      const rows = billData.lines
+                      const logoOrigin = typeof window !== "undefined" ? window.location.origin : ""
+                      const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Inpatient Bill - ${String(adm?.admissionNumber ?? "").replace(/</g, "&lt;")}</title>
+  <style>
+    body { font-family: system-ui, sans-serif; padding: 20px; color: #111; }
+    .bill-header { text-align: center; border-bottom: 2px solid #ddd; padding-bottom: 12px; margin-bottom: 16px; }
+    .bill-header img { max-width: 250px; height: auto; margin-bottom: 12px; display: block; margin-left: auto; margin-right: auto; }
+    .bill-header .logo-fallback { display: none; }
+    .bill-header .logo-fallback h1 { margin: 0; font-size: 1.5rem; font-weight: bold; letter-spacing: 2px; color: #0f4c75; }
+    .bill-header .logo-fallback h2 { margin: 4px 0 0; font-size: 1rem; color: #333; }
+    table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+    th, td { border: 1px solid #ddd; padding: 8px 12px; text-align: left; }
+    th { background: #f5f5f5; }
+    .text-right { text-align: right; }
+    .totals { margin-top: 24px; max-width: 320px; margin-left: auto; }
+    .totals tr { border: none; }
+    .totals td { border: none; padding: 4px 8px; }
+    .totals .label { font-weight: 600; }
+    h1 { font-size: 1.25rem; margin-bottom: 4px; }
+    .meta { color: #666; font-size: 0.875rem; margin-bottom: 16px; }
+    .badge { font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; background: #eee; }
+    @media print { body { padding: 12px; } }
+  </style>
+</head>
+<body>
+  <div class="bill-header">
+    <img src="${logoOrigin}/logo.png" alt="Kiplombe Medical Centre" style="max-width: 250px; height: auto; margin-bottom: 12px; display: block; margin-left: auto; margin-right: auto;" onerror="this.style.display='none'; var n=this.nextElementSibling; if(n) n.style.display='block';" />
+    <div class="logo-fallback" style="display: none;">
+      <h1>KIPLOMBE</h1>
+      <h2>Medical Centre</h2>
+    </div>
+    <h1 style="margin-top: 12px; margin-bottom: 0;">Inpatient Bill</h1>
+  </div>
+  <div class="meta">
+    ${String(adm?.firstName ?? "").replace(/</g, "&lt;")} ${String(adm?.lastName ?? "").replace(/</g, "&lt;")} &bull; ${String(adm?.patientNumber ?? "").replace(/</g, "&lt;")} &bull; ${String(adm?.wardName ?? "").replace(/</g, "&lt;")} - Bed ${String(adm?.bedNumber ?? "").replace(/</g, "&lt;")}<br>
+    Admission: ${String(adm?.admissionNumber ?? "").replace(/</g, "&lt;")} &bull; ${safeFormat(adm?.admissionDate, "PP")}${adm?.dischargeDate ? " to " + safeFormat(adm.dischargeDate, "PP") : ""}<br>
+    Patient type: ${billData.patientType === "insurance" ? "Insurance" : "Cash"}${billData.insuranceProviderName ? " &bull; " + String(billData.insuranceProviderName).replace(/</g, "&lt;") : ""}<br>
+    Generated: ${safeFormat(new Date(), "PPp")}
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>Category</th>
+        <th>Date</th>
+        <th>Invoice</th>
+        <th>Description</th>
+        <th class="text-right">Qty</th>
+        <th class="text-right">Unit (KES)</th>
+        <th class="text-right">Total (KES)</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows.map((r: any) => `
+        <tr>
+          <td><span class="badge">${String(r.sourceLabel ?? r.source ?? "—").replace(/</g, "&lt;")}</span></td>
+          <td>${safeFormat(r.date, "PP")}</td>
+          <td>${String(r.invoiceNumber ?? "—").replace(/</g, "&lt;")}</td>
+          <td>${String(r.description ?? "—").replace(/</g, "&lt;")}</td>
+          <td class="text-right">${r.quantity ?? 1}</td>
+          <td class="text-right">${(r.unitPrice ?? 0).toFixed(2)}</td>
+          <td class="text-right">${(r.totalPrice ?? 0).toFixed(2)}</td>
+        </tr>
+      `).join("")}
+    </tbody>
+  </table>
+  <table class="totals">
+    <tr><td class="label">Subtotal (KES)</td><td class="text-right">${(billData.subtotal ?? 0).toFixed(2)}</td></tr>
+    <tr><td class="label">Paid (KES)</td><td class="text-right">${(billData.paidTotal ?? 0).toFixed(2)}</td></tr>
+    <tr><td class="label">Balance (KES)</td><td class="text-right">${(billData.balanceTotal ?? 0).toFixed(2)}</td></tr>
+  </table>
+  <p style="margin-top: 24px; font-size: 0.875rem; color: #666;">Use your browser's Print dialog to print or save as PDF.</p>
+</body>
+</html>`
+                      const iframe = document.createElement("iframe")
+                      iframe.setAttribute("style", "position:fixed;width:0;height:0;border:none;left:-9999px;top:0;")
+                      document.body.appendChild(iframe)
+                      const doc = iframe.contentWindow?.document
+                      if (!doc) {
+                        document.body.removeChild(iframe)
+                        toast({ title: "Print failed", description: "Could not create print frame.", variant: "destructive" })
+                        return
+                      }
+                      doc.open()
+                      doc.write(html)
+                      doc.close()
+                      iframe.contentWindow?.focus()
+                      setTimeout(() => {
+                        try {
+                          iframe.contentWindow?.print()
+                        } catch (_) {
+                          toast({ title: "Print failed", description: "Print dialog could not be opened.", variant: "destructive" })
+                        }
+                        setTimeout(() => {
+                          try { document.body.removeChild(iframe) } catch (_) {}
+                        }, 500)
+                      }, 300)
+                    } catch (e) {
+                      console.error("Bill print error:", e)
+                      toast({ title: "Print failed", description: e instanceof Error ? e.message : "Could not print bill.", variant: "destructive" })
+                    }
+                  }
+                  return (
+                    <>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={!billData || !billData.lines?.length}
+                        onClick={() => openPrintBill()}
+                      >
+                        <Printer className="mr-2 h-4 w-4" />
+                        Print
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={!billData || !billData.lines?.length}
+                        onClick={() => openPrintBill()}
+                      >
+                        <Download className="mr-2 h-4 w-4" />
+                        Download PDF
+                      </Button>
+                    </>
+                  )
+                })()}
+              </div>
+            </div>
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Running bill</CardTitle>
+                <CardDescription>
+                  All charges for this admission: lab, medications, orders, procedures, bed, and consultant. Rates use patient type: {billData?.patientType === "insurance" ? "insurance" : "cash"}.
+                  {billData?.insuranceProviderName ? ` Provider: ${billData.insuranceProviderName}.` : ""} Use Print or Download PDF to print or save as PDF.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {billLoading ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                  </div>
+                ) : billData?.lines && billData.lines.length > 0 ? (
+                  <>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Category</TableHead>
+                          <TableHead>Date</TableHead>
+                          <TableHead>Invoice</TableHead>
+                          <TableHead>Description</TableHead>
+                          <TableHead className="text-right">Qty</TableHead>
+                          <TableHead className="text-right">Unit (KES)</TableHead>
+                          <TableHead className="text-right">Total (KES)</TableHead>
+                          <TableHead>Status</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {billData.lines.map((line: any, idx: number) => {
+                          const dateObj = line.date ? new Date(line.date) : null
+                          const dateStr = dateObj && !Number.isNaN(dateObj.getTime()) ? format(dateObj, "PP") : "—"
+                          return (
+                          <TableRow key={`${line.source}-${idx}-${String(line.date)}-${String(line.description)}`}>
+                            <TableCell><Badge variant="outline">{line.sourceLabel ?? line.source ?? "—"}</Badge></TableCell>
+                            <TableCell>{dateStr}</TableCell>
+                            <TableCell>{line.invoiceNumber ?? "—"}</TableCell>
+                            <TableCell>{line.description ?? "—"}</TableCell>
+                            <TableCell className="text-right">{line.quantity ?? 1}</TableCell>
+                            <TableCell className="text-right">{(line.unitPrice ?? 0).toFixed(2)}</TableCell>
+                            <TableCell className="text-right">{(line.totalPrice ?? 0).toFixed(2)}</TableCell>
+                            <TableCell>
+                              {line.status != null ? (
+                                <Badge variant={line.status === "paid" ? "default" : line.status === "waived" ? "secondary" : "outline"}>{line.status}</Badge>
+                              ) : (
+                                "—"
+                              )}
+                            </TableCell>
+                          </TableRow>
+                          )
+                        })}
+                      </TableBody>
+                    </Table>
+                    <div className="mt-4 flex justify-end">
+                      <div className="rounded-md border bg-muted/30 p-4 min-w-[240px] space-y-1">
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">Subtotal (KES)</span>
+                          <span className="font-medium">{(billData.subtotal ?? 0).toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">Paid (KES)</span>
+                          <span className="font-medium">{(billData.paidTotal ?? 0).toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between text-sm font-medium border-t pt-2 mt-2">
+                          <span>Balance (KES)</span>
+                          <span>{(billData.balanceTotal ?? 0).toFixed(2)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-center text-muted-foreground py-8">
+                    {billData && !billLoading ? "No charges yet. Orders, procedures, medications, bed and consultant charges will appear here." : "Loading bill…"}
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
           {/* Medications Tab */}
           <TabsContent value="medications" className="space-y-4">
             <div className="flex justify-between items-center">
@@ -3313,14 +3695,16 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                             <TableCell>{firstItem?.duration || "N/A"}</TableCell>
                             <TableCell>{prescription.doctorFirstName} {prescription.doctorLastName}</TableCell>
                             <TableCell>
-                              <Badge variant="outline">{prescription.status || "active"}</Badge>
+                              <Badge variant={prescription.status === "picked_up" ? "default" : "outline"}>
+                                {prescription.status === "picked_up" ? "Picked_Up" : (prescription.status || "active")}
+                              </Badge>
                             </TableCell>
                             <TableCell>
                               <div className="flex gap-1">
                                 <Button
                                   variant="ghost"
                                   size="sm"
-                                  onClick={() => handleViewPrescription(prescription)}
+                                  onClick={() => handleViewPrescription(prescription, overview?.prescriptions)}
                                   title="View details"
                                 >
                                   <Eye className="h-4 w-4" />
@@ -3609,10 +3993,33 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
                   <div>
                     <Label className="text-sm font-semibold">Status</Label>
                     <p>
-                      <Badge variant="outline">{viewingPrescription.status || "active"}</Badge>
+                      <Badge variant={viewingPrescription.status === "picked_up" ? "default" : "outline"}>
+                        {viewingPrescription.status === "picked_up" ? "Picked_Up" : (viewingPrescription.status || "active")}
+                      </Badge>
                     </p>
                   </div>
                 </div>
+                {viewingPrescription.pickupInfo && (
+                  <div className="p-4 bg-muted rounded-md space-y-2">
+                    <Label className="text-sm font-semibold">Pickup details</Label>
+                    <div className="grid grid-cols-2 gap-2 text-sm">
+                      <div>
+                        <span className="text-muted-foreground">Nurse who picked up:</span>{" "}
+                        {viewingPrescription.pickupInfo.nurseName || "—"}
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Pharmacist who issued:</span>{" "}
+                        {viewingPrescription.pickupInfo.pharmacistName || "—"}
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Pickup date:</span>{" "}
+                        {viewingPrescription.pickupInfo.pickupDate
+                          ? format(new Date(viewingPrescription.pickupInfo.pickupDate), "PP")
+                          : "—"}
+                      </div>
+                    </div>
+                  </div>
+                )}
                 {viewingPrescription.items && viewingPrescription.items.length > 0 && (
                   <div>
                     <Label className="text-sm font-semibold mb-2 block">Medications</Label>
@@ -3770,6 +4177,104 @@ export function InpatientManagement({ admissionId, open, onOpenChange }: Inpatie
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+
+        {/* Discharge dialog */}
+        <Dialog open={dischargeDialogOpen} onOpenChange={setDischargeDialogOpen}>
+          <DialogContent className="sm:max-w-[400px]">
+            <DialogHeader>
+              <DialogTitle>Discharge Patient</DialogTitle>
+              <DialogDescription>
+                Set discharge date and optional notes. The bed will be freed.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-2">
+              <div className="space-y-2">
+                <Label>Discharge Date</Label>
+                <Input
+                  type="date"
+                  value={dischargeDate}
+                  onChange={(e) => setDischargeDate(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Notes (optional)</Label>
+                <Textarea
+                  placeholder="Discharge summary or instructions"
+                  value={dischargeNotes}
+                  onChange={(e) => setDischargeNotes(e.target.value)}
+                  rows={3}
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setDischargeDialogOpen(false)} disabled={savingDischarge}>
+                Cancel
+              </Button>
+              <Button onClick={handleDischarge} disabled={savingDischarge}>
+                {savingDischarge ? "Discharging..." : "Confirm Discharge"}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Transfer dialog */}
+        <Dialog open={transferDialogOpen} onOpenChange={(open) => { setTransferDialogOpen(open); if (!open) { setTransferWardId(""); setTransferBedId(""); setTransferBeds([]); } }}>
+          <DialogContent className="sm:max-w-[420px]">
+            <DialogHeader>
+              <DialogTitle>Transfer to Another Bed</DialogTitle>
+              <DialogDescription>
+                Select destination ward and an available bed. Current bed will be freed.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-2">
+              <div className="space-y-2">
+                <Label>Ward</Label>
+                <Select value={transferWardId} onValueChange={(v) => { setTransferWardId(v); setTransferBedId(""); loadTransferBeds(v); }}>
+                  <SelectTrigger><SelectValue placeholder="Select ward" /></SelectTrigger>
+                  <SelectContent>
+                    {transferWards.map((w: any) => (
+                      <SelectItem key={w.wardId} value={String(w.wardId)}>{w.wardName} {w.wardType ? `(${w.wardType})` : ""}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Bed</Label>
+                <Select value={transferBedId} onValueChange={setTransferBedId} disabled={!transferWardId}>
+                  <SelectTrigger><SelectValue placeholder="Select bed" /></SelectTrigger>
+                  <SelectContent>
+                    {transferBeds.map((b: any) => (
+                      <SelectItem key={b.bedId} value={String(b.bedId)}>Bed {b.bedNumber} {b.bedType ? `(${b.bedType})` : ""}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Reason (optional)</Label>
+                <Input
+                  placeholder="e.g. Step-down, isolation"
+                  value={transferReason}
+                  onChange={(e) => setTransferReason(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setTransferDialogOpen(false)} disabled={savingTransfer}>
+                Cancel
+              </Button>
+              <Button onClick={handleTransfer} disabled={!transferBedId || savingTransfer}>
+                {savingTransfer ? "Transferring..." : "Confirm Transfer"}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Discharge summary (printable) */}
+        <Dialog open={dischargeSummaryOpen} onOpenChange={setDischargeSummaryOpen}>
+          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto print:block print:max-h-none">
+            <DischargeSummary overview={overview} />
+          </DialogContent>
+        </Dialog>
       </DialogContent>
     </Dialog>
   )
