@@ -40,13 +40,13 @@ echo ""
 # Create output directory if it doesn't exist
 mkdir -p "$OUTPUT_DIR"
 
-# Check if MySQL container exists
-MYSQL_CONTAINER=$(docker ps --format "{{.Names}}" | grep -i mysql | head -1)
+# Prefer kiplombe_mysql (local Docker Compose container name)
+MYSQL_CONTAINER=$(docker ps --format "{{.Names}}" | grep -E "kiplombe_mysql|mysql" | head -1)
 if [ -z "$MYSQL_CONTAINER" ]; then
     MYSQL_CONTAINER="kiplombe_mysql"
 fi
 
-if ! docker ps | grep -q "$MYSQL_CONTAINER"; then
+if ! docker ps --format "{{.Names}}" | grep -q "^${MYSQL_CONTAINER}$"; then
     echo -e "${RED}❌ ERROR: MySQL container '$MYSQL_CONTAINER' is not running${NC}"
     echo "   Please start the MySQL container first:"
     echo "   docker-compose up -d mysql_db"

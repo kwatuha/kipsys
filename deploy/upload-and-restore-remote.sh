@@ -122,17 +122,9 @@ eval "$SSH_CMD" << 'RESTORE_EOF'
     echo "   ✅ MySQL is ready"
     echo ""
 
-    # Restore the database
+    # Restore the database (dump already has SET FOREIGN_KEY_CHECKS=0 at start)
     echo "   📥 Restoring database..."
-    gunzip < /tmp/db_dump.sql.gz | docker exec -i "$MYSQL_CONTAINER" mysql -u root -p"$MYSQL_ROOT_PASSWORD" << 'MYSQL_RESTORE_EOF'
-SET FOREIGN_KEY_CHECKS=0;
-SET SESSION sql_mode='NO_AUTO_VALUE_ON_ZERO';
-SET @OLD_TIME_ZONE=@@TIME_ZONE;
-SET TIME_ZONE='+00:00';
-SOURCE /dev/stdin;
-SET TIME_ZONE=@OLD_TIME_ZONE;
-SET FOREIGN_KEY_CHECKS=1;
-MYSQL_RESTORE_EOF
+    gunzip -c /tmp/db_dump.sql.gz | docker exec -i "$MYSQL_CONTAINER" mysql -u root -p"$MYSQL_ROOT_PASSWORD" 2>/dev/null
 
     if [ $? -eq 0 ]; then
         echo "   ✅ Database restored successfully"

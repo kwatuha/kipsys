@@ -98,12 +98,16 @@ if tar -czf "$DEPLOY_ARCHIVE" \
     FILE_COUNT=$(tar -tzf "$DEPLOY_ARCHIVE" 2>/dev/null | wc -l)
     echo "   ✓ Archive contains $FILE_COUNT files"
 
-    # Check for critical files
+    # Check for critical files (including sidebar so it appears on deployed app)
     echo "   🔍 Checking for critical files in archive..."
     CRITICAL_FILES=(
         "app/page.tsx"
         "app/layout.tsx"
+        "app/(main)/layout.tsx"
         "components/protected-route.tsx"
+        "components/main-layout-content.tsx"
+        "components/app-sidebar.tsx"
+        "components/ui/sidebar.tsx"
         "lib/auth/auth-context.tsx"
         "package.json"
         "next.config.mjs"
