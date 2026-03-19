@@ -74,7 +74,12 @@ export function InpatientChargeRatesTable() {
       const chargeId = chargeFilter && chargeFilter !== "all" ? chargeFilter : undefined
       const wardId = wardFilter && wardFilter !== "all" ? wardFilter : undefined
       const asOf = showCurrentOnly ? new Date().toISOString().slice(0, 10) : undefined
-      const data = await insuranceApi.getInpatientChargeRates(chargeId, wardId, undefined, asOf)
+      const data = await insuranceApi.getChargeRateRules({
+        payerType: "cash",
+        chargeId,
+        wardId,
+        asOf,
+      })
       setRates(Array.isArray(data) ? data : [])
     } catch (e: any) {
       toast({ title: "Error", description: e?.message ?? "Failed to load rates", variant: "destructive" })
@@ -126,18 +131,20 @@ export function InpatientChargeRatesTable() {
       setSaving(true)
       const payload = {
         chargeId: parseInt(formChargeId, 10),
+        payerType: "cash",
         wardId: formWardId ? parseInt(formWardId, 10) : null,
         wardType: formWardType || null,
         amount: parseFloat(formAmount),
+        priority: formWardId ? 300 : (formWardType ? 200 : 100),
         startDate: formStartDate,
         endDate: formEndDate || null,
         notes: formNotes || null,
       }
       if (editing) {
-        await insuranceApi.updateInpatientChargeRate(editing.rateId.toString(), payload)
+        await insuranceApi.updateChargeRateRule(editing.ruleId.toString(), payload)
         toast({ title: "Success", description: "Rate updated." })
       } else {
-        await insuranceApi.createInpatientChargeRate(payload)
+        await insuranceApi.createChargeRateRule(payload)
         toast({ title: "Success", description: "Rate created." })
       }
       setFormOpen(false)
@@ -153,7 +160,7 @@ export function InpatientChargeRatesTable() {
     if (!deleting) return
     try {
       setDeleteLoading(true)
-      await insuranceApi.deleteInpatientChargeRate(deleting.rateId.toString())
+      await insuranceApi.deleteChargeRateRule(deleting.ruleId.toString())
       toast({ title: "Success", description: "Rate deleted." })
       setDeleteOpen(false)
       setDeleting(null)
@@ -229,7 +236,7 @@ export function InpatientChargeRatesTable() {
               </TableRow>
             ) : (
               rates.map((r) => (
-                <TableRow key={r.rateId}>
+                <TableRow key={r.ruleId}>
                   <TableCell>{r.chargeName ?? r.chargeCode ?? r.chargeId}</TableCell>
                   <TableCell>{scopeLabel(r)}</TableCell>
                   <TableCell className="text-right font-medium">{formatCurrency(r.amount)}</TableCell>

@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { AddServiceChargeForm } from "@/components/add-service-charge-form"
 import { AddSpecialistChargeForm } from "@/components/add-specialist-charge-form"
 import { AddConsumablesChargeForm } from "@/components/add-consumables-charge-form"
+import { ChargeRateRulesTable } from "@/components/charge-rate-rules-table"
 import { serviceChargeApi, specialistChargeApi, consumablesChargeApi } from "@/lib/api"
 import { toast } from "@/components/ui/use-toast"
 import {
@@ -310,6 +311,18 @@ export default function HospitalChargesPage() {
               Open Inpatient (cash) rates
             </Link>
           </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Centralized charge-rate rules</CardTitle>
+          <CardDescription>
+            Manage all pricing overrides in one place: insurance, cash, and ward-specific rules. Ward-specific rules are prioritized over general rules.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ChargeRateRulesTable />
         </CardContent>
       </Card>
 

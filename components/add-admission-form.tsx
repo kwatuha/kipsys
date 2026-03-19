@@ -65,6 +65,14 @@ const createFormSchema = (isEditing: boolean, admissionType: "inpatient" | "icu"
       ...baseSchema,
       bedId: z.string().min(1, { message: "Bed is required" }),
       expectedDischargeDate: z.string().optional(),
+      depositAmount: z
+        .string()
+        .optional()
+        .refine((val) => {
+          if (!val || val.trim() === "") return true
+          const parsed = Number(val)
+          return Number.isFinite(parsed) && parsed >= 0
+        }, { message: "Deposit amount must be a valid number (0 or more)" }),
     })
   }
 }
@@ -193,6 +201,7 @@ export function AddAdmissionForm({ open, onOpenChange, onSuccess, admission, adm
         bedId: "",
         admissionNotes: "",
         expectedDischargeDate: "",
+        depositAmount: "",
       }
     }
   }
@@ -251,6 +260,7 @@ export function AddAdmissionForm({ open, onOpenChange, onSuccess, admission, adm
         formValues.expectedDischargeDate = admission.expectedDischargeDate
           ? new Date(admission.expectedDischargeDate).toISOString().split("T")[0]
           : ""
+        formValues.depositAmount = admission.depositAmount != null ? String(admission.depositAmount) : ""
       }
 
       form.reset(formValues)
@@ -620,6 +630,13 @@ export function AddAdmissionForm({ open, onOpenChange, onSuccess, admission, adm
           throw apiError // Re-throw to be caught by outer catch
         }
       } else {
+        const parsedDepositAmount = values.depositAmount && values.depositAmount.trim() !== ""
+          ? Number(values.depositAmount)
+          : null
+        if (parsedDepositAmount != null && (!Number.isFinite(parsedDepositAmount) || parsedDepositAmount < 0)) {
+          throw new Error("Deposit amount must be a valid number (0 or more)")
+        }
+
         // Prepare Inpatient API payload
         const payload = {
           patientId: Number(patientId),
@@ -629,6 +646,7 @@ export function AddAdmissionForm({ open, onOpenChange, onSuccess, admission, adm
           admissionDiagnosis: toNullIfEmpty(values.diagnosis),
           admissionReason: toNullIfEmpty(values.diagnosis),
           expectedDischargeDate: values.expectedDischargeDate || null,
+          depositAmount: parsedDepositAmount,
           notes: toNullIfEmpty(values.admissionNotes),
         }
 
@@ -654,6 +672,7 @@ export function AddAdmissionForm({ open, onOpenChange, onSuccess, admission, adm
               admissionDiagnosis: toNullIfEmpty(values.diagnosis),
               admissionReason: toNullIfEmpty(values.diagnosis),
               expectedDischargeDate: values.expectedDischargeDate || null,
+              depositAmount: parsedDepositAmount,
               notes: toNullIfEmpty(values.admissionNotes),
             }
             await inpatientApi.updateAdmission(admission.admissionId.toString(), updatePayload)
@@ -1156,19 +1175,37 @@ export function AddAdmissionForm({ open, onOpenChange, onSuccess, admission, adm
             )}
 
             {!isICU && (
-              <FormField
-                control={form.control}
-                name="expectedDischargeDate"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Expected Discharge Date (Optional)</FormLabel>
-                    <FormControl>
-                      <Input type="date" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="expectedDischargeDate"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Expected Discharge Date (Optional)</FormLabel>
+                      <FormControl>
+                        <Input type="date" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="depositAmount"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Deposit Amount (Optional)</FormLabel>
+                      <FormControl>
+                        <Input type="number" min="0" step="0.01" placeholder="0.00" {...field} />
+                      </FormControl>
+                      <p className="text-xs text-muted-foreground">
+                        If entered, a deposit invoice is created and paid amount is deducted from final bill.
+                      </p>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
             )}
 
             <FormField

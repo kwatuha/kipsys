@@ -71,7 +71,12 @@ export function InsuranceChargeRatesTable() {
       const providerId = providerFilter && providerFilter !== "all" ? providerFilter : undefined
       const chargeId = chargeFilter && chargeFilter !== "all" ? chargeFilter : undefined
       const asOf = showCurrentOnly ? new Date().toISOString().slice(0, 10) : undefined
-      const data = await insuranceApi.getChargeRates(providerId, chargeId, asOf)
+      const data = await insuranceApi.getChargeRateRules({
+        payerType: "insurance",
+        providerId,
+        chargeId,
+        asOf,
+      })
       setRates(Array.isArray(data) ? data : [])
     } catch (e: any) {
       toast({ title: "Error", description: e?.message ?? "Failed to load rates", variant: "destructive" })
@@ -122,16 +127,24 @@ export function InsuranceChargeRatesTable() {
       const payload = {
         chargeId: parseInt(formChargeId, 10),
         providerId: parseInt(formProviderId, 10),
+        payerType: "insurance",
         amount: parseFloat(formAmount),
+        priority: 100,
         startDate: formStartDate,
         endDate: formEndDate || null,
         notes: formNotes || null,
       }
       if (editing) {
-        await insuranceApi.updateChargeRate(editing.rateId.toString(), { amount: payload.amount, startDate: payload.startDate, endDate: payload.endDate, notes: payload.notes })
+        await insuranceApi.updateChargeRateRule(editing.ruleId.toString(), {
+          amount: payload.amount,
+          startDate: payload.startDate,
+          endDate: payload.endDate,
+          notes: payload.notes,
+          providerId: payload.providerId,
+        })
         toast({ title: "Success", description: "Rate updated." })
       } else {
-        await insuranceApi.createChargeRate(payload)
+        await insuranceApi.createChargeRateRule(payload)
         toast({ title: "Success", description: "Rate created." })
       }
       setFormOpen(false)
@@ -147,7 +160,7 @@ export function InsuranceChargeRatesTable() {
     if (!deleting) return
     try {
       setDeleteLoading(true)
-      await insuranceApi.deleteChargeRate(deleting.rateId.toString())
+      await insuranceApi.deleteChargeRateRule(deleting.ruleId.toString())
       toast({ title: "Success", description: "Rate deleted." })
       setDeleteOpen(false)
       setDeleting(null)
@@ -215,7 +228,7 @@ export function InsuranceChargeRatesTable() {
               </TableRow>
             ) : (
               rates.map((r) => (
-                <TableRow key={r.rateId}>
+                <TableRow key={r.ruleId}>
                   <TableCell>{r.providerName ?? "—"}</TableCell>
                   <TableCell>{r.chargeName ?? r.chargeCode ?? r.chargeId}</TableCell>
                   <TableCell className="text-right font-medium">{formatCurrency(r.amount)}</TableCell>

@@ -6,13 +6,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { PlusCircle, FileText, Users, Building, RefreshCw, Loader2 } from "lucide-react"
+import Link from "next/link"
 import { InsuranceProvidersTable } from "@/components/insurance-providers-table"
 import { InsurancePackagesTable } from "@/components/insurance-packages-table"
-import { InsuranceChargeRatesTable } from "@/components/insurance-charge-rates-table"
-import { InpatientChargeRatesTable } from "@/components/inpatient-charge-rates-table"
 import { insuranceApi } from "@/lib/api"
 
-const TAB_VALUES = ["claims", "providers", "packages", "insurance-rates", "inpatient-rates", "reports"] as const
+const TAB_VALUES = ["claims", "providers", "packages", "reports"] as const
 
 export default function InsurancePage() {
   const searchParams = useSearchParams()
@@ -52,7 +51,7 @@ export default function InsurancePage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Insurance Management</h1>
-          <p className="text-muted-foreground">Manage insurance providers, packages, claims, and charge rates (insurance rates and inpatient cash rates)</p>
+          <p className="text-muted-foreground">Manage insurance providers, packages, and claims. Charge-rate management is centralized under Finance.</p>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" onClick={loadStats}>
@@ -71,8 +70,6 @@ export default function InsurancePage() {
           <TabsTrigger value="claims">Claims</TabsTrigger>
           <TabsTrigger value="providers">Providers</TabsTrigger>
           <TabsTrigger value="packages">Packages</TabsTrigger>
-          <TabsTrigger value="insurance-rates">Insurance rates</TabsTrigger>
-          <TabsTrigger value="inpatient-rates">Inpatient (cash) rates</TabsTrigger>
           <TabsTrigger value="reports">Reports</TabsTrigger>
         </TabsList>
         <TabsContent value="claims" className="space-y-4">
@@ -192,29 +189,20 @@ export default function InsurancePage() {
             </CardContent>
           </Card>
         </TabsContent>
-        <TabsContent value="insurance-rates" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Insurance charge rates</CardTitle>
-              <CardDescription>Rates each insurer pays for hospital charges. Use start/end dates to track changes over time (e.g. 2000 in 2011, 3000 now).</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <InsuranceChargeRatesTable />
-            </CardContent>
-          </Card>
-        </TabsContent>
-        <TabsContent value="inpatient-rates" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Inpatient (cash) charge rates</CardTitle>
-              <CardDescription>Rates for cash-paying inpatients. Can differ by ward or ward type (e.g. general vs private). Used when patient is not on insurance.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <InpatientChargeRatesTable />
-            </CardContent>
-          </Card>
-        </TabsContent>
         <TabsContent value="reports" className="space-y-4">
+          <Card className="border-dashed bg-muted/30">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">Charge-rate management moved</CardTitle>
+              <CardDescription>
+                Insurance and inpatient cash pricing rules are centralized in Finance.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button variant="secondary" asChild>
+                <Link href="/finance/charges">Open Finance Charges</Link>
+              </Button>
+            </CardContent>
+          </Card>
           <Card>
             <CardHeader>
               <CardTitle>Insurance Reports</CardTitle>

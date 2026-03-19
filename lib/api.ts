@@ -550,6 +550,15 @@ export const inpatientApi = {
   getAdmissionBill: (id: string) =>
     apiRequest<any>(`/api/inpatient/admissions/${id}/bill`),
 
+  getAdmissionBillAdjustments: (id: string) =>
+    apiRequest<any[]>(`/api/inpatient/admissions/${id}/bill-adjustments`),
+
+  createAdmissionBillAdjustment: (id: string, data: any) =>
+    apiRequest<any>(`/api/inpatient/admissions/${id}/bill-adjustments`, { method: 'POST', body: data }),
+
+  updateAdmissionBillAdjustment: (id: string, adjustmentId: string, data: any) =>
+    apiRequest<any>(`/api/inpatient/admissions/${id}/bill-adjustments/${adjustmentId}`, { method: 'PUT', body: data }),
+
   getDoctorReviews: (id: string) =>
     apiRequest<any[]>(`/api/inpatient/admissions/${id}/reviews`),
 
@@ -1836,6 +1845,31 @@ export const insuranceApi = {
   createInpatientChargeRate: (data: any) => apiRequest<any>('/api/insurance/inpatient-charge-rates', { method: 'POST', body: data }),
   updateInpatientChargeRate: (id: string, data: any) => apiRequest<any>(`/api/insurance/inpatient-charge-rates/${id}`, { method: 'PUT', body: data }),
   deleteInpatientChargeRate: (id: string) => apiRequest<any>(`/api/insurance/inpatient-charge-rates/${id}`, { method: 'DELETE' }),
+
+  // Centralized charge rate rules (single source of truth for pricing overrides)
+  getChargeRateRules: (filters?: {
+    payerType?: string
+    providerId?: string
+    chargeId?: string
+    wardId?: string
+    wardType?: string
+    asOf?: string
+  }) => {
+    const params = new URLSearchParams()
+    if (filters?.payerType) params.append("payerType", filters.payerType)
+    if (filters?.providerId) params.append("providerId", filters.providerId)
+    if (filters?.chargeId) params.append("chargeId", filters.chargeId)
+    if (filters?.wardId) params.append("wardId", filters.wardId)
+    if (filters?.wardType) params.append("wardType", filters.wardType)
+    if (filters?.asOf) params.append("asOf", filters.asOf)
+    return apiRequest<any[]>(`/api/insurance/charge-rate-rules?${params.toString()}`)
+  },
+  createChargeRateRule: (data: any) =>
+    apiRequest<any>("/api/insurance/charge-rate-rules", { method: "POST", body: data }),
+  updateChargeRateRule: (id: string, data: any) =>
+    apiRequest<any>(`/api/insurance/charge-rate-rules/${id}`, { method: "PUT", body: data }),
+  deleteChargeRateRule: (id: string) =>
+    apiRequest<any>(`/api/insurance/charge-rate-rules/${id}`, { method: "DELETE" }),
 
   // Policies
   getPolicies: (patientId?: string, providerId?: string, status?: string, search?: string) => {

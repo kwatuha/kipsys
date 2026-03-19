@@ -8,6 +8,28 @@ const { resolveChargeRate } = require('../lib/chargeRateResolver');
 require('dotenv').config();
 const JWT_SECRET = process.env.JWT_SECRET || 'your_fallback_secret_for_dev_only_change_this_asap';
 
+function buildAdmissionBillLineRef(source, payload = {}) {
+    if (source === 'invoice') {
+        const invoiceId = payload.invoiceId ?? 'x';
+        const itemId = payload.itemId ?? 'x';
+        return `invoice:${invoiceId}:item:${itemId}`;
+    }
+    if (source === 'bed') {
+        return `bed:${payload.admissionId ?? 'x'}:${payload.date ?? 'x'}:${payload.quantity ?? 1}`;
+    }
+    if (source === 'consultant') {
+        return `consultant:${payload.admissionId ?? 'x'}:${payload.date ?? 'x'}:${payload.quantity ?? 1}`;
+    }
+    return `${source || 'other'}:${payload.admissionId ?? 'x'}:${payload.date ?? 'x'}:${payload.description ?? 'x'}`;
+}
+
+function toDateOnly(value) {
+    if (!value) return null;
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return null;
+    return d.toISOString().slice(0, 10);
+}
+
 /**
  * Get current user id from req.user (when auth middleware is on) or from JWT in Authorization header.
  * When auth is disabled, the frontend still sends the token; we decode it here to apply nurse filtering.
@@ -47,6 +69,24 @@ async function getNurseAssignedWardIds(pool, userId) {
     const wardIds = wardRows.map(r => r.wardId);
     if (wardIds.length === 0) return []; // nurse with no assignments sees no admissions
     return wardIds;
+}
+
+async function isBillAdjustmentApprover(pool, userId) {
+    if (!userId) return false;
+    const [rows] = await pool.execute(
+        'SELECT r.roleName FROM users u INNER JOIN roles r ON r.roleId = u.roleId WHERE u.userId = ?',
+        [userId]
+    );
+    if (rows.length === 0) return false;
+    const roleName = (rows[0].roleName || '').toLowerCase();
+    return (
+        roleName.includes('admin') ||
+        roleName.includes('finance') ||
+        roleName.includes('billing') ||
+        roleName.includes('account') ||
+        roleName.includes('cashier') ||
+        roleName.includes('manager')
+    );
 }
 
 /**
@@ -177,17 +217,88 @@ router.post('/admissions', async (req, res) => {
     try {
         await connection.beginTransaction();
 
-        const { patientId, bedId, admissionDate, admittingDoctorId, admissionDiagnosis, admissionReason, expectedDischargeDate, notes, diagnoses } = req.body;
+        const { patientId, bedId, admissionDate, admittingDoctorId, admissionDiagnosis, admissionReason, expectedDischargeDate, notes, diagnoses, depositAmount } = req.body;
+        const userId = getUserId(req);
+        const parsedDepositAmount = depositAmount != null && depositAmount !== ''
+            ? parseFloat(depositAmount)
+            : 0;
+        const needsDeposit = Number.isFinite(parsedDepositAmount) && parsedDepositAmount > 0;
+        let depositInvoiceId = null;
 
         // Generate admission number
         const [count] = await connection.execute('SELECT COUNT(*) as count FROM admissions');
         const admissionNumber = `IP-${String(count[0].count + 1).padStart(6, '0')}`;
 
+        // If deposit is required, create deposit invoice to track payment status.
+        if (needsDeposit) {
+            const today = new Date().toISOString().split('T')[0].replace(/-/g, '');
+            const datePrefix = `INV-${today}-`;
+            const [maxResult] = await connection.execute(
+                `SELECT MAX(CAST(SUBSTRING_INDEX(invoiceNumber, '-', -1) AS UNSIGNED)) as maxNum
+                 FROM invoices
+                 WHERE invoiceNumber LIKE CONCAT(?, '%')`,
+                [datePrefix]
+            );
+            let nextNum = (maxResult[0]?.maxNum || 0) + 1;
+            let invoiceNumber = `${datePrefix}${String(nextNum).padStart(4, '0')}`;
+
+            // Avoid duplicate invoice numbers in concurrent admissions
+            let attempts = 0;
+            while (attempts < 100) {
+                const [existingInv] = await connection.execute(
+                    'SELECT invoiceId FROM invoices WHERE invoiceNumber = ?',
+                    [invoiceNumber]
+                );
+                if (existingInv.length === 0) break;
+                nextNum++;
+                invoiceNumber = `${datePrefix}${String(nextNum).padStart(4, '0')}`;
+                attempts++;
+            }
+
+            const [invResult] = await connection.execute(
+                `INSERT INTO invoices (invoiceNumber, patientId, invoiceDate, totalAmount, balance, status, notes, createdBy)
+                 VALUES (?, ?, CURDATE(), ?, ?, 'pending', ?, ?)`,
+                [
+                    invoiceNumber,
+                    patientId,
+                    parsedDepositAmount,
+                    parsedDepositAmount,
+                    `Admission deposit - ${admissionNumber}`,
+                    userId || null
+                ]
+            );
+            depositInvoiceId = invResult.insertId;
+
+            await connection.execute(
+                `INSERT INTO invoice_items (invoiceId, description, quantity, unitPrice, totalPrice)
+                 VALUES (?, ?, 1, ?, ?)`,
+                [
+                    depositInvoiceId,
+                    `Admission deposit (${admissionNumber})`,
+                    parsedDepositAmount,
+                    parsedDepositAmount
+                ]
+            );
+        }
+
         // Insert admission
         const [result] = await connection.execute(
-            `INSERT INTO admissions (admissionNumber, patientId, bedId, admissionDate, admittingDoctorId, admissionDiagnosis, admissionReason, expectedDischargeDate, notes, status)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'admitted')`,
-            [admissionNumber, patientId, bedId, admissionDate || new Date(), admittingDoctorId, admissionDiagnosis || null, admissionReason || null, expectedDischargeDate || null, notes || null]
+            `INSERT INTO admissions (admissionNumber, patientId, bedId, admissionDate, admittingDoctorId, admissionDiagnosis, admissionReason, expectedDischargeDate, depositAmount, depositInvoiceId, depositRequired, notes, status)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'admitted')`,
+            [
+                admissionNumber,
+                patientId,
+                bedId,
+                admissionDate || new Date(),
+                admittingDoctorId,
+                admissionDiagnosis || null,
+                admissionReason || null,
+                expectedDischargeDate || null,
+                needsDeposit ? parsedDepositAmount : null,
+                depositInvoiceId,
+                needsDeposit ? 1 : 0,
+                notes || null
+            ]
         );
 
         const admissionId = result.insertId;
@@ -247,7 +358,7 @@ router.put('/admissions/:id', async (req, res) => {
         await connection.beginTransaction();
 
         const { id } = req.params;
-        const { bedId, admissionDiagnosis, admissionReason, expectedDischargeDate, dischargeDate, notes, status, diagnoses, transferReason } = req.body;
+        const { bedId, admissionDiagnosis, admissionReason, expectedDischargeDate, dischargeDate, notes, status, diagnoses, transferReason, depositAmount } = req.body;
         const userId = getUserId(req);
 
         // Check if admission exists
@@ -286,6 +397,14 @@ router.put('/admissions/:id', async (req, res) => {
         if (expectedDischargeDate !== undefined) {
             updates.push('expectedDischargeDate = ?');
             values.push(expectedDischargeDate || null);
+        }
+
+        if (depositAmount !== undefined) {
+            const parsedDeposit = depositAmount != null && depositAmount !== '' ? parseFloat(depositAmount) : null;
+            updates.push('depositAmount = ?');
+            values.push(Number.isFinite(parsedDeposit) ? parsedDeposit : null);
+            updates.push('depositRequired = ?');
+            values.push(Number.isFinite(parsedDeposit) && parsedDeposit > 0 ? 1 : 0);
         }
 
         if (notes !== undefined) {
@@ -1380,8 +1499,11 @@ router.get('/admissions/:id/bill', async (req, res) => {
         const patientId = admission.patientId;
         const wardId = admission.wardId ?? null;
         const wardType = admission.wardType ?? null;
-        const admissionDate = (admission.admissionDate || '').toString().slice(0, 10);
-        const dischargeDate = admission.dischargeDate ? (admission.dischargeDate + '').slice(0, 10) : null;
+        const admissionDate = toDateOnly(admission.admissionDate);
+        const dischargeDate = toDateOnly(admission.dischargeDate);
+        if (!admissionDate) {
+            return res.status(500).json({ message: 'Admission date is invalid for billing' });
+        }
         const admissionEnd = dischargeDate || new Date().toISOString().slice(0, 10);
         const wardOptions = (wardId != null || wardType != null) ? { wardId, wardType } : {};
 
@@ -1399,15 +1521,30 @@ router.get('/admissions/:id/bill', async (req, res) => {
         }
 
         const lines = [];
-        const invoiceIdsSeen = new Set();
         let paidTotal = 0;
+        let depositPaidTotal = 0;
+        let depositInvoice = null;
 
         // (1) All invoice items for this patient in admission period (labs, medications, orders, procedures, etc.)
-        const [invoices] = await pool.execute(
-            `SELECT i.invoiceId, i.invoiceNumber, i.invoiceDate, i.status, i.paidAmount, i.totalAmount, i.notes
+        const [invoiceTotals] = await pool.execute(
+            `SELECT COALESCE(SUM(i.paidAmount), 0) as paidTotal
              FROM invoices i
              WHERE i.patientId = ? AND DATE(i.invoiceDate) >= DATE(?) AND DATE(i.invoiceDate) <= DATE(?)
-             ORDER BY i.invoiceDate ASC`,
+               AND (i.notes IS NULL OR i.notes NOT LIKE 'Admission deposit - %')`,
+            [patientId, admissionDate, admissionEnd]
+        );
+        paidTotal = parseFloat(invoiceTotals[0]?.paidTotal || 0);
+
+        const [invoiceItems] = await pool.execute(
+            `SELECT i.invoiceId, i.invoiceNumber, i.invoiceDate, i.status, i.notes,
+                    ii.itemId, ii.chargeId, ii.description as itemDescription, ii.quantity, ii.unitPrice, ii.totalPrice,
+                    sc.name as chargeName, sc.chargeCode
+             FROM invoices i
+             INNER JOIN invoice_items ii ON ii.invoiceId = i.invoiceId
+             LEFT JOIN service_charges sc ON ii.chargeId = sc.chargeId
+             WHERE i.patientId = ? AND DATE(i.invoiceDate) >= DATE(?) AND DATE(i.invoiceDate) <= DATE(?)
+               AND (i.notes IS NULL OR i.notes NOT LIKE 'Admission deposit - %')
+             ORDER BY i.invoiceDate ASC, i.invoiceId ASC, ii.itemId ASC`,
             [patientId, admissionDate, admissionEnd]
         );
         const categoryFromNotes = (notes) => {
@@ -1416,52 +1553,85 @@ router.get('/admissions/:id/bill', async (req, res) => {
             if (n.includes('lab') || n.includes('lab test')) return 'Lab';
             if (n.includes('drug') || n.includes('prescription') || n.includes('pharmacy')) return 'Medication';
             if (n.includes('procedure')) return 'Procedure';
+            if (n.includes('review') || n.includes('doctor review') || n.includes('consultant')) return 'Doctor Review';
             if (n.includes('consumable') || n.includes('inpatient stay')) return 'Consumables';
             if (n.includes('radiology') || n.includes('exam')) return 'Radiology';
             return 'Other';
         };
-        for (const inv of invoices) {
-            invoiceIdsSeen.add(inv.invoiceId);
-            paidTotal += parseFloat(inv.paidAmount || 0);
-            const invCategory = categoryFromNotes(inv.notes);
-            const [items] = await pool.execute(
-                `SELECT ii.*, sc.name as chargeName, sc.chargeCode
-                 FROM invoice_items ii
-                 LEFT JOIN service_charges sc ON ii.chargeId = sc.chargeId
-                 WHERE ii.invoiceId = ? ORDER BY ii.itemId`,
-                [inv.invoiceId]
-            );
-            const itemDate = (inv.invoiceDate || '').toString().slice(0, 10);
-            for (const it of items) {
-                const chargeId = it.chargeId;
-                const qty = Math.max(1, parseInt(it.quantity, 10) || 1);
-                const description = it.chargeName || it.description || it.chargeCode || 'Item';
-                const linePayload = {
-                    source: 'invoice',
-                    sourceLabel: invCategory,
-                    invoiceId: inv.invoiceId,
-                    invoiceNumber: inv.invoiceNumber,
-                    date: itemDate,
-                    description,
-                    quantity: qty,
-                    unitPrice: undefined,
-                    totalPrice: undefined,
-                    chargeId: chargeId || null,
-                    status: inv.status,
-                };
-                if (chargeId) {
+        for (const it of invoiceItems) {
+            const invCategory = categoryFromNotes(it.notes);
+            const itemDate = toDateOnly(it.invoiceDate) || admissionDate;
+            const chargeId = it.chargeId;
+            const qty = Math.max(1, parseInt(it.quantity, 10) || 1);
+            const description = it.chargeName || it.itemDescription || it.chargeCode || 'Item';
+            const linePayload = {
+                source: 'invoice',
+                sourceLabel: invCategory,
+                lineRef: buildAdmissionBillLineRef('invoice', { invoiceId: it.invoiceId, itemId: it.itemId }),
+                invoiceId: it.invoiceId,
+                invoiceNumber: it.invoiceNumber,
+                date: itemDate,
+                description,
+                quantity: qty,
+                unitPrice: undefined,
+                totalPrice: undefined,
+                chargeId: chargeId || null,
+                status: it.status,
+            };
+            if (chargeId) {
+                // Use already invoiced price when available for speed/stability.
+                // Fall back to charge-rate resolution only if stored values are missing.
+                const storedUnitPrice = parseFloat(it.unitPrice || 0);
+                const storedTotalPrice = parseFloat(it.totalPrice || 0);
+                if (storedUnitPrice > 0 || storedTotalPrice > 0) {
+                    linePayload.unitPrice = storedUnitPrice > 0 ? storedUnitPrice : Math.round((storedTotalPrice / qty) * 100) / 100;
+                    linePayload.totalPrice = storedTotalPrice > 0 ? storedTotalPrice : Math.round(storedUnitPrice * qty * 100) / 100;
+                } else {
                     const { unitPrice, totalPrice } = await resolveChargeRate(
                         pool, patientId, { chargeId, quantity: qty }, itemDate, wardOptions
                     );
                     linePayload.unitPrice = unitPrice;
                     linePayload.totalPrice = totalPrice;
-                } else {
-                    const up = parseFloat(it.unitPrice || 0);
-                    const tot = parseFloat(it.totalPrice || 0) || up * qty;
-                    linePayload.unitPrice = up;
-                    linePayload.totalPrice = Math.round(tot * 100) / 100;
                 }
-                lines.push(linePayload);
+            } else {
+                const up = parseFloat(it.unitPrice || 0);
+                const tot = parseFloat(it.totalPrice || 0) || up * qty;
+                linePayload.unitPrice = up;
+                linePayload.totalPrice = Math.round(tot * 100) / 100;
+            }
+            lines.push(linePayload);
+        }
+
+        // (1b) Admission deposit credit (deduct only amount already paid against deposit invoice)
+        if (admission.depositInvoiceId) {
+            const [depositRows] = await pool.execute(
+                `SELECT invoiceId, invoiceNumber, invoiceDate, totalAmount, paidAmount, balance, status
+                 FROM invoices
+                 WHERE invoiceId = ?`,
+                [admission.depositInvoiceId]
+            );
+            if (depositRows.length > 0) {
+                depositInvoice = depositRows[0];
+                depositPaidTotal = Math.max(0, parseFloat(depositInvoice.paidAmount || 0));
+                if (depositPaidTotal > 0) {
+                    lines.push({
+                        source: 'deposit',
+                        sourceLabel: 'Deposit Credit',
+                        lineRef: buildAdmissionBillLineRef('deposit', {
+                            admissionId: id,
+                            invoiceId: depositInvoice.invoiceId,
+                        }),
+                        date: toDateOnly(depositInvoice.invoiceDate) || admissionDate,
+                        description: `Admission deposit applied (${depositInvoice.invoiceNumber || `#${depositInvoice.invoiceId}`})`,
+                        chargeId: null,
+                        quantity: 1,
+                        unitPrice: -depositPaidTotal,
+                        totalPrice: -depositPaidTotal,
+                        status: depositInvoice.status || 'pending',
+                        invoiceId: depositInvoice.invoiceId,
+                        invoiceNumber: depositInvoice.invoiceNumber,
+                    });
+                }
             }
         }
 
@@ -1480,6 +1650,11 @@ router.get('/admissions/:id/bill', async (req, res) => {
             lines.push({
                 source: 'bed',
                 sourceLabel: 'Bed',
+                lineRef: buildAdmissionBillLineRef('bed', {
+                    admissionId: id,
+                    date: admissionDate,
+                    quantity: days,
+                }),
                 date: admissionDate,
                 description: `Bed charge (${days} day${days !== 1 ? 's' : ''})`,
                 chargeId: bedChargeId,
@@ -1502,7 +1677,7 @@ router.get('/admissions/:id/bill', async (req, res) => {
                  LIMIT 1`
             );
             if (consultChargeRows.length > 0) {
-                const lastReviewDate = (reviews[reviews.length - 1].reviewDate || '').toString().slice(0, 10);
+                const lastReviewDate = toDateOnly(reviews[reviews.length - 1].reviewDate) || admissionDate;
                 const consultChargeId = consultChargeRows[0].chargeId;
                 const { unitPrice, totalPrice } = await resolveChargeRate(
                     pool, patientId, { chargeId: consultChargeId, quantity: reviewCount }, lastReviewDate, wardOptions
@@ -1510,6 +1685,11 @@ router.get('/admissions/:id/bill', async (req, res) => {
                 lines.push({
                     source: 'consultant',
                     sourceLabel: 'Consultant',
+                    lineRef: buildAdmissionBillLineRef('consultant', {
+                        admissionId: id,
+                        date: lastReviewDate,
+                        quantity: reviewCount,
+                    }),
                     date: lastReviewDate,
                     description: `Consultant review (${reviewCount})`,
                     chargeId: consultChargeId,
@@ -1520,8 +1700,35 @@ router.get('/admissions/:id/bill', async (req, res) => {
             }
         }
 
+        let approvedAdjustments = [];
+        try {
+            const [rows] = await pool.execute(
+                `SELECT lineRef, SUM(deltaAmount) as adjustmentTotal
+                 FROM inpatient_bill_adjustments
+                 WHERE admissionId = ? AND status = 'approved'
+                 GROUP BY lineRef`,
+                [id]
+            );
+            approvedAdjustments = rows;
+        } catch (adjError) {
+            // Backward compatibility: if migration wasn't applied yet, continue without adjustments.
+            if (!(adjError && (adjError.code === 'ER_NO_SUCH_TABLE' || adjError.errno === 1146))) {
+                throw adjError;
+            }
+        }
+        const adjustmentsByLineRef = new Map(
+            approvedAdjustments.map((r) => [r.lineRef, parseFloat(r.adjustmentTotal || 0)])
+        );
+        for (const line of lines) {
+            const adj = adjustmentsByLineRef.get(line.lineRef) || 0;
+            line.approvedAdjustment = Math.round(adj * 100) / 100;
+            line.adjustedTotal = Math.round(((line.totalPrice || 0) + adj) * 100) / 100;
+        }
+
         const subtotal = lines.reduce((sum, l) => sum + (l.totalPrice || 0), 0);
-        const balanceTotal = Math.round((subtotal - paidTotal) * 100) / 100;
+        const adjustmentsTotal = lines.reduce((sum, l) => sum + (l.approvedAdjustment || 0), 0);
+        const grandTotal = Math.round((subtotal + adjustmentsTotal) * 100) / 100;
+        const balanceTotal = Math.round((grandTotal - paidTotal) * 100) / 100;
 
         res.status(200).json({
             admission: {
@@ -1534,17 +1741,162 @@ router.get('/admissions/:id/bill', async (req, res) => {
                 bedNumber: admission.bedNumber,
                 admissionDate,
                 dischargeDate,
+                depositAmount: admission.depositAmount != null ? parseFloat(admission.depositAmount) : null,
+                depositRequired: !!admission.depositRequired,
+                depositInvoiceId: admission.depositInvoiceId || null,
             },
             patientType: admission.patientType || 'paying',
             insuranceProviderName,
             lines,
             subtotal: Math.round(subtotal * 100) / 100,
+            adjustmentsTotal: Math.round(adjustmentsTotal * 100) / 100,
+            grandTotal,
             paidTotal: Math.round(paidTotal * 100) / 100,
             balanceTotal,
+            deposit: {
+                expectedAmount: admission.depositAmount != null ? parseFloat(admission.depositAmount) : 0,
+                invoiceId: depositInvoice?.invoiceId || admission.depositInvoiceId || null,
+                invoiceNumber: depositInvoice?.invoiceNumber || null,
+                status: depositInvoice?.status || null,
+                paidAmount: Math.round(depositPaidTotal * 100) / 100,
+                outstandingAmount: depositInvoice
+                    ? Math.max(0, parseFloat(depositInvoice.totalAmount || 0) - parseFloat(depositInvoice.paidAmount || 0))
+                    : Math.max(0, parseFloat(admission.depositAmount || 0) - depositPaidTotal),
+            },
         });
     } catch (error) {
         console.error('Error fetching admission bill:', error);
         res.status(500).json({ message: 'Error fetching admission bill', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/inpatient/admissions/:id/bill-adjustments
+ * @description List bill line adjustments for an admission
+ */
+router.get('/admissions/:id/bill-adjustments', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const [rows] = await pool.execute(
+            `SELECT a.*,
+                    r1.firstName as requestedByFirstName, r1.lastName as requestedByLastName,
+                    r2.firstName as approvedByFirstName, r2.lastName as approvedByLastName
+             FROM inpatient_bill_adjustments a
+             LEFT JOIN users r1 ON a.requestedBy = r1.userId
+             LEFT JOIN users r2 ON a.approvedBy = r2.userId
+             WHERE a.admissionId = ?
+             ORDER BY a.createdAt DESC, a.adjustmentId DESC`,
+            [id]
+        );
+        res.status(200).json(rows);
+    } catch (error) {
+        console.error('Error fetching bill adjustments:', error);
+        res.status(500).json({ message: 'Error fetching bill adjustments', error: error.message });
+    }
+});
+
+/**
+ * @route POST /api/inpatient/admissions/:id/bill-adjustments
+ * @description Request a per-line bill adjustment
+ */
+router.post('/admissions/:id/bill-adjustments', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { lineRef, adjustmentType = 'credit', deltaAmount, reason } = req.body;
+        const requestedBy = getUserId(req);
+        if (!requestedBy) {
+            return res.status(401).json({ message: 'Authentication required to request bill adjustments' });
+        }
+
+        if (!lineRef || typeof lineRef !== 'string') {
+            return res.status(400).json({ message: 'lineRef is required' });
+        }
+        if (lineRef.length > 255) {
+            return res.status(400).json({ message: 'lineRef is too long' });
+        }
+        const allowedAdjustmentTypes = new Set(['credit', 'debit', 'override', 'discount', 'other']);
+        if (!allowedAdjustmentTypes.has(String(adjustmentType))) {
+            return res.status(400).json({ message: "adjustmentType must be one of: credit, debit, override, discount, other" });
+        }
+        const delta = parseFloat(deltaAmount);
+        if (!Number.isFinite(delta) || delta === 0) {
+            return res.status(400).json({ message: 'deltaAmount must be a non-zero number' });
+        }
+        if (Math.abs(delta) > 100000000) {
+            return res.status(400).json({ message: 'deltaAmount is outside allowed range' });
+        }
+        if (!reason || !String(reason).trim()) {
+            return res.status(400).json({ message: 'reason is required' });
+        }
+        if (String(reason).trim().length > 1000) {
+            return res.status(400).json({ message: 'reason is too long' });
+        }
+
+        const [result] = await pool.execute(
+            `INSERT INTO inpatient_bill_adjustments
+             (admissionId, lineRef, adjustmentType, deltaAmount, reason, status, requestedBy)
+             VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
+            [id, lineRef, adjustmentType, delta, reason, requestedBy || null]
+        );
+
+        const [created] = await pool.execute(
+            `SELECT * FROM inpatient_bill_adjustments WHERE adjustmentId = ?`,
+            [result.insertId]
+        );
+        res.status(201).json(created[0]);
+    } catch (error) {
+        console.error('Error creating bill adjustment:', error);
+        res.status(500).json({ message: 'Error creating bill adjustment', error: error.message });
+    }
+});
+
+/**
+ * @route PUT /api/inpatient/admissions/:id/bill-adjustments/:adjustmentId
+ * @description Approve or reject a per-line bill adjustment
+ */
+router.put('/admissions/:id/bill-adjustments/:adjustmentId', async (req, res) => {
+    try {
+        const { id, adjustmentId } = req.params;
+        const { status } = req.body;
+        const approvedBy = getUserId(req);
+        if (!approvedBy) {
+            return res.status(401).json({ message: 'Authentication required to approve/reject bill adjustments' });
+        }
+        const canApprove = await isBillAdjustmentApprover(pool, approvedBy);
+
+        if (!['approved', 'rejected'].includes(status)) {
+            return res.status(400).json({ message: "status must be 'approved' or 'rejected'" });
+        }
+        if (!canApprove) {
+            return res.status(403).json({ message: 'You are not allowed to approve/reject bill adjustments' });
+        }
+
+        const [existing] = await pool.execute(
+            `SELECT adjustmentId, status FROM inpatient_bill_adjustments WHERE adjustmentId = ? AND admissionId = ?`,
+            [adjustmentId, id]
+        );
+        if (existing.length === 0) {
+            return res.status(404).json({ message: 'Bill adjustment not found' });
+        }
+        if (existing[0].status !== 'pending') {
+            return res.status(409).json({ message: `Bill adjustment already ${existing[0].status}` });
+        }
+
+        await pool.execute(
+            `UPDATE inpatient_bill_adjustments
+             SET status = ?, approvedBy = ?, approvedAt = NOW(), updatedAt = NOW()
+             WHERE adjustmentId = ? AND admissionId = ?`,
+            [status, approvedBy || null, adjustmentId, id]
+        );
+
+        const [updated] = await pool.execute(
+            `SELECT * FROM inpatient_bill_adjustments WHERE adjustmentId = ?`,
+            [adjustmentId]
+        );
+        res.status(200).json(updated[0]);
+    } catch (error) {
+        console.error('Error updating bill adjustment:', error);
+        res.status(500).json({ message: 'Error updating bill adjustment', error: error.message });
     }
 });
 
@@ -1599,6 +1951,151 @@ router.post('/admissions/:id/reviews', async (req, res) => {
              WHERE r.reviewId = ?`,
             [result.insertId]
         );
+
+        // Create invoice for doctor review (so inpatient bills include doctor review charges)
+        try {
+            const userId = getUserId(req);
+            const [admRows] = await pool.execute(
+                `SELECT a.patientId, a.status as admissionStatus, pt.patientType,
+                        w.wardId, w.wardType
+                 FROM admissions a
+                 LEFT JOIN patients pt ON a.patientId = pt.patientId
+                 LEFT JOIN beds b ON a.bedId = b.bedId
+                 LEFT JOIN wards w ON b.wardId = w.wardId
+                 WHERE a.admissionId = ?`,
+                [id]
+            );
+            if (admRows.length > 0) {
+                const admission = admRows[0];
+                if (admission.admissionStatus === 'discharged') {
+                    return res.status(201).json(newReview[0]);
+                }
+                const patientId = admission.patientId;
+                const patientType = admission.patientType || 'paying';
+                const wardOptions = (admission.wardId != null || admission.wardType != null)
+                    ? { wardId: admission.wardId ?? null, wardType: admission.wardType ?? null }
+                    : {};
+
+                const [consultChargeRows] = await pool.execute(
+                    `SELECT chargeId, name
+                     FROM service_charges
+                     WHERE (chargeCode LIKE 'CONSULT%' OR chargeCode LIKE 'REVIEW%' OR name LIKE '%consultant%' OR name LIKE '%review%')
+                       AND (status = 'Active' OR status = 'Inactive')
+                     LIMIT 1`
+                );
+
+                if (consultChargeRows.length > 0) {
+                    const consultChargeId = consultChargeRows[0].chargeId;
+
+                    const reviewDateObj = reviewDate ? new Date(reviewDate) : new Date();
+                    const itemDate = !Number.isNaN(reviewDateObj.getTime())
+                        ? reviewDateObj.toISOString().slice(0, 10)
+                        : new Date().toISOString().slice(0, 10);
+
+                    const { unitPrice, totalPrice } = await resolveChargeRate(
+                        pool,
+                        patientId,
+                        { chargeId: consultChargeId, quantity: 1 },
+                        itemDate,
+                        wardOptions
+                    );
+
+                    if (parseFloat(totalPrice || 0) > 0) {
+                        const today = itemDate.replace(/-/g, '');
+                        const datePrefix = `INV-${today}-`;
+
+                        const [maxResult] = await pool.execute(
+                            `SELECT MAX(CAST(SUBSTRING_INDEX(invoiceNumber, '-', -1) AS UNSIGNED)) as maxNum
+                             FROM invoices
+                             WHERE invoiceNumber LIKE CONCAT(?, '%')`,
+                            [datePrefix]
+                        );
+
+                        let retryNum = (maxResult[0]?.maxNum || 0) + 1;
+                        let finalInvoiceNumber = null;
+                        let foundAvailable = false;
+                        let retryAttempts = 0;
+
+                        while (!foundAvailable && retryAttempts < 100) {
+                            const testNumber = `${datePrefix}${String(retryNum).padStart(4, '0')}`;
+                            const [existing] = await pool.execute(
+                                'SELECT invoiceId FROM invoices WHERE invoiceNumber = ?',
+                                [testNumber]
+                            );
+                            if (existing.length === 0) {
+                                finalInvoiceNumber = testNumber;
+                                foundAvailable = true;
+                            } else {
+                                retryNum++;
+                                retryAttempts++;
+                            }
+                        }
+
+                        if (finalInvoiceNumber) {
+                            const [invResult] = await pool.execute(
+                                `INSERT INTO invoices (invoiceNumber, patientId, invoiceDate, dueDate, totalAmount, balance, status, notes, createdBy)
+                                 VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+                                [
+                                    finalInvoiceNumber,
+                                    patientId,
+                                    itemDate,
+                                    null,
+                                    totalPrice,
+                                    totalPrice,
+                                    `Doctor review (${reviewType || 'review'})`,
+                                    userId || null
+                                ]
+                            );
+
+                            await pool.execute(
+                                `INSERT INTO invoice_items (invoiceId, chargeId, description, quantity, unitPrice, totalPrice)
+                                 VALUES (?, ?, ?, 1, ?, ?)`,
+                                [
+                                    invResult.insertId,
+                                    consultChargeId,
+                                    `Doctor review (${reviewType || 'review'})`,
+                                    unitPrice ?? totalPrice,
+                                    totalPrice
+                                ]
+                            );
+
+                            // Add to cashier queue if not already there (best-effort)
+                            const [existingQueue] = await pool.execute(
+                                `SELECT queueId FROM queue_entries
+                                 WHERE patientId = ? AND servicePoint = 'cashier'
+                                   AND status IN ('waiting', 'called', 'serving')`,
+                                [patientId]
+                            );
+
+                            if (existingQueue.length === 0) {
+                                const [cashierCount] = await pool.execute(
+                                    'SELECT COUNT(*) as count FROM queue_entries WHERE DATE(arrivalTime) = CURDATE() AND servicePoint = "cashier"'
+                                );
+                                const ticketNum = cashierCount[0]?.count ? cashierCount[0].count + 1 : 1;
+                                const ticketNumber = `C-${String(ticketNum).padStart(3, '0')}`;
+                                const queuePriority = reviewType === 'emergency' ? 'urgent' : 'normal';
+
+                                await pool.execute(
+                                    `INSERT INTO queue_entries
+                                     (patientId, ticketNumber, servicePoint, priority, status, notes, createdBy)
+                                     VALUES (?, ?, 'cashier', ?, 'waiting', ?, ?)`,
+                                    [
+                                        patientId,
+                                        ticketNumber,
+                                        queuePriority,
+                                        `Doctor review payment - ${reviewType || 'review'}`,
+                                        userId || null
+                                    ]
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (invoiceError) {
+            // Don't fail review creation if invoice creation fails
+            console.error('Error creating invoice for doctor review:', invoiceError);
+        }
 
         res.status(201).json(newReview[0]);
     } catch (error) {

@@ -633,6 +633,157 @@ router.delete('/packages/:id', async (req, res) => {
 // ============================================
 
 /**
+ * @route GET /api/insurance/charge-rate-rules
+ * @description Centralized charge pricing rules for insurance/cash with optional ward and provider scope
+ */
+router.get('/charge-rate-rules', async (req, res) => {
+    try {
+        const { payerType, providerId, chargeId, wardId, wardType, asOf } = req.query;
+        let query = `
+            SELECT r.*,
+                   sc.chargeCode, sc.name AS chargeName, sc.category AS chargeCategory,
+                   ip.providerName, ip.providerCode,
+                   w.wardName, w.wardType AS wardTypeName
+            FROM charge_rate_rules r
+            LEFT JOIN service_charges sc ON r.chargeId = sc.chargeId
+            LEFT JOIN insurance_providers ip ON r.providerId = ip.providerId
+            LEFT JOIN wards w ON r.wardId = w.wardId
+            WHERE 1=1
+        `;
+        const params = [];
+        if (payerType) { query += ' AND r.payerType = ?'; params.push(payerType); }
+        if (providerId) { query += ' AND r.providerId = ?'; params.push(providerId); }
+        if (chargeId) { query += ' AND r.chargeId = ?'; params.push(chargeId); }
+        if (wardId) { query += ' AND r.wardId = ?'; params.push(wardId); }
+        if (wardType) { query += ' AND r.wardType = ?'; params.push(wardType); }
+        if (asOf) {
+            query += ' AND r.startDate <= ? AND (r.endDate IS NULL OR r.endDate >= ?)';
+            params.push(asOf, asOf);
+        }
+        query += ` ORDER BY
+            r.payerType ASC,
+            COALESCE(ip.providerName, '') ASC,
+            sc.name ASC,
+            CASE WHEN r.wardId IS NOT NULL THEN 1 WHEN r.wardType IS NOT NULL THEN 2 ELSE 3 END ASC,
+            r.priority DESC,
+            r.startDate DESC`;
+        const [rows] = await pool.execute(query, params);
+        res.status(200).json(rows);
+    } catch (error) {
+        console.error('Error fetching charge rate rules:', error);
+        if (error && (error.code === 'ER_NO_SUCH_TABLE' || error.errno === 1146)) {
+            return res.status(400).json({ message: 'Centralized charge-rate rules table is missing. Run migration add_charge_rate_rules.sql first.' });
+        }
+        res.status(500).json({ message: 'Error fetching charge rate rules', error: error.message });
+    }
+});
+
+/**
+ * @route POST /api/insurance/charge-rate-rules
+ */
+router.post('/charge-rate-rules', async (req, res) => {
+    try {
+        const { chargeId, payerType, providerId, wardId, wardType, amount, startDate, endDate, priority, notes } = req.body;
+        if (!chargeId || !payerType || amount == null || !startDate) {
+            return res.status(400).json({ error: 'chargeId, payerType, amount, and startDate are required' });
+        }
+        if (!['cash', 'insurance'].includes(payerType)) {
+            return res.status(400).json({ error: 'payerType must be cash or insurance' });
+        }
+        if (payerType === 'insurance' && !providerId) {
+            return res.status(400).json({ error: 'providerId is required when payerType is insurance' });
+        }
+        const [result] = await pool.execute(
+            `INSERT INTO charge_rate_rules (chargeId, payerType, providerId, wardId, wardType, amount, startDate, endDate, priority, notes)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                chargeId,
+                payerType,
+                providerId || null,
+                wardId || null,
+                wardType || null,
+                amount,
+                startDate,
+                endDate || null,
+                priority != null ? priority : 0,
+                notes || null
+            ]
+        );
+        const [rows] = await pool.execute(
+            `SELECT r.*,
+                    sc.chargeCode, sc.name AS chargeName,
+                    ip.providerName, w.wardName
+             FROM charge_rate_rules r
+             LEFT JOIN service_charges sc ON r.chargeId = sc.chargeId
+             LEFT JOIN insurance_providers ip ON r.providerId = ip.providerId
+             LEFT JOIN wards w ON r.wardId = w.wardId
+             WHERE r.ruleId = ?`,
+            [result.insertId]
+        );
+        res.status(201).json(rows[0]);
+    } catch (error) {
+        console.error('Error creating charge rate rule:', error);
+        res.status(500).json({ message: 'Error creating charge rate rule', error: error.message });
+    }
+});
+
+/**
+ * @route PUT /api/insurance/charge-rate-rules/:id
+ */
+router.put('/charge-rate-rules/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { payerType, providerId, wardId, wardType, amount, startDate, endDate, priority, notes } = req.body;
+        const [existing] = await pool.execute('SELECT ruleId FROM charge_rate_rules WHERE ruleId = ?', [id]);
+        if (existing.length === 0) return res.status(404).json({ message: 'Charge rate rule not found' });
+
+        const updates = []; const values = [];
+        if (payerType !== undefined) { updates.push('payerType = ?'); values.push(payerType); }
+        if (providerId !== undefined) { updates.push('providerId = ?'); values.push(providerId || null); }
+        if (wardId !== undefined) { updates.push('wardId = ?'); values.push(wardId || null); }
+        if (wardType !== undefined) { updates.push('wardType = ?'); values.push(wardType || null); }
+        if (amount != null) { updates.push('amount = ?'); values.push(amount); }
+        if (startDate != null) { updates.push('startDate = ?'); values.push(startDate); }
+        if (endDate !== undefined) { updates.push('endDate = ?'); values.push(endDate || null); }
+        if (priority !== undefined) { updates.push('priority = ?'); values.push(priority); }
+        if (notes !== undefined) { updates.push('notes = ?'); values.push(notes || null); }
+        if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
+
+        values.push(id);
+        await pool.execute(`UPDATE charge_rate_rules SET ${updates.join(', ')}, updatedAt = NOW() WHERE ruleId = ?`, values);
+        const [rows] = await pool.execute(
+            `SELECT r.*,
+                    sc.chargeCode, sc.name AS chargeName,
+                    ip.providerName, w.wardName
+             FROM charge_rate_rules r
+             LEFT JOIN service_charges sc ON r.chargeId = sc.chargeId
+             LEFT JOIN insurance_providers ip ON r.providerId = ip.providerId
+             LEFT JOIN wards w ON r.wardId = w.wardId
+             WHERE r.ruleId = ?`,
+            [id]
+        );
+        res.status(200).json(rows[0]);
+    } catch (error) {
+        console.error('Error updating charge rate rule:', error);
+        res.status(500).json({ message: 'Error updating charge rate rule', error: error.message });
+    }
+});
+
+/**
+ * @route DELETE /api/insurance/charge-rate-rules/:id
+ */
+router.delete('/charge-rate-rules/:id', async (req, res) => {
+    try {
+        const [result] = await pool.execute('DELETE FROM charge_rate_rules WHERE ruleId = ?', [req.params.id]);
+        if (result.affectedRows === 0) return res.status(404).json({ message: 'Charge rate rule not found' });
+        res.status(200).json({ message: 'Charge rate rule deleted' });
+    } catch (error) {
+        console.error('Error deleting charge rate rule:', error);
+        res.status(500).json({ message: 'Error deleting charge rate rule', error: error.message });
+    }
+});
+
+/**
  * @route GET /api/insurance/charge-rates
  * @description List insurance charge rates; optional providerId, chargeId, asOf (date) for current only
  */

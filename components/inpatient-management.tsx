@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
-import { Plus, Clock, Activity, Stethoscope, Pill, FlaskConical, Calendar, User, FileText, AlertCircle, Eye, Package, Scan, Pencil, Trash2, LogOut, ArrowRightLeft, Printer, Receipt, Download, Loader2 } from "lucide-react"
+import { Plus, Clock, Activity, Stethoscope, Pill, FlaskConical, Calendar, User, FileText, AlertCircle, AlertTriangle, Eye, Package, Scan, Pencil, Trash2, LogOut, ArrowRightLeft, Printer, Receipt, Download, Loader2 } from "lucide-react"
 import { inpatientApi, laboratoryApi, userApi, doctorsApi, serviceChargeApi, billingApi, proceduresApi, pharmacyApi, radiologyApi, roleApi } from "@/lib/api"
 import { format } from "date-fns"
 import { toast } from "@/components/ui/use-toast"
@@ -32,6 +32,14 @@ interface InpatientManagementProps {
 
 export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissionUpdated }: InpatientManagementProps) {
   const { user } = useAuth()
+  const currentRoleName = String((user as any)?.role || (user as any)?.roleName || "").toLowerCase()
+  const canApproveBillAdjustments =
+    currentRoleName.includes("admin") ||
+    currentRoleName.includes("finance") ||
+    currentRoleName.includes("billing") ||
+    currentRoleName.includes("account") ||
+    currentRoleName.includes("cashier") ||
+    currentRoleName.includes("manager")
   const [loading, setLoading] = useState(true)
   const [overview, setOverview] = useState<any>(null)
   const [activeTab, setActiveTab] = useState("overview")
@@ -127,6 +135,7 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
   // Medications/Prescriptions states
   const [prescriptionDialogOpen, setPrescriptionDialogOpen] = useState(false)
   const [medications, setMedications] = useState<any[]>([])
+  const [medicationsInventory, setMedicationsInventory] = useState<Record<number, { totalQuantity: number; hasStock: boolean }>>({})
   const [prescriptionForm, setPrescriptionForm] = useState({
     medicationId: "",
     dosage: "",
@@ -155,6 +164,16 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
   // Bill (comprehensive) state
   const [billData, setBillData] = useState<any>(null)
   const [billLoading, setBillLoading] = useState(false)
+  const [billAdjustments, setBillAdjustments] = useState<any[]>([])
+  const [billAdjustmentDialogOpen, setBillAdjustmentDialogOpen] = useState(false)
+  const [selectedBillLine, setSelectedBillLine] = useState<any>(null)
+  const [billAdjustmentForm, setBillAdjustmentForm] = useState({
+    adjustmentType: "credit",
+    deltaAmount: "",
+    reason: "",
+  })
+  const [savingBillAdjustment, setSavingBillAdjustment] = useState(false)
+  const [reviewingAdjustmentId, setReviewingAdjustmentId] = useState<string | null>(null)
 
   // View review dialog states
   const [viewReviewDialogOpen, setViewReviewDialogOpen] = useState(false)
@@ -297,11 +316,94 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
       setBillLoading(true)
       const data = await inpatientApi.getAdmissionBill(admissionId)
       setBillData(data)
+      // Adjustments are optional; don't block core bill loading on this call.
+      try {
+        const adjustments = await inpatientApi.getAdmissionBillAdjustments(admissionId)
+        setBillAdjustments(adjustments || [])
+      } catch (adjErr) {
+        console.warn("Bill adjustments endpoint unavailable; continuing without adjustments list.", adjErr)
+        setBillAdjustments([])
+      }
     } catch (e: any) {
       toast({ title: "Error", description: e?.message ?? "Failed to load bill", variant: "destructive" })
       setBillData(null)
+      setBillAdjustments([])
     } finally {
       setBillLoading(false)
+    }
+  }
+
+  const getProcedureStatus = (procedure: any) => {
+    const raw = String(procedure?.status || "").toLowerCase()
+    if (raw === "completed" || raw === "performed") return "Completed"
+    if (raw === "cancelled") return "Cancelled"
+    if (raw === "pending" || raw === "scheduled" || raw === "in_progress") return raw.replace("_", " ")
+    return procedure?.procedureDate ? "Completed" : "Pending"
+  }
+
+  const getProcedureStatusVariant = (procedure: any): "default" | "outline" | "secondary" | "destructive" => {
+    const s = getProcedureStatus(procedure).toLowerCase()
+    if (s === "completed") return "default"
+    if (s === "cancelled") return "destructive"
+    if (s === "pending" || s === "scheduled" || s === "in progress") return "outline"
+    return "secondary"
+  }
+
+  const handleOpenBillAdjustmentDialog = (line: any) => {
+    setSelectedBillLine(line)
+    setBillAdjustmentForm({
+      adjustmentType: "credit",
+      deltaAmount: "",
+      reason: "",
+    })
+    setBillAdjustmentDialogOpen(true)
+  }
+
+  const handleCreateBillAdjustment = async () => {
+    if (!admissionId || !selectedBillLine?.lineRef) return
+    const deltaRaw = parseFloat(billAdjustmentForm.deltaAmount || "0")
+    if (!Number.isFinite(deltaRaw) || deltaRaw === 0) {
+      toast({ title: "Invalid amount", description: "Enter a non-zero adjustment amount.", variant: "destructive" })
+      return
+    }
+    if (!billAdjustmentForm.reason.trim()) {
+      toast({ title: "Reason required", description: "Please provide a reason for this adjustment.", variant: "destructive" })
+      return
+    }
+    // Credit/discount should reduce bill, debit should increase
+    const sign = billAdjustmentForm.adjustmentType === "debit" ? 1 : -1
+    const deltaAmount = Math.round(Math.abs(deltaRaw) * 100) / 100 * sign
+
+    try {
+      setSavingBillAdjustment(true)
+      await inpatientApi.createAdmissionBillAdjustment(admissionId, {
+        lineRef: selectedBillLine.lineRef,
+        adjustmentType: billAdjustmentForm.adjustmentType,
+        deltaAmount,
+        reason: billAdjustmentForm.reason.trim(),
+      })
+      toast({ title: "Adjustment requested", description: "Line-item adjustment has been submitted for approval." })
+      setBillAdjustmentDialogOpen(false)
+      setSelectedBillLine(null)
+      await loadBill()
+    } catch (e: any) {
+      toast({ title: "Error", description: e?.message ?? "Failed to request adjustment", variant: "destructive" })
+    } finally {
+      setSavingBillAdjustment(false)
+    }
+  }
+
+  const handleReviewBillAdjustment = async (adjustmentId: string, status: "approved" | "rejected") => {
+    if (!admissionId) return
+    try {
+      setReviewingAdjustmentId(adjustmentId)
+      await inpatientApi.updateAdmissionBillAdjustment(admissionId, adjustmentId, { status })
+      toast({ title: `Adjustment ${status}`, description: `The bill adjustment was ${status}.` })
+      await loadBill()
+    } catch (e: any) {
+      toast({ title: "Error", description: e?.message ?? "Failed to update adjustment", variant: "destructive" })
+    } finally {
+      setReviewingAdjustmentId(null)
     }
   }
 
@@ -367,6 +469,7 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
       const medicationsList = await pharmacyApi.getMedications(undefined, 1, 1000) // Get all medications
       console.log("Loaded medications:", medicationsList?.length || 0, medicationsList)
       setMedications(medicationsList || [])
+      await loadMedicationInventory()
     } catch (error) {
       console.error("Error loading medications:", error)
       toast({
@@ -374,6 +477,44 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
         description: "Failed to load medications. Please try again.",
         variant: "destructive",
       })
+    }
+  }
+
+  const loadMedicationInventory = async () => {
+    try {
+      const inventoryItems = await pharmacyApi.getDrugInventory()
+      const inventoryMap: Record<number, { totalQuantity: number; hasStock: boolean }> = {}
+      ;(inventoryItems || []).forEach((item: any) => {
+        const medicationId = Number(item.medicationId)
+        if (!Number.isFinite(medicationId) || medicationId <= 0) return
+        const quantity = Number(item.quantity || 0)
+        if (!inventoryMap[medicationId]) {
+          inventoryMap[medicationId] = { totalQuantity: 0, hasStock: false }
+        }
+        inventoryMap[medicationId].totalQuantity += quantity
+        if (quantity > 0) {
+          inventoryMap[medicationId].hasStock = true
+        }
+      })
+      setMedicationsInventory(inventoryMap)
+    } catch (error) {
+      console.error("Error loading medication inventory:", error)
+      setMedicationsInventory({})
+    }
+  }
+
+  const getMedicationInventoryStatus = (medicationId?: number | string | null) => {
+    const parsedMedicationId = Number(medicationId)
+    if (!Number.isFinite(parsedMedicationId) || parsedMedicationId <= 0) {
+      return { hasStock: false, quantity: 0 }
+    }
+    const inventory = medicationsInventory[parsedMedicationId]
+    if (!inventory) {
+      return { hasStock: false, quantity: 0 }
+    }
+    return {
+      hasStock: inventory.hasStock && inventory.totalQuantity > 0,
+      quantity: Math.max(0, Number(inventory.totalQuantity || 0)),
     }
   }
 
@@ -1611,7 +1752,7 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
   if (loading) {
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-[96vw] w-[96vw] max-h-[95vh] h-[95vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Loading</DialogTitle>
             <DialogDescription>Loading admission details...</DialogDescription>
@@ -1635,7 +1776,7 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-[96vw] w-[96vw] max-h-[95vh] h-[95vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center justify-between">
             <span>Inpatient Management - {admission.admissionNumber}</span>
@@ -2673,6 +2814,67 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
                 </Table>
               </CardContent>
             </Card>
+            <Dialog open={billAdjustmentDialogOpen} onOpenChange={setBillAdjustmentDialogOpen}>
+              <DialogContent className="max-w-lg">
+                <DialogHeader>
+                  <DialogTitle>Request Bill Adjustment</DialogTitle>
+                  <DialogDescription>
+                    Submit a per-line adjustment for approval. Credits reduce the bill; debits increase it.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4">
+                  <div className="rounded-md border p-3 text-sm bg-muted/30">
+                    <p><span className="font-medium">Line:</span> {selectedBillLine?.description ?? "—"}</p>
+                    <p><span className="font-medium">Current total:</span> {Number(selectedBillLine?.totalPrice ?? 0).toFixed(2)} KES</p>
+                    <p className="font-mono text-xs text-muted-foreground">{selectedBillLine?.lineRef ?? "—"}</p>
+                  </div>
+                  <div>
+                    <Label>Adjustment type</Label>
+                    <Select
+                      value={billAdjustmentForm.adjustmentType}
+                      onValueChange={(v) => setBillAdjustmentForm({ ...billAdjustmentForm, adjustmentType: v })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="credit">Credit (reduce bill)</SelectItem>
+                        <SelectItem value="discount">Discount (reduce bill)</SelectItem>
+                        <SelectItem value="debit">Debit (increase bill)</SelectItem>
+                        <SelectItem value="override">Override</SelectItem>
+                        <SelectItem value="other">Other</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label>Amount (KES)</Label>
+                    <Input
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      placeholder="e.g. 500.00"
+                      value={billAdjustmentForm.deltaAmount}
+                      onChange={(e) => setBillAdjustmentForm({ ...billAdjustmentForm, deltaAmount: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <Label>Reason</Label>
+                    <Textarea
+                      rows={3}
+                      placeholder="Why this line should be adjusted..."
+                      value={billAdjustmentForm.reason}
+                      onChange={(e) => setBillAdjustmentForm({ ...billAdjustmentForm, reason: e.target.value })}
+                    />
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <Button variant="outline" onClick={() => setBillAdjustmentDialogOpen(false)}>Cancel</Button>
+                    <Button onClick={handleCreateBillAdjustment} disabled={savingBillAdjustment}>
+                      {savingBillAdjustment ? "Submitting..." : "Submit Adjustment"}
+                    </Button>
+                  </div>
+                </div>
+              </DialogContent>
+            </Dialog>
           </TabsContent>
 
           {/* Procedures Tab */}
@@ -2783,6 +2985,7 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
                       <TableHead>Date</TableHead>
                       <TableHead>Procedure</TableHead>
                       <TableHead>Performed By</TableHead>
+                      <TableHead>Status</TableHead>
                       <TableHead>Notes</TableHead>
                       <TableHead className="w-[100px]">Actions</TableHead>
                     </TableRow>
@@ -2794,6 +2997,11 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
                           <TableCell>{format(new Date(procedure.procedureDate), "PP")}</TableCell>
                           <TableCell>{procedure.procedureName}</TableCell>
                           <TableCell>{procedure.performedByFirstName} {procedure.performedByLastName}</TableCell>
+                          <TableCell>
+                            <Badge variant={getProcedureStatusVariant(procedure)}>
+                              {getProcedureStatus(procedure)}
+                            </Badge>
+                          </TableCell>
                           <TableCell className="max-w-xs truncate">{procedure.notes || "N/A"}</TableCell>
                           <TableCell>
                             <div className="flex gap-1">
@@ -2819,7 +3027,7 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
                       ))
                     ) : (
                       <TableRow>
-                        <TableCell colSpan={5} className="text-center text-muted-foreground">
+                        <TableCell colSpan={6} className="text-center text-muted-foreground">
                           No procedures recorded yet
                         </TableCell>
                       </TableRow>
@@ -3403,13 +3611,18 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
           <td>${String(r.description ?? "—").replace(/</g, "&lt;")}</td>
           <td class="text-right">${r.quantity ?? 1}</td>
           <td class="text-right">${(r.unitPrice ?? 0).toFixed(2)}</td>
-          <td class="text-right">${(r.totalPrice ?? 0).toFixed(2)}</td>
+          <td class="text-right">${(r.adjustedTotal ?? r.totalPrice ?? 0).toFixed(2)}</td>
         </tr>
       `).join("")}
     </tbody>
   </table>
   <table class="totals">
     <tr><td class="label">Subtotal (KES)</td><td class="text-right">${(billData.subtotal ?? 0).toFixed(2)}</td></tr>
+    <tr><td class="label">Approved Adjustments (KES)</td><td class="text-right">${(billData.adjustmentsTotal ?? 0).toFixed(2)}</td></tr>
+    <tr><td class="label">Grand Total (KES)</td><td class="text-right">${(billData.grandTotal ?? billData.subtotal ?? 0).toFixed(2)}</td></tr>
+    <tr><td class="label">Deposit Expected (KES)</td><td class="text-right">${(billData.deposit?.expectedAmount ?? 0).toFixed(2)}</td></tr>
+    <tr><td class="label">Deposit Paid (KES)</td><td class="text-right">${(billData.deposit?.paidAmount ?? 0).toFixed(2)}</td></tr>
+    <tr><td class="label">Deposit Outstanding (KES)</td><td class="text-right">${(billData.deposit?.outstandingAmount ?? 0).toFixed(2)}</td></tr>
     <tr><td class="label">Paid (KES)</td><td class="text-right">${(billData.paidTotal ?? 0).toFixed(2)}</td></tr>
     <tr><td class="label">Balance (KES)</td><td class="text-right">${(billData.balanceTotal ?? 0).toFixed(2)}</td></tr>
   </table>
@@ -3474,7 +3687,9 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
                 <CardTitle className="text-base">Running bill</CardTitle>
                 <CardDescription>
                   All charges for this admission: lab, medications, orders, procedures, bed, and consultant. Rates use patient type: {billData?.patientType === "insurance" ? "insurance" : "cash"}.
-                  {billData?.insuranceProviderName ? ` Provider: ${billData.insuranceProviderName}.` : ""} Use Print or Download PDF to print or save as PDF.
+                  {billData?.insuranceProviderName ? ` Provider: ${billData.insuranceProviderName}.` : ""}{" "}
+                  {billData?.deposit?.invoiceNumber ? `Deposit invoice: ${billData.deposit.invoiceNumber} (${billData.deposit.status || "pending"}). ` : ""}
+                  Use Print or Download PDF to print or save as PDF.
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -3494,7 +3709,10 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
                           <TableHead className="text-right">Qty</TableHead>
                           <TableHead className="text-right">Unit (KES)</TableHead>
                           <TableHead className="text-right">Total (KES)</TableHead>
+                          <TableHead className="text-right">Adj. (KES)</TableHead>
+                          <TableHead className="text-right">Adjusted (KES)</TableHead>
                           <TableHead>Status</TableHead>
+                          <TableHead>Actions</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -3510,12 +3728,23 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
                             <TableCell className="text-right">{line.quantity ?? 1}</TableCell>
                             <TableCell className="text-right">{(line.unitPrice ?? 0).toFixed(2)}</TableCell>
                             <TableCell className="text-right">{(line.totalPrice ?? 0).toFixed(2)}</TableCell>
+                            <TableCell className="text-right">{(line.approvedAdjustment ?? 0).toFixed(2)}</TableCell>
+                            <TableCell className="text-right">{(line.adjustedTotal ?? line.totalPrice ?? 0).toFixed(2)}</TableCell>
                             <TableCell>
                               {line.status != null ? (
                                 <Badge variant={line.status === "paid" ? "default" : line.status === "waived" ? "secondary" : "outline"}>{line.status}</Badge>
                               ) : (
                                 "—"
                               )}
+                            </TableCell>
+                            <TableCell>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleOpenBillAdjustmentDialog(line)}
+                              >
+                                Adjust
+                              </Button>
                             </TableCell>
                           </TableRow>
                           )
@@ -3529,6 +3758,26 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
                           <span className="font-medium">{(billData.subtotal ?? 0).toFixed(2)}</span>
                         </div>
                         <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">Approved Adjustments (KES)</span>
+                          <span className="font-medium">{(billData.adjustmentsTotal ?? 0).toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">Grand Total (KES)</span>
+                          <span className="font-medium">{(billData.grandTotal ?? billData.subtotal ?? 0).toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">Deposit Expected (KES)</span>
+                          <span className="font-medium">{(billData.deposit?.expectedAmount ?? 0).toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">Deposit Paid (KES)</span>
+                          <span className="font-medium">{(billData.deposit?.paidAmount ?? 0).toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">Deposit Outstanding (KES)</span>
+                          <span className="font-medium">{(billData.deposit?.outstandingAmount ?? 0).toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
                           <span className="text-muted-foreground">Paid (KES)</span>
                           <span className="font-medium">{(billData.paidTotal ?? 0).toFixed(2)}</span>
                         </div>
@@ -3537,6 +3786,73 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
                           <span>{(billData.balanceTotal ?? 0).toFixed(2)}</span>
                         </div>
                       </div>
+                    </div>
+                    <div className="mt-6">
+                      <h4 className="text-sm font-semibold mb-2">Line-item adjustment approvals</h4>
+                      {billAdjustments.length > 0 ? (
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Line Ref</TableHead>
+                              <TableHead>Type</TableHead>
+                              <TableHead className="text-right">Delta (KES)</TableHead>
+                              <TableHead>Reason</TableHead>
+                              <TableHead>Status</TableHead>
+                              <TableHead>Requested By</TableHead>
+                              <TableHead>Actions</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {billAdjustments.map((adj: any) => (
+                              <TableRow key={adj.adjustmentId}>
+                                <TableCell className="font-mono text-xs">{adj.lineRef}</TableCell>
+                                <TableCell>{adj.adjustmentType}</TableCell>
+                                <TableCell className="text-right">{Number(adj.deltaAmount || 0).toFixed(2)}</TableCell>
+                                <TableCell>{adj.reason}</TableCell>
+                                <TableCell>
+                                  <Badge
+                                    variant={
+                                      adj.status === "approved"
+                                        ? "default"
+                                        : adj.status === "rejected"
+                                          ? "secondary"
+                                          : "outline"
+                                    }
+                                  >
+                                    {adj.status}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell>{[adj.requestedByFirstName, adj.requestedByLastName].filter(Boolean).join(" ") || "—"}</TableCell>
+                                <TableCell>
+                                  {adj.status === "pending" && canApproveBillAdjustments ? (
+                                    <div className="flex gap-2">
+                                      <Button
+                                        size="sm"
+                                        onClick={() => handleReviewBillAdjustment(String(adj.adjustmentId), "approved")}
+                                        disabled={reviewingAdjustmentId === String(adj.adjustmentId)}
+                                      >
+                                        Approve
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => handleReviewBillAdjustment(String(adj.adjustmentId), "rejected")}
+                                        disabled={reviewingAdjustmentId === String(adj.adjustmentId)}
+                                      >
+                                        Reject
+                                      </Button>
+                                    </div>
+                                  ) : (
+                                    "—"
+                                  )}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">No line-item adjustments yet.</p>
+                      )}
                     </div>
                   </>
                 ) : (
@@ -3587,6 +3903,21 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
                           )}
                         </SelectContent>
                       </Select>
+                      {prescriptionForm.medicationId ? (
+                        <div className="mt-2">
+                          {getMedicationInventoryStatus(prescriptionForm.medicationId).hasStock ? (
+                            <Badge variant="default" className="text-xs">
+                              <Package className="h-3 w-3 mr-1" />
+                              {getMedicationInventoryStatus(prescriptionForm.medicationId).quantity} in stock
+                            </Badge>
+                          ) : (
+                            <Badge variant="secondary" className="text-xs">
+                              <AlertTriangle className="h-3 w-3 mr-1" />
+                              Out of stock
+                            </Badge>
+                          )}
+                        </div>
+                      ) : null}
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div>
@@ -3673,6 +4004,7 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
                       <TableHead>Date</TableHead>
                       <TableHead>Prescription Number</TableHead>
                       <TableHead>Medications</TableHead>
+                        <TableHead>Availability</TableHead>
                       <TableHead>Dosage</TableHead>
                       <TableHead>Frequency</TableHead>
                       <TableHead>Duration</TableHead>
@@ -3685,11 +4017,26 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
                     {overview.prescriptions?.length > 0 ? (
                       overview.prescriptions.map((prescription: any) => {
                         const firstItem = prescription.items?.[0]
+                        const items = prescription.items || []
+                        const availableCount = items.reduce((count: number, item: any) => {
+                          return count + (getMedicationInventoryStatus(item.medicationId).hasStock ? 1 : 0)
+                        }, 0)
                         return (
                           <TableRow key={prescription.prescriptionId}>
                             <TableCell>{format(new Date(prescription.prescriptionDate), "PP")}</TableCell>
                             <TableCell>{prescription.prescriptionNumber}</TableCell>
                             <TableCell>{prescription.medicationNames || "N/A"}</TableCell>
+                            <TableCell>
+                              {items.length > 0 ? (
+                                availableCount === items.length ? (
+                                  <Badge variant="default">{availableCount}/{items.length} In stock</Badge>
+                                ) : (
+                                  <Badge variant="secondary">{availableCount}/{items.length} In stock</Badge>
+                                )
+                              ) : (
+                                <Badge variant="outline">—</Badge>
+                              )}
+                            </TableCell>
                             <TableCell>{firstItem?.dosage || "N/A"}</TableCell>
                             <TableCell>{firstItem?.frequency || "N/A"}</TableCell>
                             <TableCell>{firstItem?.duration || "N/A"}</TableCell>
@@ -3724,7 +4071,7 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
                       })
                     ) : (
                       <TableRow>
-                        <TableCell colSpan={9} className="text-center text-muted-foreground">
+                        <TableCell colSpan={10} className="text-center text-muted-foreground">
                           No prescriptions yet
                         </TableCell>
                       </TableRow>
@@ -3765,6 +4112,14 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
                   <div>
                     <Label className="text-sm font-semibold">Performed By</Label>
                     <p>{viewingProcedure.performedByFirstName} {viewingProcedure.performedByLastName}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-semibold">Status</Label>
+                    <p>
+                      <Badge variant={getProcedureStatusVariant(viewingProcedure)}>
+                        {getProcedureStatus(viewingProcedure)}
+                      </Badge>
+                    </p>
                   </div>
                 </div>
                 {viewingProcedure.notes && (
@@ -4027,6 +4382,19 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
                       {viewingPrescription.items.map((item: any, idx: number) => (
                         <div key={idx} className="p-4 bg-muted rounded-md space-y-2">
                           <p className="font-medium">{item.medicationName || `Medication ${idx + 1}`}</p>
+                          <div>
+                            {getMedicationInventoryStatus(item.medicationId).hasStock ? (
+                              <Badge variant="default" className="text-xs">
+                                <Package className="h-3 w-3 mr-1" />
+                                {getMedicationInventoryStatus(item.medicationId).quantity} in stock
+                              </Badge>
+                            ) : (
+                              <Badge variant="secondary" className="text-xs">
+                                <AlertTriangle className="h-3 w-3 mr-1" />
+                                Out of stock
+                              </Badge>
+                            )}
+                          </div>
                           <div className="grid grid-cols-2 gap-2 text-sm">
                             <div>
                               <span className="text-muted-foreground">Dosage:</span> {item.dosage || "N/A"}

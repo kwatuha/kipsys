@@ -28,6 +28,24 @@ async function resolveChargeRate(db, patientId, item, asOfDate, options = {}) {
     );
     const patientType = patientRows.length > 0 ? (patientRows[0].patientType || 'paying') : 'paying';
 
+    let wardId = options.wardId ?? null;
+    let wardType = options.wardType ?? null;
+    if (wardId == null && wardType == null) {
+        const [adm] = await db.execute(
+            `SELECT b.wardId, w.wardType
+             FROM admissions a
+             JOIN beds b ON a.bedId = b.bedId
+             JOIN wards w ON b.wardId = w.wardId
+             WHERE a.patientId = ? AND a.status = 'admitted' AND a.dischargeDate IS NULL
+             ORDER BY a.admissionDate DESC LIMIT 1`,
+            [patientId]
+        );
+        if (adm.length > 0) {
+            wardId = adm[0].wardId;
+            wardType = adm[0].wardType || null;
+        }
+    }
+
     if (patientType === 'insurance' && chargeId) {
         const [ins] = await db.execute(
             `SELECT providerId FROM patient_insurance
@@ -37,36 +55,87 @@ async function resolveChargeRate(db, patientId, item, asOfDate, options = {}) {
             [patientId, asOfDate]
         );
         if (ins.length > 0) {
-            const [rateRows] = await db.execute(
-                `SELECT amount FROM insurance_charge_rates
-                 WHERE chargeId = ? AND providerId = ? AND startDate <= ? AND (endDate IS NULL OR endDate >= ?)
-                 ORDER BY startDate DESC LIMIT 1`,
-                [chargeId, ins[0].providerId, asOfDate, asOfDate]
-            );
-            if (rateRows.length > 0) {
-                unitPrice = parseFloat(rateRows[0].amount) || unitPrice;
+            try {
+                const [ruleRows] = await db.execute(
+                    `SELECT amount
+                     FROM charge_rate_rules
+                     WHERE chargeId = ?
+                       AND payerType = 'insurance'
+                       AND providerId = ?
+                       AND startDate <= ?
+                       AND (endDate IS NULL OR endDate >= ?)
+                       AND (wardId IS NULL OR wardId = ?)
+                       AND (wardType IS NULL OR wardType = ?)
+                     ORDER BY
+                       CASE
+                         WHEN wardId IS NOT NULL AND wardId = ? THEN 3
+                         WHEN wardType IS NOT NULL AND wardType = ? THEN 2
+                         ELSE 1
+                       END DESC,
+                       priority DESC,
+                       startDate DESC
+                     LIMIT 1`,
+                    [chargeId, ins[0].providerId, asOfDate, asOfDate, wardId, wardType, wardId, wardType]
+                );
+                if (ruleRows.length > 0) {
+                    unitPrice = parseFloat(ruleRows[0].amount) || unitPrice;
+                } else {
+                    const [rateRows] = await db.execute(
+                        `SELECT amount FROM insurance_charge_rates
+                         WHERE chargeId = ? AND providerId = ? AND startDate <= ? AND (endDate IS NULL OR endDate >= ?)
+                         ORDER BY startDate DESC LIMIT 1`,
+                        [chargeId, ins[0].providerId, asOfDate, asOfDate]
+                    );
+                    if (rateRows.length > 0) {
+                        unitPrice = parseFloat(rateRows[0].amount) || unitPrice;
+                    }
+                }
+            } catch (ruleErr) {
+                if (!(ruleErr && (ruleErr.code === 'ER_NO_SUCH_TABLE' || ruleErr.errno === 1146))) {
+                    throw ruleErr;
+                }
+                const [rateRows] = await db.execute(
+                    `SELECT amount FROM insurance_charge_rates
+                     WHERE chargeId = ? AND providerId = ? AND startDate <= ? AND (endDate IS NULL OR endDate >= ?)
+                     ORDER BY startDate DESC LIMIT 1`,
+                    [chargeId, ins[0].providerId, asOfDate, asOfDate]
+                );
+                if (rateRows.length > 0) {
+                    unitPrice = parseFloat(rateRows[0].amount) || unitPrice;
+                }
             }
         }
     } else if (patientType === 'paying' && chargeId) {
-        let wardId = options.wardId ?? null;
-        let wardType = options.wardType ?? null;
-        if (wardId == null && wardType == null) {
-            const [adm] = await db.execute(
-                `SELECT b.wardId, w.wardType
-                 FROM admissions a
-                 JOIN beds b ON a.bedId = b.bedId
-                 JOIN wards w ON b.wardId = w.wardId
-                 WHERE a.patientId = ? AND a.status = 'admitted' AND a.dischargeDate IS NULL
-                 ORDER BY a.admissionDate DESC LIMIT 1`,
-                [patientId]
+        let rate = null;
+        try {
+            const [ruleRows] = await db.execute(
+                `SELECT amount
+                 FROM charge_rate_rules
+                 WHERE chargeId = ?
+                   AND payerType = 'cash'
+                   AND startDate <= ?
+                   AND (endDate IS NULL OR endDate >= ?)
+                   AND providerId IS NULL
+                   AND (wardId IS NULL OR wardId = ?)
+                   AND (wardType IS NULL OR wardType = ?)
+                 ORDER BY
+                   CASE
+                     WHEN wardId IS NOT NULL AND wardId = ? THEN 3
+                     WHEN wardType IS NOT NULL AND wardType = ? THEN 2
+                     ELSE 1
+                   END DESC,
+                   priority DESC,
+                   startDate DESC
+                 LIMIT 1`,
+                [chargeId, asOfDate, asOfDate, wardId, wardType, wardId, wardType]
             );
-            if (adm.length > 0) {
-                wardId = adm[0].wardId;
-                wardType = adm[0].wardType || null;
+            if (ruleRows.length > 0) rate = parseFloat(ruleRows[0].amount);
+        } catch (ruleErr) {
+            if (!(ruleErr && (ruleErr.code === 'ER_NO_SUCH_TABLE' || ruleErr.errno === 1146))) {
+                throw ruleErr;
             }
         }
-        if (wardId != null || wardType != null) {
-            let rate = null;
+        if (rate == null && (wardId != null || wardType != null)) {
             if (wardId) {
                 const [rw] = await db.execute(
                     `SELECT amount FROM inpatient_charge_rates
@@ -85,17 +154,17 @@ async function resolveChargeRate(db, patientId, item, asOfDate, options = {}) {
                 );
                 if (rt.length > 0) rate = parseFloat(rt[0].amount);
             }
-            if (rate == null) {
-                const [rd] = await db.execute(
-                    `SELECT amount FROM inpatient_charge_rates
-                     WHERE chargeId = ? AND wardId IS NULL AND wardType IS NULL AND startDate <= ? AND (endDate IS NULL OR endDate >= ?)
-                     ORDER BY startDate DESC LIMIT 1`,
-                    [chargeId, asOfDate, asOfDate]
-                );
-                if (rd.length > 0) rate = parseFloat(rd[0].amount);
-            }
-            if (rate != null) unitPrice = rate;
         }
+        if (rate == null) {
+            const [rd] = await db.execute(
+                `SELECT amount FROM inpatient_charge_rates
+                 WHERE chargeId = ? AND wardId IS NULL AND wardType IS NULL AND startDate <= ? AND (endDate IS NULL OR endDate >= ?)
+                 ORDER BY startDate DESC LIMIT 1`,
+                [chargeId, asOfDate, asOfDate]
+            );
+            if (rd.length > 0) rate = parseFloat(rd[0].amount);
+        }
+        if (rate != null) unitPrice = rate;
     }
 
     const totalPrice = Math.round(unitPrice * quantity * 100) / 100;
