@@ -1,7 +1,6 @@
 "use client"
 
-import React from "react"
-import { usePathname } from "next/navigation"
+import React, { useEffect } from "react"
 import { useAuth } from "@/lib/auth/auth-context"
 import { useRoleMenuAccess } from "@/lib/hooks/use-role-menu-access"
 import { filterTabs, isTabAllowed } from "@/lib/role-menu-filter"
@@ -41,13 +40,11 @@ export function RoleFilteredTabs({
   children,
   className,
 }: RoleFilteredTabsProps) {
-  const pathname = usePathname()
   const { user } = useAuth()
   const { menuAccess, loading: menuLoading } = useRoleMenuAccess(user?.id)
 
   // Normalize page path for matching (handle dynamic routes)
   const normalizedPagePath = pagePath.replace(/\[.*?\]/g, '*')
-  const currentPath = pathname
 
   // Filter tabs based on role access
   // While loading, show all tabs to prevent flickering
@@ -78,6 +75,22 @@ export function RoleFilteredTabs({
     : allowedTabs[0]?.value
 
   const isControlled = controlledValue !== undefined && controlledValue !== null
+
+  // Primitive key so effect deps stay stable when the tab *set* is unchanged
+  const allowedTabKey = allowedTabs.map((t) => t.value).join("|")
+
+  // When role menu finishes loading, the allowed tab list can shrink. If the parent still holds a
+  // controlled value that is no longer allowed, Radix can show the wrong panel and tab content
+  // effects may not run — sync parent to a valid tab.
+  useEffect(() => {
+    if (!isControlled || !onValueChange || menuLoading) return
+    if (allowedTabs.length === 0) return
+    const stillAllowed = allowedTabs.some((t) => t.value === controlledValue)
+    if (!stillAllowed) {
+      onValueChange(allowedTabs[0].value)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- allowedTabKey tracks allowed tab set changes
+  }, [isControlled, controlledValue, menuLoading, allowedTabKey, onValueChange])
 
   return (
     <Tabs

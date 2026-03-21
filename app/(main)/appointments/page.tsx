@@ -34,10 +34,12 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
 import { useAuth } from "@/lib/auth/auth-context"
+import { useTelemedicineFloating } from "@/lib/telemedicine-floating-context"
 
 export default function AppointmentsPage() {
   const router = useRouter()
   const { user } = useAuth()
+  const { openSession: openTelemedicineFloating } = useTelemedicineFloating()
   const [addAppointmentOpen, setAddAppointmentOpen] = useState(false)
   const [editingAppointment, setEditingAppointment] = useState<any>(null)
   const [deletingAppointment, setDeletingAppointment] = useState<any>(null)
@@ -172,10 +174,10 @@ export default function AppointmentsPage() {
         notes: `Telemedicine from appointment #${appointment.appointmentId}`,
       })
       if (created?.sessionId) {
-        router.push(`/telemedicine/${created.sessionId}`)
+        openTelemedicineFloating(created.sessionId)
         toast({
-          title: "Telemedicine session created",
-          description: "Paste your Zoom join link on the next screen.",
+          title: "Telemedicine session ready",
+          description: "Use the floating panel — minimize it to browse charts or notes.",
         })
       }
     } catch (error: any) {

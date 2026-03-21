@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useMemo } from "react"
+import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -79,6 +79,7 @@ export default function InpatientPage() {
   const [loading, setLoading] = useState(true)
   const [loadingBeds, setLoadingBeds] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const loadAdmissionsSeq = useRef(0)
   const [statusFilter, setStatusFilter] = useState<string>("")
   const [wardFilter, setWardFilter] = useState<string>("")
   const [bedStatusFilter, setBedStatusFilter] = useState<string>("")
@@ -126,17 +127,8 @@ export default function InpatientPage() {
     icuBeds: 0,
   })
 
-  useEffect(() => {
-    loadAdmissions()
-    loadBeds()
-    loadWards()
-  }, [statusFilter, wardFilter])
-
-  useEffect(() => {
-    loadBeds()
-  }, [bedStatusFilter])
-
-  const loadAdmissions = async () => {
+  const loadAdmissions = useCallback(async () => {
+    const seq = ++loadAdmissionsSeq.current
     try {
       setLoading(true)
       setError(null)
@@ -144,14 +136,26 @@ export default function InpatientPage() {
         statusFilter || undefined,
         wardFilter || undefined
       )
+      if (seq !== loadAdmissionsSeq.current) return
       setAdmissions(data)
     } catch (err: any) {
+      if (seq !== loadAdmissionsSeq.current) return
       setError(err.message || 'Failed to load admissions')
       console.error('Error loading admissions:', err)
     } finally {
-      setLoading(false)
+      if (seq === loadAdmissionsSeq.current) setLoading(false)
     }
-  }
+  }, [statusFilter, wardFilter])
+
+  useEffect(() => {
+    loadAdmissions()
+    loadBeds()
+    loadWards()
+  }, [loadAdmissions])
+
+  useEffect(() => {
+    loadBeds()
+  }, [bedStatusFilter])
 
   const loadBeds = async () => {
     try {

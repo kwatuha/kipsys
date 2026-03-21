@@ -1,11 +1,11 @@
 "use client"
 
-import { useState, useMemo, Suspense, useEffect, useCallback, startTransition } from "react"
+import { useState, useMemo, Suspense, useEffect, useCallback, useRef, startTransition } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
-import { MoreHorizontal, FileText, PlayCircle, Stethoscope, Pill } from "lucide-react"
+import { MoreHorizontal, FileText, PlayCircle, Stethoscope, Pill, Scan, ClipboardList } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   getQueueByServicePoint,
@@ -49,6 +49,11 @@ import {
 } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
+import {
+  RadiologyQueueReportDialog,
+  type QueueEntryLite,
+} from "@/components/queue-radiology-report-dialog"
+import { ProcedureQueueCompleteDialog } from "@/components/queue-procedure-complete-dialog"
 
 interface QueueDisplayProps {
   initialServicePoint?: ServicePoint
@@ -66,6 +71,8 @@ export function QueueDisplay({ initialServicePoint = "triage", restrictToSingleS
     "pharmacy",
     "billing",
     "cashier",
+    "telemedicine",
+    "procedure",
   ]
 
   const { user } = useAuth()
@@ -129,7 +136,7 @@ export function QueueDisplay({ initialServicePoint = "triage", restrictToSingleS
     }
 
     // Priority tabs (only if they're in effectiveAllowedServicePoints)
-    const priorityTabs: ServicePoint[] = ["triage", "consultation", "pharmacy"]
+    const priorityTabs: ServicePoint[] = ["triage", "consultation", "pharmacy", "telemedicine"]
     const allowedPriorityTabs = priorityTabs.filter(tab => effectiveAllowedServicePoints.includes(tab))
 
     // Start with the selected tab if it's allowed
@@ -168,8 +175,11 @@ export function QueueDisplay({ initialServicePoint = "triage", restrictToSingleS
   const showMoreDropdown = dropdownTabs.length > 0
 
   // Load queue counts for all allowed service points
+  // Note: do NOT gate on `!menuAccess` — on menu-access API failure, menuAccess is null but we still
+  // show all service points (see allowedServicePoints above). Skipping here caused intermittent "no API"
+  // when the role menu call failed or was slow.
   useEffect(() => {
-    if (menuLoading || !menuAccess || effectiveAllowedServicePoints.length === 0) return
+    if (menuLoading || effectiveAllowedServicePoints.length === 0) return
 
     const loadQueueCounts = async () => {
       // Prevent flickering by only updating if counts actually changed
@@ -285,7 +295,15 @@ export function QueueDisplay({ initialServicePoint = "triage", restrictToSingleS
           {effectiveAllowedServicePoints.map((point) => (
             <TabsContent key={point} value={point} className="mt-6">
               <Suspense fallback={<div className="h-64 animate-pulse bg-muted rounded-md" />}>
-                <QueueContent servicePoint={point} />
+                <QueueContent
+                  servicePoint={point}
+                  onLoadedCount={(count) => {
+                    setQueueCounts((prev) => {
+                      if (prev[point] === count) return prev
+                      return { ...prev, [point]: count }
+                    })
+                  }}
+                />
               </Suspense>
             </TabsContent>
           ))}
@@ -296,7 +314,17 @@ export function QueueDisplay({ initialServicePoint = "triage", restrictToSingleS
 }
 
 // Separate the content to allow for better code splitting
-function QueueContent({ servicePoint }: { servicePoint: ServicePoint }) {
+function QueueContent({
+  servicePoint,
+  onLoadedCount,
+}: {
+  servicePoint: ServicePoint
+  /** Sync tab badge with the rows actually shown (same rules as GET /api/queue?servicePoint=) */
+  onLoadedCount?: (count: number) => void
+}) {
+  const onLoadedCountRef = useRef(onLoadedCount)
+  onLoadedCountRef.current = onLoadedCount
+
   const [queueData, setQueueData] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
   const [encounterFormOpen, setEncounterFormOpen] = useState(false)
@@ -315,11 +343,15 @@ function QueueContent({ servicePoint }: { servicePoint: ServicePoint }) {
   const [changingStatus, setChangingStatus] = useState<any>(null)
   const [newStatus, setNewStatus] = useState<string>("")
   const [statusLoading, setStatusLoading] = useState(false)
+  const [radiologyQueueForReport, setRadiologyQueueForReport] = useState<QueueEntryLite | null>(null)
+  const [procedureQueueForComplete, setProcedureQueueForComplete] = useState<QueueEntryLite | null>(null)
   const { user } = useAuth()
   const isConsultation = servicePoint === "consultation"
   const isPharmacy = servicePoint === "pharmacy"
   const isTriage = servicePoint === "triage"
   const isCashier = servicePoint === "cashier"
+  const isRadiology = servicePoint === "radiology"
+  const isProcedure = servicePoint === "procedure"
 
   // Get current doctor ID
   useEffect(() => {
@@ -349,7 +381,7 @@ function QueueContent({ servicePoint }: { servicePoint: ServicePoint }) {
 
         // Map API response to display format
         const mappedData = data.map((entry: any) => ({
-          id: entry.queueId?.toString() || entry.id?.toString() || "",
+          id: entry.queueId != null ? String(entry.queueId) : `p-${entry.patientId}-${entry.ticketNumber || ""}`,
           queueId: entry.queueId || entry.id || 0,
           patientId: entry.patientId?.toString() || "",
           patientName: entry.patientFirstName && entry.patientLastName
@@ -361,12 +393,23 @@ function QueueContent({ servicePoint }: { servicePoint: ServicePoint }) {
           priority: entry.priority || "normal",
           estimatedWaitTime: entry.estimatedWaitTime,
           arrivalTime: entry.arrivalTime || new Date().toISOString(),
+          notes: entry.notes ?? "",
         }))
 
-        setQueueData(mappedData)
+        // Dedupe by queueId so React rows match API count (defensive)
+        const seen = new Set<number | string>()
+        const deduped = mappedData.filter((row) => {
+          const k = row.queueId || row.id
+          if (seen.has(k)) return false
+          seen.add(k)
+          return true
+        })
+
+        setQueueData(deduped)
+        onLoadedCountRef.current?.(deduped.length)
 
         // Check for encounters today for each patient - LAZY LOAD (non-blocking)
-        if (servicePoint === "consultation" && mappedData.length > 0) {
+        if (servicePoint === "consultation" && deduped.length > 0) {
                   const today = format(new Date(), 'yyyy-MM-dd')
                   const encounterChecks: Record<string, boolean> = {}
 
@@ -374,8 +417,8 @@ function QueueContent({ servicePoint }: { servicePoint: ServicePoint }) {
                   startTransition(() => {
                     const checkEncountersAsync = async () => {
                       const batchSize = 3
-                      for (let i = 0; i < mappedData.length; i += batchSize) {
-                        const batch = mappedData.slice(i, i + batchSize)
+                      for (let i = 0; i < deduped.length; i += batchSize) {
+                        const batch = deduped.slice(i, i + batchSize)
 
                         await Promise.all(
                           batch.map(async (entry: any) => {
@@ -418,6 +461,7 @@ function QueueContent({ servicePoint }: { servicePoint: ServicePoint }) {
         // Fallback to mock data
         const mockData = getQueueByServicePoint(servicePoint)
         setQueueData(mockData)
+        onLoadedCountRef.current?.(mockData.length)
       } finally {
         setLoading(false)
       }
@@ -517,6 +561,13 @@ function QueueContent({ servicePoint }: { servicePoint: ServicePoint }) {
     { value: "completed", label: "Completed" },
     { value: "cancelled", label: "Cancelled" },
   ]
+
+  const entryToLite = (entry: any): QueueEntryLite => ({
+    queueId: entry.queueId,
+    patientId: entry.patientId,
+    patientName: entry.patientName,
+    notes: entry.notes ?? "",
+  })
 
   return (
     <>
@@ -765,6 +816,114 @@ function QueueContent({ servicePoint }: { servicePoint: ServicePoint }) {
               </div>
             )}
           </>
+        ) : isRadiology ? (
+          <>
+            <div className="grid grid-cols-12 bg-muted/50 p-3 text-sm font-medium">
+              <div className="col-span-1">#</div>
+              <div className="col-span-3">Patient</div>
+              <div className="col-span-2">Priority</div>
+              <div className="col-span-2">Status</div>
+              <div className="col-span-2">Wait Time</div>
+              <div className="col-span-2">Action</div>
+            </div>
+            {loading ? (
+              <div className="p-6 text-center text-muted-foreground">Loading queue data...</div>
+            ) : queueData.length > 0 ? (
+              <div className="divide-y">
+                {queueData.map((entry) => (
+                  <div key={entry.id} className="grid grid-cols-12 p-3 text-sm items-center">
+                    <div className="col-span-1">{entry.ticketNumber || entry.queueNumber}</div>
+                    <div className="col-span-3 font-medium">{entry.patientName}</div>
+                    <div className="col-span-2">
+                      <Badge variant="outline" className={`${getPriorityColor(entry.priority)}`}>
+                        {entry.priority}
+                      </Badge>
+                    </div>
+                    <div className="col-span-2">
+                      <Badge variant={entry.status === "waiting" || entry.status === "called" ? "secondary" : "default"}>
+                        {entry.status === "waiting" ? "Waiting" : entry.status === "called" ? "Called" : "In Service"}
+                      </Badge>
+                    </div>
+                    <div className="col-span-2 text-muted-foreground">
+                      {calculateWaitTime(entry)} min
+                      {entry.estimatedWaitTime && entry.status === "waiting" && (
+                        <span> (Est. {entry.estimatedWaitTime} min)</span>
+                      )}
+                    </div>
+                    <div className="col-span-2">
+                      <Button
+                        variant="default"
+                        size="sm"
+                        onClick={() => setRadiologyQueueForReport(entryToLite(entry))}
+                        className="w-full"
+                      >
+                        <Scan className="h-3 w-3 mr-1" />
+                        Record report
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="p-6 text-center text-muted-foreground">
+                No patients in queue for {getServicePointName(servicePoint)}
+              </div>
+            )}
+          </>
+        ) : isProcedure ? (
+          <>
+            <div className="grid grid-cols-12 bg-muted/50 p-3 text-sm font-medium">
+              <div className="col-span-1">#</div>
+              <div className="col-span-3">Patient</div>
+              <div className="col-span-2">Priority</div>
+              <div className="col-span-2">Status</div>
+              <div className="col-span-2">Wait Time</div>
+              <div className="col-span-2">Action</div>
+            </div>
+            {loading ? (
+              <div className="p-6 text-center text-muted-foreground">Loading queue data...</div>
+            ) : queueData.length > 0 ? (
+              <div className="divide-y">
+                {queueData.map((entry) => (
+                  <div key={entry.id} className="grid grid-cols-12 p-3 text-sm items-center">
+                    <div className="col-span-1">{entry.ticketNumber || entry.queueNumber}</div>
+                    <div className="col-span-3 font-medium">{entry.patientName}</div>
+                    <div className="col-span-2">
+                      <Badge variant="outline" className={`${getPriorityColor(entry.priority)}`}>
+                        {entry.priority}
+                      </Badge>
+                    </div>
+                    <div className="col-span-2">
+                      <Badge variant={entry.status === "waiting" || entry.status === "called" ? "secondary" : "default"}>
+                        {entry.status === "waiting" ? "Waiting" : entry.status === "called" ? "Called" : "In Service"}
+                      </Badge>
+                    </div>
+                    <div className="col-span-2 text-muted-foreground">
+                      {calculateWaitTime(entry)} min
+                      {entry.estimatedWaitTime && entry.status === "waiting" && (
+                        <span> (Est. {entry.estimatedWaitTime} min)</span>
+                      )}
+                    </div>
+                    <div className="col-span-2">
+                      <Button
+                        variant="default"
+                        size="sm"
+                        onClick={() => setProcedureQueueForComplete(entryToLite(entry))}
+                        className="w-full"
+                      >
+                        <ClipboardList className="h-3 w-3 mr-1" />
+                        Complete & outcome
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="p-6 text-center text-muted-foreground">
+                No patients in queue for {getServicePointName(servicePoint)}
+              </div>
+            )}
+          </>
         ) : (
           <>
             <div className="grid grid-cols-12 bg-muted/50 p-3 text-sm font-medium">
@@ -889,6 +1048,17 @@ function QueueContent({ servicePoint }: { servicePoint: ServicePoint }) {
           }}
         />
       )}
+
+      <RadiologyQueueReportDialog
+        queueEntry={radiologyQueueForReport}
+        onClose={() => setRadiologyQueueForReport(null)}
+        onSuccess={loadQueueData}
+      />
+      <ProcedureQueueCompleteDialog
+        queueEntry={procedureQueueForComplete}
+        onClose={() => setProcedureQueueForComplete(null)}
+        onSuccess={loadQueueData}
+      />
 
       {/* Triage Assessment Form for triage */}
       {isTriage && selectedPatientForTriage && (

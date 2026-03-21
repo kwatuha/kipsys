@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge"
 import { Search, Plus, Download, Loader2, MoreVertical, Eye, CheckCircle, XCircle, ImageIcon, Edit, Trash2, FileText, Printer } from "lucide-react"
 import { AddExaminationForm } from "@/components/add-examination-form"
 import { radiologyApi, doctorsApi } from "@/lib/api"
+import { useAuth } from "@/lib/auth/auth-context"
 import { format } from "date-fns"
 import { toast } from "@/components/ui/use-toast"
 import { printRadiologyOrder, downloadRadiologyOrderPDF, printCombinedRadiologyReport, downloadCombinedRadiologyReportPDF } from "@/lib/radiology-results-pdf"
@@ -74,12 +75,16 @@ interface ExamType {
 }
 
 export default function RadiologyPage() {
+  const { user } = useAuth()
   const [addExaminationOpen, setAddExaminationOpen] = useState(false)
   const [radiologyOrders, setRadiologyOrders] = useState<RadiologyOrder[]>([])
   const [examTypes, setExamTypes] = useState<ExamType[]>([])
   const [loading, setLoading] = useState(true)
   const [loadingCatalog, setLoadingCatalog] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [ordersError, setOrdersError] = useState<string | null>(null)
+  const [catalogError, setCatalogError] = useState<string | null>(null)
+  const loadOrdersSeq = useRef(0)
+  const loadExamTypesSeq = useRef(0)
   const [statusFilter, setStatusFilter] = useState<string>("")
   const [categoryFilter, setCategoryFilter] = useState<string>("")
   const [search, setSearch] = useState("")
@@ -109,41 +114,68 @@ export default function RadiologyPage() {
   const [deletingExamType, setDeletingExamType] = useState<ExamType | null>(null)
   const [deleteLoading, setDeleteLoading] = useState(false)
 
-  const loadOrders = async () => {
+  const [storedReports, setStoredReports] = useState<any[]>([])
+  const [reportsLoading, setReportsLoading] = useState(false)
+  const [reportSearch, setReportSearch] = useState("")
+
+  const loadStoredReports = useCallback(async () => {
+    try {
+      setReportsLoading(true)
+      const data = await radiologyApi.getReports({
+        search: reportSearch.trim() || undefined,
+        limit: 150,
+        page: 1,
+      })
+      setStoredReports(Array.isArray(data) ? data : [])
+    } catch (e) {
+      console.error(e)
+      setStoredReports([])
+    } finally {
+      setReportsLoading(false)
+    }
+  }, [reportSearch])
+
+  const loadOrders = useCallback(async () => {
+    const seq = ++loadOrdersSeq.current
     try {
       setLoading(true)
-      setError(null)
+      setOrdersError(null)
       const data = await radiologyApi.getOrders(undefined, statusFilter || undefined)
+      if (seq !== loadOrdersSeq.current) return
       setRadiologyOrders(data)
     } catch (err: any) {
-      setError(err.message || 'Failed to load radiology orders')
+      if (seq !== loadOrdersSeq.current) return
+      setOrdersError(err.message || 'Failed to load radiology orders')
       console.error('Error loading radiology orders:', err)
     } finally {
-      setLoading(false)
+      if (seq === loadOrdersSeq.current) setLoading(false)
     }
-  }
+  }, [statusFilter])
 
-  const loadExamTypes = async () => {
+  const loadExamTypes = useCallback(async () => {
+    const seq = ++loadExamTypesSeq.current
     try {
       setLoadingCatalog(true)
-      setError(null)
+      setCatalogError(null)
       const data = await radiologyApi.getExamTypes(catalogSearch || undefined, categoryFilter || undefined)
+      if (seq !== loadExamTypesSeq.current) return
       setExamTypes(data)
     } catch (err: any) {
-      setError(err.message || 'Failed to load exam types')
+      if (seq !== loadExamTypesSeq.current) return
+      setCatalogError(err.message || 'Failed to load exam types')
       console.error('Error loading exam types:', err)
     } finally {
-      setLoadingCatalog(false)
+      if (seq === loadExamTypesSeq.current) setLoadingCatalog(false)
     }
-  }
+  }, [categoryFilter, catalogSearch])
 
   useEffect(() => {
     loadOrders()
-  }, [statusFilter])
+  }, [loadOrders])
 
   useEffect(() => {
     loadExamTypes()
-  }, [categoryFilter, catalogSearch])
+  }, [loadExamTypes])
 
   useEffect(() => {
     loadDoctors()
@@ -254,7 +286,11 @@ export default function RadiologyPage() {
       const details = await radiologyApi.getOrder(order.orderId.toString())
       setSelectedOrder(details)
     } catch (err: any) {
-      setError(err.message || 'Failed to load order details')
+      toast({
+        title: "Error loading order",
+        description: err.message || 'Failed to load order details',
+        variant: "destructive",
+      })
       console.error('Error loading order details:', err)
     } finally {
       setLoadingOrderDetails(false)
@@ -264,7 +300,6 @@ export default function RadiologyPage() {
   const handleUpdateOrderStatus = async (orderId: number, status: string) => {
     setUpdatingStatus(orderId.toString())
     try {
-      setError(null)
       await radiologyApi.updateOrder(orderId.toString(), { status })
       await loadOrders()
       toast({
@@ -273,7 +308,6 @@ export default function RadiologyPage() {
       })
     } catch (err: any) {
       const errorMessage = err.message || 'Failed to update order status'
-      setError(errorMessage)
       toast({
         title: "Error updating status",
         description: errorMessage,
@@ -309,7 +343,6 @@ export default function RadiologyPage() {
 
     setSavingOrder(true)
     try {
-      setError(null)
       await radiologyApi.updateOrder(editingOrder.orderId.toString(), data)
       toast({
         title: "Order updated",
@@ -320,7 +353,6 @@ export default function RadiologyPage() {
       await loadOrders()
     } catch (err: any) {
       const errorMessage = err.message || 'Failed to update order'
-      setError(errorMessage)
       toast({
         title: "Error updating order",
         description: errorMessage,
@@ -337,18 +369,53 @@ export default function RadiologyPage() {
     setResultsFormOpen(true)
   }
 
-  const handleSaveResults = async (notes: string) => {
+  const handleSaveResults = async (payload: {
+    findings?: string
+    impression?: string
+    recommendations?: string
+  }) => {
     if (!orderForResults) return
+    if (
+      !payload.findings?.trim() &&
+      !payload.impression?.trim() &&
+      !payload.recommendations?.trim()
+    ) {
+      toast({
+        title: "Enter report content",
+        description: "Add at least findings, impression, or recommendations.",
+        variant: "destructive",
+      })
+      return
+    }
+    const uid = user?.id ? parseInt(String(user.id), 10) : NaN
+    if (!user?.id || Number.isNaN(uid)) {
+      toast({
+        title: "Sign in required",
+        description: "Cannot record reporter identity.",
+        variant: "destructive",
+      })
+      return
+    }
 
     setSavingResults(true)
     try {
-      setError(null)
-      await radiologyApi.updateOrder(orderForResults.orderId.toString(), { notes })
+      await radiologyApi.completeOrderReport(orderForResults.orderId.toString(), {
+        findings: payload.findings,
+        impression: payload.impression,
+        recommendations: payload.recommendations,
+        reportedBy: uid,
+      })
+      toast({ title: "Report saved", description: "Findings stored in radiology reports; order completed." })
       await loadOrders()
+      await loadStoredReports()
       setResultsFormOpen(false)
       setOrderForResults(null)
     } catch (err: any) {
-      setError(err.message || 'Failed to save results')
+      toast({
+        title: "Error saving results",
+        description: err.message || 'Failed to save results',
+        variant: "destructive",
+      })
       console.error('Error saving results:', err)
     } finally {
       setSavingResults(false)
@@ -604,6 +671,8 @@ export default function RadiologyPage() {
 
   const getNextStatus = (currentStatus: string) => {
     switch (currentStatus) {
+      case 'awaiting_payment':
+        return null
       case 'pending':
         return 'scheduled'
       case 'scheduled':
@@ -639,7 +708,6 @@ export default function RadiologyPage() {
       loadExamTypes()
     } catch (err: any) {
       const errorMessage = err.message || 'Failed to delete exam type'
-      setError(errorMessage)
       toast({
         title: "Error deleting exam type",
         description: errorMessage,
@@ -671,7 +739,6 @@ export default function RadiologyPage() {
       loadExamTypes()
     } catch (err: any) {
       const errorMessage = err.message || `Failed to ${editingExamType ? 'update' : 'create'} exam type`
-      setError(errorMessage)
       toast({
         title: `Error ${editingExamType ? 'updating' : 'creating'} exam type`,
         description: errorMessage,
@@ -730,9 +797,18 @@ export default function RadiologyPage() {
         </div>
       </div>
 
-      <Tabs defaultValue="examinations" className="w-full">
-        <TabsList className="grid w-full grid-cols-2">
+      <Tabs
+        defaultValue="examinations"
+        className="w-full"
+        onValueChange={(v) => {
+          if (v !== "examinations") setOrdersError(null)
+          if (v !== "catalog") setCatalogError(null)
+          if (v === "reports") loadStoredReports()
+        }}
+      >
+        <TabsList className="grid w-full grid-cols-3">
           <TabsTrigger value="examinations">Examination Requests</TabsTrigger>
+          <TabsTrigger value="reports">Stored reports</TabsTrigger>
           <TabsTrigger value="catalog">Examination Catalog</TabsTrigger>
         </TabsList>
 
@@ -740,12 +816,15 @@ export default function RadiologyPage() {
           <Card>
             <CardHeader>
               <CardTitle>Radiology Examination Requests</CardTitle>
-              <CardDescription>View and manage radiology examination requests and results</CardDescription>
+              <CardDescription>
+                View and manage imaging work. <strong>All</strong> excludes orders still awaiting payment at cashier;
+                use <strong>Awaiting payment</strong> to see those.
+              </CardDescription>
             </CardHeader>
             <CardContent>
-              {error && (
+              {ordersError && (
                 <div className="mb-4 p-3 text-sm text-red-500 bg-red-50 rounded-md">
-                  {error}
+                  {ordersError}
                   <Button variant="link" size="sm" onClick={loadOrders} className="ml-2 h-auto p-0">
                     Retry
                   </Button>
@@ -759,8 +838,9 @@ export default function RadiologyPage() {
                       variant={statusFilter === "" ? "default" : "outline"}
                       size="sm"
                       onClick={() => setStatusFilter("")}
+                      title="Imaging work queue: excludes unpaid (awaiting payment at cashier)"
                     >
-                      All
+                      All (imaging queue)
                     </Button>
                     <Button
                       variant={statusFilter === "pending" ? "default" : "outline"}
@@ -768,6 +848,13 @@ export default function RadiologyPage() {
                       onClick={() => setStatusFilter("pending")}
                     >
                       Pending
+                    </Button>
+                    <Button
+                      variant={statusFilter === "awaiting_payment" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setStatusFilter("awaiting_payment")}
+                    >
+                      Awaiting payment
                     </Button>
                     <Button
                       variant={statusFilter === "scheduled" ? "default" : "outline"}
@@ -916,7 +1003,9 @@ export default function RadiologyPage() {
                                     ? "default"
                                     : order.status === "in_progress"
                                       ? "secondary"
-                                      : "outline"
+                                      : order.status === "awaiting_payment"
+                                        ? "destructive"
+                                        : "outline"
                                 }
                               >
                                 {formatStatus(order.status)}
@@ -945,30 +1034,40 @@ export default function RadiologyPage() {
                                   {order.status !== 'completed' && order.status !== 'cancelled' && (
                                     <>
                                       <DropdownMenuSeparator />
-                                      <DropdownMenuItem onClick={() => handleEditOrder(order)}>
-                                        <Edit className="mr-2 h-4 w-4" />
-                                        Edit Order
-                                      </DropdownMenuItem>
+                                      {order.status === 'awaiting_payment' && (
+                                        <DropdownMenuItem disabled className="text-muted-foreground text-xs cursor-default">
+                                          Patient must pay at cashier before imaging
+                                        </DropdownMenuItem>
+                                      )}
+                                      {order.status !== 'awaiting_payment' && (
+                                        <>
+                                          <DropdownMenuItem onClick={() => handleEditOrder(order)}>
+                                            <Edit className="mr-2 h-4 w-4" />
+                                            Edit Order
+                                          </DropdownMenuItem>
+                                          <DropdownMenuSeparator />
+                                          {getNextStatus(order.status) && (
+                                            <DropdownMenuItem
+                                              onClick={() => handleUpdateOrderStatus(order.orderId, getNextStatus(order.status)!)}
+                                              disabled={updatingStatus === order.orderId.toString()}
+                                            >
+                                              <ImageIcon className="mr-2 h-4 w-4" />
+                                              {updatingStatus === order.orderId.toString() ? 'Updating...' : getStatusActionLabel(getNextStatus(order.status)!)}
+                                            </DropdownMenuItem>
+                                          )}
+                                          {/* Only show "Mark as Completed" if getNextStatus doesn't already provide it */}
+                                          {order.status !== 'cancelled' && getNextStatus(order.status) !== 'completed' && (
+                                            <DropdownMenuItem
+                                              onClick={() => handleUpdateOrderStatus(order.orderId, 'completed')}
+                                              disabled={updatingStatus === order.orderId.toString()}
+                                            >
+                                              <CheckCircle className="mr-2 h-4 w-4" />
+                                              {updatingStatus === order.orderId.toString() ? 'Marking...' : 'Mark as Completed'}
+                                            </DropdownMenuItem>
+                                          )}
+                                        </>
+                                      )}
                                       <DropdownMenuSeparator />
-                                      {getNextStatus(order.status) && (
-                                        <DropdownMenuItem
-                                          onClick={() => handleUpdateOrderStatus(order.orderId, getNextStatus(order.status)!)}
-                                          disabled={updatingStatus === order.orderId.toString()}
-                                        >
-                                          <ImageIcon className="mr-2 h-4 w-4" />
-                                          {updatingStatus === order.orderId.toString() ? 'Updating...' : getStatusActionLabel(getNextStatus(order.status)!)}
-                                        </DropdownMenuItem>
-                                      )}
-                                      {/* Only show "Mark as Completed" if getNextStatus doesn't already provide it */}
-                                      {order.status !== 'cancelled' && getNextStatus(order.status) !== 'completed' && (
-                                        <DropdownMenuItem
-                                          onClick={() => handleUpdateOrderStatus(order.orderId, 'completed')}
-                                          disabled={updatingStatus === order.orderId.toString()}
-                                        >
-                                          <CheckCircle className="mr-2 h-4 w-4" />
-                                          {updatingStatus === order.orderId.toString() ? 'Marking...' : 'Mark as Completed'}
-                                        </DropdownMenuItem>
-                                      )}
                                       <DropdownMenuItem
                                         onClick={() => handleUpdateOrderStatus(order.orderId, 'cancelled')}
                                         disabled={updatingStatus === order.orderId.toString()}
@@ -1002,6 +1101,81 @@ export default function RadiologyPage() {
           </Card>
         </TabsContent>
 
+        <TabsContent value="reports" className="space-y-4 mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Stored radiology reports</CardTitle>
+              <CardDescription>
+                Final reports from <code className="text-xs">radiology_reports</code> (findings, impression, recommendations) linked to orders and patients.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex flex-wrap gap-2 items-end">
+                <div className="flex flex-col gap-1 max-w-sm flex-1">
+                  <label className="text-xs text-muted-foreground">Search</label>
+                  <Input
+                    placeholder="Patient, order #, exam, findings…"
+                    value={reportSearch}
+                    onChange={(e) => setReportSearch(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && loadStoredReports()}
+                  />
+                </div>
+                <Button type="button" variant="secondary" size="sm" onClick={() => loadStoredReports()}>
+                  Search
+                </Button>
+              </div>
+              {reportsLoading ? (
+                <div className="flex justify-center py-12 text-muted-foreground">
+                  <Loader2 className="h-8 w-8 animate-spin" />
+                </div>
+              ) : storedReports.length === 0 ? (
+                <p className="text-sm text-muted-foreground py-8 text-center">No stored reports yet. Complete an order with “Add Results” or from the radiology queue.</p>
+              ) : (
+                <div className="rounded-md border overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Report date</TableHead>
+                        <TableHead>Order</TableHead>
+                        <TableHead>Patient</TableHead>
+                        <TableHead>Exam</TableHead>
+                        <TableHead>Impression</TableHead>
+                        <TableHead>Reporter</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {storedReports.map((r: any) => (
+                        <TableRow key={r.reportId}>
+                          <TableCell className="whitespace-nowrap">
+                            {r.reportDate ? format(new Date(r.reportDate), "yyyy-MM-dd") : "—"}
+                          </TableCell>
+                          <TableCell className="font-mono text-xs">{r.orderNumber || r.orderId}</TableCell>
+                          <TableCell>
+                            {r.firstName || r.lastName
+                              ? `${r.firstName || ""} ${r.lastName || ""}`.trim()
+                              : r.patientNumber || `#${r.patientId}`}
+                          </TableCell>
+                          <TableCell className="max-w-[180px]">
+                            <span className="line-clamp-2 text-sm">{r.examName || "—"}</span>
+                          </TableCell>
+                          <TableCell className="max-w-[240px]">
+                            <span className="line-clamp-3 text-sm text-muted-foreground">{r.impression || "—"}</span>
+                          </TableCell>
+                          <TableCell className="text-sm whitespace-nowrap">
+                            {r.reportedByFirstName || r.reportedByLastName
+                              ? `${r.reportedByFirstName || ""} ${r.reportedByLastName || ""}`.trim()
+                              : "—"}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         <TabsContent value="catalog" className="space-y-4 mt-4">
           <Card>
             <CardHeader>
@@ -1017,6 +1191,14 @@ export default function RadiologyPage() {
               </div>
             </CardHeader>
             <CardContent>
+              {catalogError && (
+                <div className="mb-4 p-3 text-sm text-red-500 bg-red-50 rounded-md">
+                  {catalogError}
+                  <Button variant="link" size="sm" onClick={loadExamTypes} className="ml-2 h-auto p-0">
+                    Retry
+                  </Button>
+                </div>
+              )}
               <div className="flex items-center justify-between mb-4">
                 <div className="flex gap-2 flex-wrap">
                   <Button
@@ -1212,7 +1394,9 @@ export default function RadiologyPage() {
                         ? "default"
                         : selectedOrder.status === "in_progress"
                           ? "secondary"
-                          : "outline"
+                          : selectedOrder.status === "awaiting_payment"
+                            ? "destructive"
+                            : "outline"
                     }
                   >
                     {formatStatus(selectedOrder.status)}
@@ -1521,7 +1705,7 @@ function ExamTypeForm({ examType, onSave, onCancel }: { examType: ExamType | nul
   )
 }
 
-// Examination Results Form Component
+// Examination Results Form Component — persists to radiology_exams / radiology_reports
 function ExaminationResultsForm({
   order,
   onSave,
@@ -1529,19 +1713,23 @@ function ExaminationResultsForm({
   saving
 }: {
   order: RadiologyOrder | null
-  onSave: (notes: string) => void
+  onSave: (payload: { findings?: string; impression?: string; recommendations?: string }) => void
   onCancel: () => void
   saving: boolean
 }) {
-  const [notes, setNotes] = useState(order?.notes || '')
+  const [findings, setFindings] = useState("")
+  const [impression, setImpression] = useState("")
+  const [recommendations, setRecommendations] = useState("")
 
   useEffect(() => {
-    setNotes(order?.notes || '')
-  }, [order])
+    setFindings("")
+    setImpression("")
+    setRecommendations("")
+  }, [order?.orderId])
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    onSave(notes)
+    onSave({ findings, impression, recommendations })
   }
 
   if (!order) return null
@@ -1562,13 +1750,12 @@ function ExaminationResultsForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      {/* Order Details Summary */}
       <Card className="bg-muted/50">
         <CardHeader className="pb-3">
           <CardTitle className="text-base">Examination Order Details</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="grid grid-cols-2 gap-4 text-sm">
+          <div className="grid grid-cols-2 gap-3 text-sm">
             <div>
               <span className="text-muted-foreground font-medium">Order Number:</span>
               <p className="font-mono font-semibold">{order.orderNumber}</p>
@@ -1577,30 +1764,12 @@ function ExaminationResultsForm({
               <span className="text-muted-foreground font-medium">Order Date:</span>
               <p>{format(new Date(order.orderDate), "PPP")}</p>
             </div>
-            <div>
+            <div className="col-span-2">
               <span className="text-muted-foreground font-medium">Examination:</span>
               <p className="font-semibold">
                 {order.examName || 'Unknown Examination'}
                 {order.examCode && <span className="text-muted-foreground ml-2">({order.examCode})</span>}
               </p>
-            </div>
-            <div>
-              <span className="text-muted-foreground font-medium">Category:</span>
-              <p>{order.category || 'N/A'}</p>
-            </div>
-            {order.bodyPart && (
-              <div>
-                <span className="text-muted-foreground font-medium">Body Part:</span>
-                <p>{order.bodyPart}</p>
-              </div>
-            )}
-            <div>
-              <span className="text-muted-foreground font-medium">Priority:</span>
-              <div className="mt-1">
-                <Badge variant={order.priority === 'stat' || order.priority === 'urgent' ? 'destructive' : 'outline'}>
-                  {order.priority?.toUpperCase() || 'ROUTINE'}
-                </Badge>
-              </div>
             </div>
             <div>
               <span className="text-muted-foreground font-medium">Patient:</span>
@@ -1620,18 +1789,38 @@ function ExaminationResultsForm({
         </CardContent>
       </Card>
 
-      <div>
-        <label className="text-sm font-medium mb-2 block">Examination Results/Notes</label>
-        <Textarea
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          placeholder="Enter examination findings, results, notes, or any relevant information..."
-          className="min-h-[200px]"
-        />
-        <p className="text-xs text-muted-foreground mt-2">
-          Add findings, impressions, recommendations, or any notes about the examination.
-        </p>
+      <div className="grid gap-3 md:grid-cols-1">
+        <div className="space-y-1">
+          <label className="text-sm font-medium">Findings</label>
+          <Textarea
+            value={findings}
+            onChange={(e) => setFindings(e.target.value)}
+            placeholder="Examination findings…"
+            className="min-h-[100px] text-sm"
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="text-sm font-medium">Impression</label>
+          <Textarea
+            value={impression}
+            onChange={(e) => setImpression(e.target.value)}
+            placeholder="Radiologist impression…"
+            className="min-h-[80px] text-sm"
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="text-sm font-medium">Recommendations</label>
+          <Textarea
+            value={recommendations}
+            onChange={(e) => setRecommendations(e.target.value)}
+            placeholder="Follow-up or clinical recommendations (optional)"
+            className="min-h-[64px] text-sm"
+          />
+        </div>
       </div>
+      <p className="text-xs text-muted-foreground">
+        Saves to radiology reports and marks the order completed. Order must be paid (not awaiting payment).
+      </p>
 
       <div className="flex justify-end gap-2">
         <Button type="button" variant="outline" onClick={onCancel} disabled={saving}>
@@ -1644,7 +1833,7 @@ function ExaminationResultsForm({
               Saving...
             </>
           ) : (
-            'Save Results'
+            'Save report'
           )}
         </Button>
       </div>

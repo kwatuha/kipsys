@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from "react"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -10,11 +9,12 @@ import { Label } from "@/components/ui/label"
 import { useToast } from "@/hooks/use-toast"
 import { telemedicineApi } from "@/lib/api"
 import { useAuth } from "@/lib/auth/auth-context"
+import { useTelemedicineFloating } from "@/lib/telemedicine-floating-context"
 
 export default function TelemedicineCreatePage() {
-  const router = useRouter()
   const { toast } = useToast()
   const { user } = useAuth()
+  const { openSession: openTelemedicineFloating } = useTelemedicineFloating()
 
   const [originType, setOriginType] = useState<"appointment" | "inpatient" | "standalone">("appointment")
   const [appointmentId, setAppointmentId] = useState<string>("")
@@ -50,8 +50,11 @@ export default function TelemedicineCreatePage() {
       // standalone: no appointmentId / admissionId
 
       const created = await telemedicineApi.createSession(payload)
-      toast({ title: "Telemedicine session created", description: `SessionId: ${created.sessionId}` })
-      router.push(`/telemedicine/${created.sessionId}`)
+      openTelemedicineFloating(created.sessionId)
+      toast({
+        title: "Telemedicine session created",
+        description: `Session #${created.sessionId} — use the floating panel; minimize to browse the app.`,
+      })
     } catch (err: any) {
       console.error(err)
       toast({

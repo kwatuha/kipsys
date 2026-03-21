@@ -21,10 +21,13 @@ export function filterNavigationCategories(
   categories: NavigationCategory[],
   roleAccess: RoleMenuAccess | null
 ): NavigationCategory[] {
-  if (!roleAccess || roleAccess.categories.length === 0) {
-    // If no access data, return empty array (secure by default)
-    // Or return all if you want permissive default
+  if (!roleAccess) {
     return []
+  }
+
+  // No rows in role_menu_categories (empty array from API) = not configured → show all categories
+  if (roleAccess.categories.length === 0) {
+    return categories
   }
 
   return categories.filter(category =>
@@ -44,8 +47,8 @@ export function filterSidebarItems(
     return []
   }
 
-  // If category is not allowed, return empty
-  if (!roleAccess.categories.includes(categoryId)) {
+  // If specific categories are configured, hide items for categories not in the list
+  if (roleAccess.categories.length > 0 && !roleAccess.categories.includes(categoryId)) {
     return []
   }
 

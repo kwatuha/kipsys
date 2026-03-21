@@ -28,7 +28,16 @@ export default function ServicePointDashboard() {
   const staffName = "Dr. James Ndiwa"
 
   // All available service points
-  const allServicePoints: ServicePoint[] = ["triage", "consultation", "laboratory", "radiology", "pharmacy", "cashier"]
+  const allServicePoints: ServicePoint[] = [
+    "triage",
+    "consultation",
+    "laboratory",
+    "radiology",
+    "pharmacy",
+    "cashier",
+    "telemedicine",
+    "procedure",
+  ]
 
   // Filter service points based on role access
   const allowedServicePoints = menuLoading || !menuAccess

@@ -169,6 +169,10 @@ async function triggerWorkflowProgression(connection, invoice, patientId, invoic
                     );
 
                     if (labOrders.length > 0 && labOrders[0].status !== 'cancelled') {
+                        await connection.execute(
+                            `UPDATE lab_test_orders SET status = 'pending' WHERE orderNumber = ? AND status = 'awaiting_payment'`,
+                            [orderNumber]
+                        );
                         // Complete cashier queue entries for lab test payment
                         const [cashierQueues] = await connection.execute(
                             `SELECT queueId FROM queue_entries
@@ -215,6 +219,70 @@ async function triggerWorkflowProgression(connection, invoice, patientId, invoic
                 }
             } catch (labError) {
                 console.error('Error creating laboratory queue after waiver:', labError);
+            }
+        }
+
+        // Radiology invoice waived → radiology queue (same flow as lab)
+        if (notes.includes('Radiology payment - Order:') || itemDescriptions.includes('Radiology Exam:')) {
+            try {
+                const radOrderMatch = notes.match(/Order:\s*([A-Z0-9-]+)/i);
+                if (radOrderMatch && radOrderMatch[1]) {
+                    const orderNumber = radOrderMatch[1].trim();
+                    const [radOrders] = await connection.execute(
+                        'SELECT orderId, patientId, status, priority FROM radiology_exam_orders WHERE orderNumber = ?',
+                        [orderNumber]
+                    );
+
+                    if (radOrders.length > 0 && radOrders[0].status !== 'cancelled') {
+                        await connection.execute(
+                            `UPDATE radiology_exam_orders SET status = 'pending' WHERE orderNumber = ? AND status = 'awaiting_payment'`,
+                            [orderNumber]
+                        );
+                        const [cashierQueues] = await connection.execute(
+                            `SELECT queueId FROM queue_entries
+                             WHERE patientId = ? AND servicePoint = 'cashier'
+                             AND (notes LIKE ? OR notes LIKE ?)
+                             AND status NOT IN ('completed', 'cancelled')`,
+                            [patientId, `%Radiology payment%`, `%Order: ${orderNumber}%`]
+                        );
+
+                        for (const cashierQueue of cashierQueues) {
+                            await connection.execute(
+                                `UPDATE queue_entries
+                                 SET status = 'completed', endTime = NOW(), updatedAt = NOW(),
+                                     notes = CONCAT(COALESCE(notes, ''), ' - Completed: Radiology fees waived')
+                                 WHERE queueId = ?`,
+                                [cashierQueue.queueId]
+                            );
+                        }
+
+                        const [existingRadQ] = await connection.execute(
+                            `SELECT queueId FROM queue_entries
+                             WHERE patientId = ? AND servicePoint = 'radiology'
+                             AND notes LIKE ? AND status NOT IN ('completed', 'cancelled')`,
+                            [patientId, `%Order: ${orderNumber}%`]
+                        );
+
+                        if (existingRadQ.length === 0) {
+                            const [radCount] = await connection.execute(
+                                'SELECT COUNT(*) as count FROM queue_entries WHERE DATE(arrivalTime) = CURDATE() AND servicePoint = "radiology"'
+                            );
+                            const radTicketNum = radCount[0].count + 1;
+                            const radTicketNumber = `RX-${String(radTicketNum).padStart(3, '0')}`;
+                            const radPriority = radOrders[0].priority;
+                            const queuePriority = radPriority === 'stat' || radPriority === 'urgent' ? 'urgent' : 'normal';
+
+                            await connection.execute(
+                                `INSERT INTO queue_entries
+                                (patientId, ticketNumber, servicePoint, priority, status, notes, createdBy)
+                                VALUES (?, ?, 'radiology', ?, 'waiting', ?, ?)`,
+                                [patientId, radTicketNumber, queuePriority, `Radiology Order: ${orderNumber} (Waived)`, userId]
+                            );
+                        }
+                    }
+                }
+            } catch (radError) {
+                console.error('Error creating radiology queue after waiver:', radError);
             }
         }
 

@@ -1,5 +1,5 @@
 "use client"
-import { useState, useEffect, Suspense, useRef } from "react"
+import { useState, useEffect, Suspense, useRef, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -62,7 +62,9 @@ export default function LaboratoryPage() {
   const [addTestRequestOpen, setAddTestRequestOpen] = useState(false)
   const [labOrders, setLabOrders] = useState<LabOrder[]>([])
   const [loading, setLoading] = useState(true)
+  /** Only for list load failures — not order details / mutations (avoids stale banner when switching tabs) */
   const [error, setError] = useState<string | null>(null)
+  const loadOrdersSeq = useRef(0)
   const [statusFilter, setStatusFilter] = useState<string>("")
   const [search, setSearch] = useState("")
   const [dateFrom, setDateFrom] = useState<string>("")
@@ -95,19 +97,22 @@ export default function LaboratoryPage() {
   const [savingResults, setSavingResults] = useState(false)
   const [orderItems, setOrderItems] = useState<any[]>([])
 
-  const loadOrders = async () => {
+  const loadOrders = useCallback(async () => {
+    const seq = ++loadOrdersSeq.current
     try {
       setLoading(true)
       setError(null)
       const data = await laboratoryApi.getOrders(undefined, statusFilter || undefined)
+      if (seq !== loadOrdersSeq.current) return
       setLabOrders(data)
     } catch (err: any) {
+      if (seq !== loadOrdersSeq.current) return
       setError(err.message || 'Failed to load laboratory orders')
       console.error('Error loading laboratory orders:', err)
     } finally {
-      setLoading(false)
+      if (seq === loadOrdersSeq.current) setLoading(false)
     }
-  }
+  }, [statusFilter])
 
   const loadCriticalResults = async () => {
     try {
@@ -128,7 +133,7 @@ export default function LaboratoryPage() {
     loadOrders()
     loadCriticalResults()
     loadDoctors()
-  }, [statusFilter])
+  }, [loadOrders])
 
   // Close context menu on outside click
   useEffect(() => {
@@ -251,7 +256,11 @@ export default function LaboratoryPage() {
 
       setSelectedOrder(details)
     } catch (err: any) {
-      setError(err.message || 'Failed to load order details')
+      toast({
+        title: "Error loading order",
+        description: err.message || 'Failed to load order details',
+        variant: "destructive",
+      })
       console.error('Error loading order details:', err)
     } finally {
       setLoadingOrderDetails(false)
@@ -261,7 +270,6 @@ export default function LaboratoryPage() {
   const handleUpdateOrderStatus = async (orderId: number, status: string) => {
     setUpdatingStatus(orderId.toString())
     try {
-      setError(null)
       await laboratoryApi.updateOrder(orderId.toString(), { status })
       await loadOrders()
       toast({
@@ -270,7 +278,6 @@ export default function LaboratoryPage() {
       })
     } catch (err: any) {
       const errorMessage = err.message || 'Failed to update order status'
-      setError(errorMessage)
       toast({
         title: "Error updating status",
         description: errorMessage,
@@ -306,7 +313,6 @@ export default function LaboratoryPage() {
 
     setSavingOrder(true)
     try {
-      setError(null)
       await laboratoryApi.updateOrder(editingOrder.orderId.toString(), data)
       toast({
         title: "Order updated",
@@ -317,7 +323,6 @@ export default function LaboratoryPage() {
       await loadOrders()
     } catch (err: any) {
       const errorMessage = err.message || 'Failed to update order'
-      setError(errorMessage)
       toast({
         title: "Error updating order",
         description: errorMessage,
@@ -357,7 +362,6 @@ export default function LaboratoryPage() {
 
     setSavingResults(true)
     try {
-      setError(null)
       await laboratoryApi.createResult(orderForResults.orderId.toString(), data)
       toast({
         title: "Results added",
@@ -370,7 +374,6 @@ export default function LaboratoryPage() {
       await loadCriticalResults() // Reload critical results after saving
     } catch (err: any) {
       const errorMessage = err.message || 'Failed to save results'
-      setError(errorMessage)
       toast({
         title: "Error saving results",
         description: errorMessage,
@@ -843,12 +846,18 @@ export default function LaboratoryPage() {
         pagePath="/laboratory"
         defaultValue="tests"
         className="w-full"
+        onValueChange={(v) => {
+          if (v !== "tests") setError(null)
+        }}
       >
         <TabsContent value="tests" className="space-y-4 mt-4">
           <Card>
             <CardHeader>
               <CardTitle>Laboratory Test Requests</CardTitle>
-              <CardDescription>View and manage laboratory test requests and results</CardDescription>
+              <CardDescription>
+                View and manage laboratory work. <strong>All</strong> excludes orders still awaiting payment at cashier;
+                use <strong>Awaiting payment</strong> to see those.
+              </CardDescription>
             </CardHeader>
             <CardContent>
               {error && (
@@ -867,16 +876,25 @@ export default function LaboratoryPage() {
                       variant={statusFilter === "" ? "default" : "outline"}
                       size="sm"
                       onClick={() => setStatusFilter("")}
+                      title="Lab work queue: excludes unpaid (awaiting payment at cashier)"
                     >
-                      All
+                      All (lab queue)
+                    </Button>
+                    <Button
+                      variant={statusFilter === "awaiting_payment" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setStatusFilter("awaiting_payment")}
+                      title="Ordered; patient must pay at cashier before lab work"
+                    >
+                      Awaiting payment
                     </Button>
                   <Button
-                    variant={statusFilter === "pending" ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setStatusFilter("pending")}
-                  >
-                    Pending
-                  </Button>
+                      variant={statusFilter === "pending" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setStatusFilter("pending")}
+                    >
+                      Pending
+                    </Button>
                   <Button
                     variant={statusFilter === "sample_collected" ? "default" : "outline"}
                     size="sm"

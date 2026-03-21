@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS radiology_exam_orders (
     bodyPart VARCHAR(200), -- e.g., "Chest", "Abdomen", "Head"
     clinicalIndication TEXT,
     priority ENUM('routine', 'urgent', 'stat') DEFAULT 'routine',
-    status ENUM('pending', 'scheduled', 'in_progress', 'completed', 'cancelled') DEFAULT 'pending',
+    status ENUM('awaiting_payment', 'pending', 'scheduled', 'in_progress', 'completed', 'cancelled') DEFAULT 'pending',
     scheduledDate DATETIME NULL,
     notes TEXT,
     createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

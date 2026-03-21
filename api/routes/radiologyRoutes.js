@@ -179,7 +179,8 @@ router.delete('/exam-types/:id', async (req, res) => {
 
 /**
  * @route GET /api/radiology/orders
- * @description Get radiology exam orders
+ * @description Get radiology exam orders.
+ * When `patientId` is omitted and `status` is omitted, excludes `awaiting_payment` (work queue only).
  */
 router.get('/orders', async (req, res) => {
     try {
@@ -207,6 +208,9 @@ router.get('/orders', async (req, res) => {
         if (status) {
             query += ` AND ro.status = ?`;
             params.push(status);
+        } else if (!patientId) {
+            // Imaging work list: unpaid orders (awaiting_payment) stay at cashier — do not list here
+            query += ` AND ro.status != 'awaiting_payment'`;
         }
 
         query += ` ORDER BY ro.orderDate DESC LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset)}`;
@@ -225,20 +229,23 @@ router.get('/orders', async (req, res) => {
  */
 router.post('/orders', async (req, res) => {
     const connection = await pool.getConnection();
+    const userId = req.user?.id || req.user?.userId || null;
     try {
         await connection.beginTransaction();
 
         const { orderNumber, patientId, orderedBy, examTypeId, orderDate, bodyPart, clinicalIndication, priority, status, scheduledDate, notes, admissionId } = req.body;
 
-        // Get exam type details to include in clinical indication
+        // Get exam type details (including cost for billing) to include in clinical indication
         let examName = null;
+        let examTypeRow = null;
         if (examTypeId) {
             const [examType] = await connection.execute(
-                'SELECT examName, examCode FROM radiology_exam_types WHERE examTypeId = ?',
+                'SELECT examName, examCode, cost FROM radiology_exam_types WHERE examTypeId = ?',
                 [examTypeId]
             );
             if (examType.length > 0) {
-                examName = examType[0].examName;
+                examTypeRow = examType[0];
+                examName = examTypeRow.examName;
             }
         }
 
@@ -289,7 +296,6 @@ router.post('/orders', async (req, res) => {
 
                 if (insertAttempts >= 100) {
                     await connection.rollback();
-                    connection.release();
                     return res.status(500).json({
                         message: 'Failed to generate unique radiology order number',
                         error: 'Please try again.'
@@ -342,7 +348,6 @@ router.post('/orders', async (req, res) => {
 
                     if (insertAttempts >= 100) {
                         await connection.rollback();
-                        connection.release();
                         return res.status(500).json({
                             message: 'Failed to generate unique radiology order number',
                             error: 'Please try again.'
@@ -352,9 +357,64 @@ router.post('/orders', async (req, res) => {
                 } else {
                     // Not a duplicate key error - rethrow
                     await connection.rollback();
-                    connection.release();
                     throw insertError;
                 }
+            }
+        }
+
+        const orderId = result.insertId;
+
+        // Invoice + cashier queue at order time (patient pays before radiology queue / service)
+        const invoiceTotal = examTypeRow ? parseFloat(examTypeRow.cost || 0) : 0;
+        if (invoiceTotal > 0) {
+            await connection.execute(
+                `UPDATE radiology_exam_orders SET status = 'awaiting_payment' WHERE orderId = ?`,
+                [orderId]
+            );
+
+            const today = new Date().toISOString().split('T')[0].replace(/-/g, '');
+            const datePrefix = `INV-${today}-`;
+            const [maxInv] = await connection.execute(
+                `SELECT MAX(CAST(SUBSTRING_INDEX(invoiceNumber, '-', -1) AS UNSIGNED)) as maxNum
+                 FROM invoices WHERE invoiceNumber LIKE CONCAT(?, '%')`,
+                [datePrefix]
+            );
+            let nextInv = (maxInv[0]?.maxNum || 0) + 1;
+            let invoiceNumber = `${datePrefix}${String(nextInv).padStart(4, '0')}`;
+
+            const invoiceNotes = `Radiology payment - Order: ${finalOrderNum}${admissionId ? ` (Admission ${admissionId})` : ''}`;
+
+            const [invResult] = await connection.execute(
+                `INSERT INTO invoices (invoiceNumber, patientId, invoiceDate, totalAmount, balance, status, notes, createdBy)
+                 VALUES (?, ?, CURDATE(), ?, ?, 'pending', ?, ?)`,
+                [invoiceNumber, patientId, invoiceTotal, invoiceTotal, invoiceNotes, userId]
+            );
+            const invoiceId = invResult.insertId;
+
+            const itemDescription = `Radiology Exam: ${examTypeRow.examName || 'Exam'} (${examTypeRow.examCode || 'N/A'}) - Order ${finalOrderNum}`;
+            await connection.execute(
+                `INSERT INTO invoice_items (invoiceId, description, quantity, unitPrice, totalPrice)
+                 VALUES (?, ?, 1, ?, ?)`,
+                [invoiceId, itemDescription, invoiceTotal, invoiceTotal]
+            );
+
+            const [existingCashier] = await connection.execute(
+                `SELECT queueId FROM queue_entries
+                 WHERE patientId = ? AND servicePoint = 'cashier'
+                   AND status IN ('waiting', 'called', 'serving')`,
+                [patientId]
+            );
+            if (existingCashier.length === 0) {
+                const [cashierCount] = await connection.execute(
+                    'SELECT COUNT(*) as count FROM queue_entries WHERE DATE(arrivalTime) = CURDATE() AND servicePoint = "cashier"'
+                );
+                const ticketNumber = `C-${String((cashierCount[0]?.count || 0) + 1).padStart(3, '0')}`;
+                const queuePriority = (priority === 'stat' || priority === 'urgent') ? 'urgent' : 'normal';
+                await connection.execute(
+                    `INSERT INTO queue_entries (patientId, ticketNumber, servicePoint, priority, status, notes, createdBy)
+                     VALUES (?, ?, 'cashier', ?, 'waiting', ?, ?)`,
+                    [patientId, ticketNumber, queuePriority, `Radiology payment - Order: ${finalOrderNum}`, userId]
+                );
             }
         }
 
@@ -368,17 +428,17 @@ router.post('/orders', async (req, res) => {
              LEFT JOIN users u ON ro.orderedBy = u.userId
              LEFT JOIN radiology_exam_types ret ON ro.examTypeId = ret.examTypeId
              WHERE ro.orderId = ?`,
-            [result.insertId]
+            [orderId]
         );
 
         await connection.commit();
-        connection.release();
         res.status(201).json(newOrder[0]);
     } catch (error) {
         await connection.rollback();
-        connection.release();
         console.error('Error creating radiology order:', error);
         res.status(500).json({ message: 'Error creating radiology order', error: error.message });
+    } finally {
+        connection.release();
     }
 });
 
@@ -426,12 +486,32 @@ router.put('/orders/:id', async (req, res) => {
 
         // Check if order exists and get current exam type
         const [existing] = await pool.execute(
-            'SELECT examTypeId, clinicalIndication FROM radiology_exam_orders WHERE orderId = ?',
+            'SELECT examTypeId, clinicalIndication, status, orderNumber FROM radiology_exam_orders WHERE orderId = ?',
             [id]
         );
 
         if (existing.length === 0) {
             return res.status(404).json({ message: 'Radiology order not found' });
+        }
+
+        const currentRowStatus = existing[0].status;
+
+        // Fees must be paid (cashier) before radiology work / results — same pattern as laboratory
+        if (currentRowStatus === 'awaiting_payment') {
+            if (status !== undefined && status !== 'awaiting_payment' && status !== 'cancelled') {
+                return res.status(400).json({
+                    message: 'Radiology fees must be paid (cashier) before the order can be advanced.',
+                    code: 'RADIOLOGY_AWAITING_PAYMENT',
+                    orderNumber: existing[0].orderNumber,
+                });
+            }
+            if (notes !== undefined && notes !== null && String(notes).trim() !== '') {
+                return res.status(400).json({
+                    message: 'Radiology fees must be paid (cashier) before results or notes can be recorded.',
+                    code: 'RADIOLOGY_AWAITING_PAYMENT',
+                    orderNumber: existing[0].orderNumber,
+                });
+            }
         }
 
         // Build update query
@@ -553,6 +633,246 @@ router.put('/orders/:id', async (req, res) => {
     } catch (error) {
         console.error('Error updating radiology order:', error);
         res.status(500).json({ message: 'Error updating radiology order', error: error.message });
+    }
+});
+
+/**
+ * @route GET /api/radiology/reports
+ * @description Stored radiology reports (joined exams + orders + patients)
+ */
+router.get('/reports', async (req, res) => {
+    try {
+        const {
+            patientId,
+            search,
+            dateFrom,
+            dateTo,
+            page = 1,
+            limit = 50,
+        } = req.query;
+        const offset = (Math.max(1, parseInt(page, 10) || 1) - 1) * Math.min(200, Math.max(1, parseInt(limit, 10) || 50));
+        const lim = Math.min(200, Math.max(1, parseInt(limit, 10) || 50));
+
+        let query = `
+            SELECT
+                rr.reportId,
+                rr.reportDate,
+                rr.findings,
+                rr.impression,
+                rr.recommendations,
+                rr.status AS reportStatus,
+                rr.reportedBy,
+                ur.firstName AS reportedByFirstName,
+                ur.lastName AS reportedByLastName,
+                re.examId,
+                re.examDate,
+                re.status AS examStatus,
+                re.technicianId,
+                ro.orderId,
+                ro.orderNumber,
+                ro.patientId,
+                ro.clinicalIndication AS orderClinicalIndication,
+                ro.bodyPart,
+                pt.firstName,
+                pt.lastName,
+                pt.patientNumber,
+                ret.examCode,
+                ret.examName,
+                ret.category
+            FROM radiology_reports rr
+            INNER JOIN radiology_exams re ON rr.examId = re.examId
+            INNER JOIN radiology_exam_orders ro ON re.orderId = ro.orderId
+            LEFT JOIN patients pt ON ro.patientId = pt.patientId
+            LEFT JOIN radiology_exam_types ret ON ro.examTypeId = ret.examTypeId
+            LEFT JOIN users ur ON rr.reportedBy = ur.userId
+            WHERE 1=1
+        `;
+        const params = [];
+
+        if (patientId) {
+            query += ' AND ro.patientId = ?';
+            params.push(patientId);
+        }
+        if (dateFrom) {
+            query += ' AND rr.reportDate >= ?';
+            params.push(dateFrom);
+        }
+        if (dateTo) {
+            query += ' AND rr.reportDate <= ?';
+            params.push(dateTo);
+        }
+        if (search) {
+            const term = `%${search}%`;
+            query += ` AND (
+                ro.orderNumber LIKE ? OR pt.patientNumber LIKE ?
+                OR CONCAT(COALESCE(pt.firstName,''), ' ', COALESCE(pt.lastName,'')) LIKE ?
+                OR ret.examName LIKE ? OR rr.findings LIKE ? OR rr.impression LIKE ?
+            )`;
+            params.push(term, term, term, term, term, term);
+        }
+
+        query += ` ORDER BY rr.reportDate DESC, rr.reportId DESC LIMIT ${lim} OFFSET ${offset}`;
+
+        const [rows] = await pool.execute(query, params);
+        res.status(200).json(rows);
+    } catch (error) {
+        console.error('Error fetching radiology reports:', error);
+        res.status(500).json({ message: 'Error fetching radiology reports', error: error.message });
+    }
+});
+
+/**
+ * @route POST /api/radiology/orders/:orderId/complete-report
+ * @description Create/update performed exam + final report; mark order completed
+ */
+router.post('/orders/:orderId/complete-report', async (req, res) => {
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
+        const { orderId } = req.params;
+        const {
+            findings,
+            impression,
+            recommendations,
+            examDate,
+            technicianId,
+            performedBy,
+            reportedBy,
+            queueId,
+        } = req.body;
+
+        const [orders] = await connection.execute(
+            'SELECT orderId, patientId, status, orderNumber FROM radiology_exam_orders WHERE orderId = ?',
+            [orderId]
+        );
+        if (orders.length === 0) {
+            await connection.rollback();
+            return res.status(404).json({ message: 'Radiology order not found' });
+        }
+        const orderRow = orders[0];
+        if (orderRow.status === 'awaiting_payment') {
+            await connection.rollback();
+            return res.status(400).json({
+                message: 'Radiology fees must be paid before recording a report.',
+                code: 'RADIOLOGY_AWAITING_PAYMENT',
+                orderNumber: orderRow.orderNumber,
+            });
+        }
+        if (orderRow.status === 'cancelled') {
+            await connection.rollback();
+            return res.status(400).json({ message: 'Cannot record report for a cancelled order.' });
+        }
+
+        const reporter = reportedBy ? parseInt(reportedBy, 10) : null;
+        if (!reporter) {
+            await connection.rollback();
+            return res.status(400).json({ message: 'reportedBy (user id) is required' });
+        }
+
+        const examWhen = examDate ? new Date(examDate) : new Date();
+        const reportDay = examWhen.toISOString().slice(0, 10);
+
+        const [existingExams] = await connection.execute(
+            'SELECT examId FROM radiology_exams WHERE orderId = ? ORDER BY examId DESC LIMIT 1',
+            [orderId]
+        );
+
+        let examId;
+        if (existingExams.length > 0) {
+            examId = existingExams[0].examId;
+            await connection.execute(
+                `UPDATE radiology_exams SET examDate = ?, technicianId = ?, performedBy = ?, status = 'completed', updatedAt = NOW()
+                 WHERE examId = ?`,
+                [
+                    examWhen,
+                    technicianId || null,
+                    performedBy || reporter || null,
+                    examId,
+                ]
+            );
+        } else {
+            const [ins] = await connection.execute(
+                `INSERT INTO radiology_exams (orderId, examDate, performedBy, technicianId, status, notes)
+                 VALUES (?, ?, ?, ?, 'completed', NULL)`,
+                [orderId, examWhen, performedBy || reporter || null, technicianId || null]
+            );
+            examId = ins.insertId;
+        }
+
+        const [existingReports] = await connection.execute(
+            'SELECT reportId FROM radiology_reports WHERE examId = ? ORDER BY reportId DESC LIMIT 1',
+            [examId]
+        );
+
+        if (existingReports.length > 0) {
+            await connection.execute(
+                `UPDATE radiology_reports SET reportDate = ?, findings = ?, impression = ?, recommendations = ?,
+                 reportedBy = ?, status = 'final', updatedAt = NOW() WHERE reportId = ?`,
+                [
+                    reportDay,
+                    findings || null,
+                    impression || null,
+                    recommendations || null,
+                    reporter,
+                    existingReports[0].reportId,
+                ]
+            );
+        } else {
+            await connection.execute(
+                `INSERT INTO radiology_reports (examId, reportDate, findings, impression, recommendations, reportedBy, status)
+                 VALUES (?, ?, ?, ?, ?, ?, 'final')`,
+                [
+                    examId,
+                    reportDay,
+                    findings || null,
+                    impression || null,
+                    recommendations || null,
+                    reporter,
+                ]
+            );
+        }
+
+        const summaryParts = [];
+        if (findings && String(findings).trim()) summaryParts.push(`Findings:\n${findings.trim()}`);
+        if (impression && String(impression).trim()) summaryParts.push(`Impression:\n${impression.trim()}`);
+        if (recommendations && String(recommendations).trim()) {
+            summaryParts.push(`Recommendations:\n${recommendations.trim()}`);
+        }
+        const notesSummary = summaryParts.join('\n\n');
+
+        await connection.execute(
+            `UPDATE radiology_exam_orders SET status = 'completed', notes = ?, updatedAt = NOW() WHERE orderId = ?`,
+            [notesSummary || null, orderId]
+        );
+
+        if (queueId) {
+            await connection.execute(
+                `UPDATE queue_entries SET status = 'completed', endTime = NOW(), updatedAt = NOW() WHERE queueId = ? AND patientId = ?`,
+                [queueId, orderRow.patientId]
+            );
+        }
+
+        const [out] = await connection.execute(
+            `SELECT ro.*,
+                    pt.firstName, pt.lastName, pt.patientNumber,
+                    u.firstName as doctorFirstName, u.lastName as doctorLastName,
+                    ret.examCode, ret.examName, ret.category
+             FROM radiology_exam_orders ro
+             LEFT JOIN patients pt ON ro.patientId = pt.patientId
+             LEFT JOIN users u ON ro.orderedBy = u.userId
+             LEFT JOIN radiology_exam_types ret ON ro.examTypeId = ret.examTypeId
+             WHERE ro.orderId = ?`,
+            [orderId]
+        );
+
+        await connection.commit();
+        res.status(200).json({ order: out[0], examId, message: 'Report saved' });
+    } catch (error) {
+        await connection.rollback();
+        console.error('Error completing radiology report:', error);
+        res.status(500).json({ message: 'Error completing radiology report', error: error.message });
+    } finally {
+        connection.release();
     }
 });
 

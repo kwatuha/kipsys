@@ -14,6 +14,28 @@ interface ApiOptions {
   timeoutMs?: number;
 }
 
+/** Parse error message from failed response body (JSON or HTML/text from proxies). */
+function parseFailedResponseBodyText(rawText: string, status: number, statusText: string): string {
+  const trimmed = rawText?.trim() || '';
+  if (!trimmed) {
+    return `Request failed (${status} ${statusText || ''})`.trim();
+  }
+  try {
+    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    if (parsed && typeof parsed === 'object') {
+      return (
+        (parsed.error as string) ||
+        (parsed.message as string) ||
+        (parsed.msg as string) ||
+        `HTTP error! status: ${status}`
+      );
+    }
+  } catch {
+    return trimmed.length > 400 ? `${trimmed.slice(0, 200)}… (${status})` : `${trimmed} (${status})`;
+  }
+  return `HTTP error! status: ${status}`;
+}
+
 async function apiRequest<T>(endpoint: string, options: ApiOptions = {}): Promise<T> {
   const { method = 'GET', body, headers = {}, timeoutMs } = options;
 
@@ -76,13 +98,16 @@ async function apiRequest<T>(endpoint: string, options: ApiOptions = {}): Promis
       localStorage.removeItem('auth_token');
     }
 
-    const error = await response.json().catch(() => ({ message: 'An error occurred' }));
-    // Include both message and error fields from backend response
-    const errorMessage = error.error || error.message || error.msg || `HTTP error! status: ${response.status}`;
+    const rawText = await response.text();
+    const errorMessage = parseFailedResponseBodyText(rawText, response.status, response.statusText);
     const fullError = new Error(errorMessage);
     // Attach additional error details for debugging
     (fullError as any).status = response.status;
-    (fullError as any).response = error;
+    try {
+      (fullError as any).response = rawText ? JSON.parse(rawText) : null;
+    } catch {
+      (fullError as any).response = { raw: rawText?.slice(0, 500) };
+    }
     throw fullError;
   }
 
@@ -174,9 +199,8 @@ export const patientApi = {
             body: formData,
           }).then(async (res) => {
             if (!res.ok) {
-              const error = await res.json().catch(() => ({ message: 'An error occurred' }));
-              const errorMessage = error.error || error.message || error.msg || `HTTP error! status: ${res.status}`;
-              throw new Error(errorMessage);
+              const text = await res.text();
+              throw new Error(parseFailedResponseBodyText(text, res.status, res.statusText));
             }
             return res.json();
           });
@@ -743,6 +767,39 @@ export const radiologyApi = {
 
   updateOrder: (id: string, data: any) =>
     apiRequest<any>(`/api/radiology/orders/${id}`, { method: 'PUT', body: data }),
+
+  /** Persist exam + report rows and mark order completed */
+  completeOrderReport: (orderId: string, data: {
+    findings?: string;
+    impression?: string;
+    recommendations?: string;
+    examDate?: string;
+    technicianId?: number;
+    performedBy?: number;
+    reportedBy: number;
+    queueId?: number;
+  }) =>
+    apiRequest<any>(`/api/radiology/orders/${orderId}/complete-report`, { method: 'POST', body: data }),
+
+  /** Stored reports (radiology_reports + joins) */
+  getReports: (params?: {
+    patientId?: string;
+    search?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    page?: number;
+    limit?: number;
+  }) => {
+    const p = new URLSearchParams();
+    if (params?.patientId) p.append('patientId', params.patientId);
+    if (params?.search) p.append('search', params.search);
+    if (params?.dateFrom) p.append('dateFrom', params.dateFrom);
+    if (params?.dateTo) p.append('dateTo', params.dateTo);
+    if (params?.page) p.append('page', String(params.page));
+    if (params?.limit) p.append('limit', String(params.limit));
+    const q = p.toString();
+    return apiRequest<any[]>(`/api/radiology/reports${q ? `?${q}` : ''}`);
+  },
 };
 
 // Triage API
@@ -2124,6 +2181,28 @@ export const proceduresApi = {
 
   delete: (id: string) =>
     apiRequest<any>(`/api/procedures/${id}`, { method: 'DELETE' }),
+
+  /** Procedures performed on patients (report / register) */
+  getPerformedReport: (params?: {
+    patientId?: string;
+    search?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    hasOutcomeOnly?: boolean;
+    page?: number;
+    limit?: number;
+  }) => {
+    const p = new URLSearchParams();
+    if (params?.patientId) p.append('patientId', params.patientId);
+    if (params?.search) p.append('search', params.search);
+    if (params?.dateFrom) p.append('dateFrom', params.dateFrom);
+    if (params?.dateTo) p.append('dateTo', params.dateTo);
+    if (params?.hasOutcomeOnly) p.append('hasOutcomeOnly', 'true');
+    if (params?.page) p.append('page', String(params.page));
+    if (params?.limit) p.append('limit', String(params.limit));
+    const q = p.toString();
+    return apiRequest<any[]>(`/api/procedures/reports/performed${q ? `?${q}` : ''}`);
+  },
 
   // Patient procedures
   getPatientProcedures: (patientId: string, date?: string, procedureId?: string) => {

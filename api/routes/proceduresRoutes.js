@@ -56,6 +56,88 @@ router.get('/', async (req, res) => {
 });
 
 /**
+ * @route GET /api/procedures/reports/performed
+ * @description List procedures performed on patients (patient_procedures + patient + performer)
+ * @query patientId, search, dateFrom, dateTo, hasOutcomeOnly, page, limit
+ */
+router.get('/reports/performed', async (req, res) => {
+    try {
+        const {
+            patientId,
+            search,
+            dateFrom,
+            dateTo,
+            hasOutcomeOnly,
+            page = 1,
+            limit = 50,
+        } = req.query;
+        const offset = (Math.max(1, parseInt(page, 10) || 1) - 1) * Math.min(200, Math.max(1, parseInt(limit, 10) || 50));
+        const lim = Math.min(200, Math.max(1, parseInt(limit, 10) || 50));
+
+        let query = `
+            SELECT
+                pp.patientProcedureId,
+                pp.patientId,
+                pp.procedureId,
+                pp.procedureCode,
+                pp.procedureName,
+                pp.procedureDate,
+                pp.performedBy,
+                pp.notes,
+                pp.complications,
+                pp.procedureOutcome,
+                pp.admissionId,
+                pp.createdAt,
+                pt.firstName,
+                pt.lastName,
+                pt.patientNumber,
+                u.firstName AS performedByFirstName,
+                u.lastName AS performedByLastName
+            FROM patient_procedures pp
+            LEFT JOIN patients pt ON pp.patientId = pt.patientId
+            LEFT JOIN users u ON pp.performedBy = u.userId
+            WHERE 1=1
+        `;
+        const params = [];
+
+        if (patientId) {
+            query += ' AND pp.patientId = ?';
+            params.push(patientId);
+        }
+        if (dateFrom) {
+            query += ' AND pp.procedureDate >= ?';
+            params.push(dateFrom);
+        }
+        if (dateTo) {
+            query += ' AND pp.procedureDate <= ?';
+            params.push(dateTo);
+        }
+        if (hasOutcomeOnly === 'true') {
+            query += ` AND pp.procedureOutcome IS NOT NULL AND TRIM(pp.procedureOutcome) <> ''`;
+        }
+        if (search) {
+            const term = `%${search}%`;
+            query += ` AND (
+                pp.procedureName LIKE ? OR pp.procedureCode LIKE ?
+                OR pp.notes LIKE ? OR pp.complications LIKE ?
+                OR pp.procedureOutcome LIKE ?
+                OR pt.patientNumber LIKE ?
+                OR CONCAT(COALESCE(pt.firstName,''), ' ', COALESCE(pt.lastName,'')) LIKE ?
+            )`;
+            params.push(term, term, term, term, term, term, term);
+        }
+
+        query += ` ORDER BY pp.procedureDate DESC, pp.patientProcedureId DESC LIMIT ${lim} OFFSET ${offset}`;
+
+        const [rows] = await pool.execute(query, params);
+        res.status(200).json(rows);
+    } catch (error) {
+        console.error('Error fetching performed procedures report:', error);
+        res.status(500).json({ message: 'Error fetching performed procedures report', error: error.message });
+    }
+});
+
+/**
  * @route GET /api/procedures/:id
  * @description Get a single procedure by ID
  */
@@ -357,7 +439,7 @@ router.post('/patient', async (req, res) => {
     try {
         await connection.beginTransaction();
 
-        const { patientId, procedureId, procedureCode, procedureName, procedureDate, performedBy, notes, complications, admissionId } = req.body;
+        const { patientId, procedureId, procedureCode, procedureName, procedureDate, performedBy, notes, complications, procedureOutcome, admissionId } = req.body;
         const userId = req.user?.id;
 
         if (!patientId || !procedureDate) {
@@ -387,8 +469,8 @@ router.post('/patient', async (req, res) => {
 
         const [result] = await connection.execute(
             `INSERT INTO patient_procedures
-            (patientId, procedureId, procedureCode, procedureName, procedureDate, performedBy, notes, complications, admissionId)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            (patientId, procedureId, procedureCode, procedureName, procedureDate, performedBy, notes, complications, procedureOutcome, admissionId)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 patientId,
                 procedureId || null,
@@ -398,6 +480,7 @@ router.post('/patient', async (req, res) => {
                 performedBy || userId || null,
                 notes || null,
                 complications || null,
+                procedureOutcome || null,
                 admissionId || null
             ]
         );
@@ -449,10 +532,12 @@ router.post('/patient', async (req, res) => {
                 let nextNum = (maxResult[0]?.maxNum || 0) + 1;
                 let invoiceNumber = `${datePrefix}${String(nextNum).padStart(4, '0')}`;
 
+                const ppId = result.insertId;
+                const invNotes = `Procedure payment - PatientProcedure ${ppId} - ${finalProcedureName || 'Procedure'}`;
                 const [invResult] = await connection.execute(
                     `INSERT INTO invoices (invoiceNumber, patientId, invoiceDate, totalAmount, balance, status, notes, createdBy)
                      VALUES (?, ?, CURDATE(), ?, ?, 'pending', ?, ?)`,
-                    [invoiceNumber, patientId, procedureCost, procedureCost, `Procedure payment - ${finalProcedureName || 'Procedure'}`, userId || null]
+                    [invoiceNumber, patientId, procedureCost, procedureCost, invNotes, userId || null]
                 );
 
                 // Add invoice item
@@ -485,7 +570,7 @@ router.post('/patient', async (req, res) => {
                         [
                             patientId,
                             ticketNumber,
-                            `Procedure payment - ${finalProcedureName || 'Procedure'}`,
+                            `Procedure payment - PatientProcedure ${ppId} - ${finalProcedureName || 'Procedure'}`,
                             userId || null
                         ]
                     );
@@ -522,7 +607,7 @@ router.put('/patient/:id', async (req, res) => {
         await connection.beginTransaction();
 
         const { id } = req.params;
-        const { procedureId, procedureDate, performedBy, notes, complications } = req.body;
+        const { procedureId, procedureDate, performedBy, notes, complications, procedureOutcome } = req.body;
 
         // Check if patient procedure exists
         const [existing] = await connection.execute(
@@ -543,6 +628,7 @@ router.put('/patient/:id', async (req, res) => {
         if (performedBy !== undefined) { updates.push('performedBy = ?'); values.push(performedBy || null); }
         if (notes !== undefined) { updates.push('notes = ?'); values.push(notes || null); }
         if (complications !== undefined) { updates.push('complications = ?'); values.push(complications || null); }
+        if (procedureOutcome !== undefined) { updates.push('procedureOutcome = ?'); values.push(procedureOutcome || null); }
 
         if (updates.length === 0) {
             await connection.rollback();

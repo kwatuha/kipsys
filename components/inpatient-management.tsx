@@ -18,6 +18,7 @@ import { inpatientApi, laboratoryApi, userApi, doctorsApi, serviceChargeApi, bil
 import { format } from "date-fns"
 import { toast } from "@/components/ui/use-toast"
 import { useAuth } from "@/lib/auth/auth-context"
+import { useTelemedicineFloating } from "@/lib/telemedicine-floating-context"
 import { ProcedureCombobox } from "@/components/procedure-combobox"
 import { TestTypeCombobox } from "@/components/test-type-combobox"
 import { ExamTypeCombobox } from "@/components/exam-type-combobox"
@@ -35,6 +36,7 @@ interface InpatientManagementProps {
 export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissionUpdated }: InpatientManagementProps) {
   const router = useRouter()
   const { user } = useAuth()
+  const { openSession: openTelemedicineFloating } = useTelemedicineFloating()
   const currentRoleName = String((user as any)?.role || (user as any)?.roleName || "").toLowerCase()
   const canApproveBillAdjustments =
     currentRoleName.includes("admin") ||
@@ -742,13 +744,12 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
         return
       }
 
-      const path = `/telemedicine/${created.sessionId}`
-      router.push(path)
-      // Close admission dialog — if we don't, the full-screen modal stays above the new route
+      openTelemedicineFloating(created.sessionId)
+      // Close admission dialog — if we don't, the full-screen modal stays above the floating panel
       onOpenChange(false)
       toast({
         title: "Telemedicine session ready",
-        description: "Paste your Zoom join link on the next screen.",
+        description: "Use the floating panel — minimize it to browse charts or notes.",
       })
     } catch (err: any) {
       console.error("Telemedicine create failed:", err)

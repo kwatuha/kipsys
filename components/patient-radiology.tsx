@@ -91,6 +91,8 @@ export function PatientRadiology({ patientId }: { patientId: string }) {
         return 'secondary'
       case 'cancelled':
         return 'destructive'
+      case 'awaiting_payment':
+        return 'destructive'
       default:
         return 'outline'
     }

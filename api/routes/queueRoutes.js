@@ -4,7 +4,10 @@ const pool = require('../config/db');
 
 /**
  * @route GET /api/queue
- * @description Fetch active queue entries with pending bill status for cashier point
+ * @description Fetch active queue entries. When `servicePoint=cashier`, rows are limited to
+ * patients who still have a billable reason to be at cashier (pending invoices / waivers).
+ * When `servicePoint` is omitted, cashier rows are **not** filtered that way — merge
+ * `?servicePoint=cashier` for correct cashier counts (see queue management page).
  */
 router.get('/', async (req, res) => {
     try {

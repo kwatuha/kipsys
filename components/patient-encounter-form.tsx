@@ -58,6 +58,8 @@ import { DiagnosisCombobox } from "@/components/diagnosis-combobox"
 import { ProcedureCombobox } from "@/components/procedure-combobox"
 import { SymptomsAutocomplete } from "@/components/symptoms-autocomplete"
 import { ChiefComplaintCombobox } from "@/components/chief-complaint-combobox"
+import { TestTypeCombobox } from "@/components/test-type-combobox"
+import { ExamTypeCombobox } from "@/components/exam-type-combobox"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
@@ -1484,8 +1486,8 @@ export function PatientEncounterForm({
           console.log('✅ Lab order created:', createdOrder)
           createdOrders.push({ order: createdOrder, tests: testList })
         }
-        // Note: Invoice creation and cashier queue addition are handled automatically by the API route
-        // No need to create invoice here - it's done in api/routes/laboratoryRoutes.js
+        // Lab: invoice + cashier queue are created on order (api/routes/laboratoryRoutes.js).
+        // Patient is queued to Laboratory only after invoice is paid at cashier (see billingRoutes payment handler).
       } else {
         console.log('⏭️ Skipping lab test creation - no unsaved lab tests')
       }
@@ -1588,7 +1590,7 @@ export function PatientEncounterForm({
         }
         
         // Note: Invoice creation and cashier queue addition are handled automatically by the API route
-        // No need to create invoice here - it's done in api/routes/proceduresRoutes.js
+        // Procedure: invoice + cashier in proceduresRoutes; Procedure queue after payment (billingRoutes).
       } else {
         console.log('⏭️ Skipping procedure creation - no unsaved procedures')
       }
@@ -4396,6 +4398,7 @@ const clearDraftFromStorage = (patientId:any) => {
                             <TableHead>Date</TableHead>
                             <TableHead>Procedure</TableHead>
                             <TableHead>Performed By</TableHead>
+                            <TableHead>Outcome</TableHead>
                             <TableHead>Notes</TableHead>
                           </TableRow>
                         </TableHeader>
@@ -4409,6 +4412,7 @@ const clearDraftFromStorage = (patientId:any) => {
                                   ? `${procedure.performedByFirstName} ${procedure.performedByLastName}`
                                   : '-'}
                               </TableCell>
+                              <TableCell className="max-w-xs truncate text-sm">{procedure.procedureOutcome || "—"}</TableCell>
                               <TableCell className="max-w-xs truncate">{procedure.notes || "-"}</TableCell>
                             </TableRow>
                           ))}
@@ -5265,32 +5269,22 @@ const clearDraftFromStorage = (patientId:any) => {
                   <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
                     Test Type *
                   </label>
-                  <Select
-                    onValueChange={(value) => {
-                      // Always update the state, even if it's a duplicate
-                      // The validation will show a warning, but we allow the selection
-                      setTempLabTest({ ...tempLabTest, testTypeId: value })
-                    }}
-                    value={tempLabTest.testTypeId || ""}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select test type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {getAvailableTestTypes().length > 0 ? (
-                        getAvailableTestTypes().map((test) => (
-                          <SelectItem key={test.testTypeId} value={test.testTypeId.toString()}>
-                            {test.testName} {test.category && `(${test.category})`}
-                            {test.cost && ` - KES ${parseFloat(test.cost).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                          </SelectItem>
-                        ))
-                      ) : (
-                        <div className="px-2 py-1.5 text-sm text-muted-foreground">
-                          All available tests have been added
-                        </div>
-                      )}
-                    </SelectContent>
-                  </Select>
+                  {getAvailableTestTypes().length > 0 ? (
+                    <TestTypeCombobox
+                      value={tempLabTest.testTypeId || ""}
+                      onValueChange={(testTypeId) => {
+                        setTempLabTest({ ...tempLabTest, testTypeId })
+                      }}
+                      placeholder="Search or select test type"
+                      disabled={testTypes.length === 0}
+                      staticTestTypes={getAvailableTestTypes()}
+                      catalogForLookup={testTypes}
+                    />
+                  ) : (
+                    <div className="rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground">
+                      All available tests have been added
+                    </div>
+                  )}
                   {isTestTypeAlreadyAdded(tempLabTest.testTypeId || "") && editingLabTestIndex === null && (
                     <p className="text-xs text-destructive flex items-center gap-1">
                       <AlertTriangle className="h-3 w-3" />
@@ -5437,69 +5431,66 @@ const clearDraftFromStorage = (patientId:any) => {
 
       {/* Add/Edit Radiology Order Dialog */}
       <Dialog open={addRadiologyDialogOpen} onOpenChange={setAddRadiologyDialogOpen}>
-        <DialogContent className="sm:max-w-[700px] z-[121]" overlayClassName="z-[120]">
+        <DialogContent className="sm:max-w-[640px] z-[121] max-h-[90vh] overflow-y-auto" overlayClassName="z-[120]">
           <DialogHeader>
             <DialogTitle>
               {editingRadiologyIndex !== null ? "Edit Radiology Order" : "Add Radiology Order"}
             </DialogTitle>
             <DialogDescription>
-              {editingRadiologyIndex !== null ? "Update the radiology order details" : "Order a radiology examination for this patient encounter"}
+              {editingRadiologyIndex !== null ? "Update the radiology order details" : "Order imaging — search to pick examination type"}
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
-            {/* Examination Type - Full Width */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium leading-none">
                 Examination Type *
               </label>
-              <Select
-                onValueChange={(value) => setTempRadiologyOrder({ ...tempRadiologyOrder, examTypeId: value })}
+              <ExamTypeCombobox
                 value={tempRadiologyOrder.examTypeId || ""}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select examination type" />
-                </SelectTrigger>
-                <SelectContent>
-                  {examTypes.length > 0 ? (
-                    examTypes.map((exam: any) => (
-                      <SelectItem key={exam.examTypeId} value={exam.examTypeId.toString()}>
-                        {exam.examName}
-                        {exam.category && ` (${exam.category})`}
-                        {exam.cost && ` - KES ${parseFloat(exam.cost).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                      </SelectItem>
-                    ))
-                  ) : (
-                    <div className="px-2 py-1.5 text-sm text-muted-foreground">
-                      No examination types available
-                    </div>
-                  )}
-                </SelectContent>
-              </Select>
+                onValueChange={(value) => setTempRadiologyOrder({ ...tempRadiologyOrder, examTypeId: value })}
+                staticExamTypes={
+                  examTypes.length > 0
+                    ? examTypes.map((e: any) => ({
+                        examTypeId: e.examTypeId,
+                        examName: e.examName,
+                        examCode: e.examCode,
+                        category: e.category,
+                        cost: e.cost,
+                      }))
+                    : undefined
+                }
+                catalogForLookup={
+                  examTypes.length > 0
+                    ? examTypes.map((e: any) => ({
+                        examTypeId: e.examTypeId,
+                        examName: e.examName,
+                        examCode: e.examCode,
+                        category: e.category,
+                        cost: e.cost,
+                      }))
+                    : undefined
+                }
+                placeholder={examTypes.length ? "Search examination type..." : "Loading catalog..."}
+              />
             </div>
 
-            {/* Body Part and Priority in a row */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                  Body Part
-                </label>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="space-y-1.5 sm:col-span-1">
+                <label className="text-sm font-medium">Body Part</label>
                 <Input
-                  placeholder="e.g., Chest, Abdomen, Head"
+                  placeholder="Chest, Abdomen..."
                   value={tempRadiologyOrder.bodyPart || ""}
                   onChange={(e) => setTempRadiologyOrder({ ...tempRadiologyOrder, bodyPart: e.target.value })}
                 />
-                <p className="text-xs text-muted-foreground">Optional</p>
               </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                  Priority *
-                </label>
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">Priority *</label>
                 <Select
                   onValueChange={(value: "routine" | "urgent" | "stat") => setTempRadiologyOrder({ ...tempRadiologyOrder, priority: value })}
                   value={tempRadiologyOrder.priority || "routine"}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="Select priority" />
+                    <SelectValue placeholder="Priority" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="routine">Routine</SelectItem>
@@ -5508,47 +5499,37 @@ const clearDraftFromStorage = (patientId:any) => {
                   </SelectContent>
                 </Select>
               </div>
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">Scheduled</label>
+                <Input
+                  type="datetime-local"
+                  value={tempRadiologyOrder.scheduledDate || ""}
+                  onChange={(e) => setTempRadiologyOrder({ ...tempRadiologyOrder, scheduledDate: e.target.value })}
+                />
+              </div>
             </div>
 
-            {/* Scheduled Date - Full Width but compact */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                Scheduled Date
-              </label>
-              <Input
-                type="datetime-local"
-                value={tempRadiologyOrder.scheduledDate || ""}
-                onChange={(e) => setTempRadiologyOrder({ ...tempRadiologyOrder, scheduledDate: e.target.value })}
-              />
-              <p className="text-xs text-muted-foreground">Optional - Leave blank for immediate scheduling</p>
-            </div>
-
-            {/* Clinical Indication - Full Width */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                Clinical Indication
-              </label>
-              <Textarea
-                placeholder="Reason for ordering this examination"
-                value={tempRadiologyOrder.clinicalIndication || ""}
-                onChange={(e) => setTempRadiologyOrder({ ...tempRadiologyOrder, clinicalIndication: e.target.value })}
-                className="min-h-[80px]"
-              />
-              <p className="text-xs text-muted-foreground">Optional</p>
-            </div>
-
-            {/* Notes - Full Width */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                Notes
-              </label>
-              <Textarea
-                placeholder="Additional notes"
-                value={tempRadiologyOrder.notes || ""}
-                onChange={(e) => setTempRadiologyOrder({ ...tempRadiologyOrder, notes: e.target.value })}
-                className="min-h-[80px]"
-              />
-              <p className="text-xs text-muted-foreground">Optional</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">Clinical indication</label>
+                <Textarea
+                  placeholder="Reason for exam"
+                  value={tempRadiologyOrder.clinicalIndication || ""}
+                  onChange={(e) => setTempRadiologyOrder({ ...tempRadiologyOrder, clinicalIndication: e.target.value })}
+                  className="min-h-[72px] text-sm resize-y"
+                />
+                <p className="text-xs text-muted-foreground">Optional</p>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">Notes</label>
+                <Textarea
+                  placeholder="Internal notes"
+                  value={tempRadiologyOrder.notes || ""}
+                  onChange={(e) => setTempRadiologyOrder({ ...tempRadiologyOrder, notes: e.target.value })}
+                  className="min-h-[72px] text-sm resize-y"
+                />
+                <p className="text-xs text-muted-foreground">Optional</p>
+              </div>
             </div>
           </div>
           <DialogFooter>

@@ -140,6 +140,12 @@ export const navigationCategories: NavigationCategory[] = [
         href: "/radiology",
       },
       {
+        title: "Procedures performed",
+        icon: ClipboardList,
+        href: "/procedures/performed",
+        description: "Register of procedures done on patients (incl. outcomes from queue)",
+      },
+      {
         title: "Inpatient",
         icon: BedDouble,
         href: "/inpatient",

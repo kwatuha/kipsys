@@ -2,6 +2,7 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
+const { resolveRegistrationFeeAmount } = require('../utils/registrationFee');
 
 /**
  * @route GET /api/patients
@@ -142,33 +143,18 @@ router.post('/', async (req, res) => {
 
         const patientId = result.insertId;
 
-        // After patient registration, create invoice for registration fees, then create queue entry for cashier
+        // After patient registration: optional registration fee invoice + cashier (only if REG-FEE amount > 0)
         try {
-            // Find or get registration fee service charge
-            // Try to find by chargeCode 'REG-FEE' or name containing 'Registration'
-            let [regFeeCharge] = await connection.execute(
-                `SELECT chargeId, cost FROM service_charges
-                 WHERE (chargeCode = 'REG-FEE' OR name LIKE '%Registration%Fee%')
-                 AND status = 'Active'
-                 LIMIT 1`
-            );
+            const { amount: registrationFeeAmount, chargeId } = await resolveRegistrationFeeAmount(connection);
 
-            let registrationFeeAmount = 500.00; // Default fee if not found
-            let chargeId = null;
-
-            if (regFeeCharge.length > 0) {
-                chargeId = regFeeCharge[0].chargeId;
-                registrationFeeAmount = parseFloat(regFeeCharge[0].cost);
-            } else {
-                // Create a default registration fee service charge if it doesn't exist
-                const [newCharge] = await connection.execute(
-                    `INSERT INTO service_charges (chargeCode, name, category, cost, description, status)
-                     VALUES ('REG-FEE', 'Patient Registration Fee', 'Registration', ?, 'Patient registration fee', 'Active')`,
-                    [registrationFeeAmount]
+            if (registrationFeeAmount <= 0) {
+                console.log(
+                    `[REGISTRATION] No registration fee invoice for patient ${patientId} ` +
+                        `(REG-FEE missing, inactive, or amount is 0 — set charge > 0 in service charges to enable).`
                 );
-                chargeId = newCharge.insertId;
             }
 
+            if (registrationFeeAmount > 0 && chargeId) {
             // Generate invoice number (same approach as triage numbers to avoid duplicates)
             const today = new Date().toISOString().split('T')[0].replace(/-/g, '');
             const datePrefix = `INV-${today}-`;
@@ -330,7 +316,9 @@ router.post('/', async (req, res) => {
                 console.log(`Patient ${patientId} already exists in cashier queue (queueId: ${existingQueue[0].queueId}) - skipping duplicate entry during registration`);
             }
 
-            // Add patient to triage queue after registration
+            } // end registration fee invoice + cashier (amount > 0)
+
+            // Add patient to triage queue after registration (always when registration succeeds)
             try {
                 // Check if patient already exists in triage queue
                 const [existingTriageQueue] = await connection.execute(

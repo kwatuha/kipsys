@@ -240,6 +240,8 @@ export function AddToQueueForm({ open, onOpenChange, onSuccess, queueEntry }: Ad
                   <SelectItem value="pharmacy">Pharmacy</SelectItem>
                   <SelectItem value="billing">Billing</SelectItem>
                   <SelectItem value="cashier">Cashier</SelectItem>
+                  <SelectItem value="telemedicine">Telemedicine</SelectItem>
+                  <SelectItem value="procedure">Procedure</SelectItem>
                 </SelectContent>
               </Select>
             </div>

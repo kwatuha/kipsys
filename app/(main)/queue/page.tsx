@@ -37,7 +37,7 @@ import { AddToQueueForm } from "@/components/add-to-queue-form"
 import { AddTriageForm } from "@/components/add-triage-form"
 import { queueApi, medicalRecordsApi } from "@/lib/api"
 import { toast } from "@/components/ui/use-toast"
-import { Search, Plus, Edit, Trash2, MoreHorizontal, Loader2, ArrowRight, Monitor, Users, Receipt, FileText, PlayCircle, Stethoscope, FlaskConical } from "lucide-react"
+import { Search, Plus, Edit, Trash2, MoreHorizontal, Loader2, ArrowRight, Monitor, Users, Receipt, FileText, PlayCircle, Stethoscope, FlaskConical, Scan, ClipboardList } from "lucide-react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { ViewBillDialog } from "@/components/view-bill-dialog"
@@ -48,6 +48,11 @@ import { format } from "date-fns"
 import { Pill } from "lucide-react"
 import { useRoleMenuAccess } from "@/lib/hooks/use-role-menu-access"
 import { filterQueueServicePoints } from "@/lib/role-menu-filter"
+import {
+  RadiologyQueueReportDialog,
+  type QueueEntryLite,
+} from "@/components/queue-radiology-report-dialog"
+import { ProcedureQueueCompleteDialog } from "@/components/queue-procedure-complete-dialog"
 
 const ALL_SERVICE_POINTS = [
   { value: "triage", label: "Triage" },
@@ -58,6 +63,8 @@ const ALL_SERVICE_POINTS = [
   { value: "pharmacy", label: "Pharmacy" },
   { value: "billing", label: "Billing" },
   { value: "cashier", label: "Cashier" },
+  { value: "telemedicine", label: "Telemedicine" },
+  { value: "procedure", label: "Procedure" },
 ]
 
 const statuses = [
@@ -99,6 +106,8 @@ export default function QueueManagement() {
   const [selectedPatientForDispense, setSelectedPatientForDispense] = useState<{ patientId: number; patientName: string } | null>(null)
   const [triageFormOpen, setTriageFormOpen] = useState(false)
   const [selectedPatientForTriage, setSelectedPatientForTriage] = useState<{ patientId: string; patientName: string; queueId: number } | null>(null)
+  const [radiologyQueueForReport, setRadiologyQueueForReport] = useState<QueueEntryLite | null>(null)
+  const [procedureQueueForComplete, setProcedureQueueForComplete] = useState<QueueEntryLite | null>(null)
   const { user } = useAuth()
   const { menuAccess, loading: menuLoading } = useRoleMenuAccess(user?.id)
 
@@ -202,11 +211,10 @@ export default function QueueManagement() {
 
   const loadAllQueues = async () => {
     try {
-      // Load all queues without service point filter first
+      // Load all queues without service point filter first (base list)
       const allData = await queueApi.getAll(undefined, undefined)
 
-      // For pharmacy, we need to apply the same filter that's used when displaying
-      // So load pharmacy queue separately with the filter applied
+      // Pharmacy: API applies extra rules (paid Rx + stock). Merge like a filtered view.
       let pharmacyData: any[] = []
       try {
         pharmacyData = await queueApi.getAll('pharmacy', undefined) || []
@@ -214,9 +222,20 @@ export default function QueueManagement() {
         console.error("Error loading pharmacy queue:", error)
       }
 
-      // Replace pharmacy entries in allData with filtered pharmacy data
-      const filteredData = allData.filter((q: any) => q.servicePoint !== 'pharmacy')
+      // Cashier: API applies pending-bill rules (hide queue rows when nothing left to pay).
+      // Without servicePoint=cashier, GET /api/queue returns ALL cashier rows → summary counts too high.
+      let cashierData: any[] = []
+      try {
+        cashierData = await queueApi.getAll('cashier', undefined) || []
+      } catch (error) {
+        console.error("Error loading cashier queue:", error)
+      }
+
+      const filteredData = allData.filter(
+        (q: any) => q.servicePoint !== 'pharmacy' && q.servicePoint !== 'cashier'
+      )
       filteredData.push(...pharmacyData)
+      filteredData.push(...cashierData)
 
       setAllQueues(filteredData)
     } catch (error: any) {
@@ -307,6 +326,16 @@ export default function QueueManagement() {
     setSelectedPatientForEncounter({ patientId, patientName })
     setEncounterFormOpen(true)
   }
+
+  const queueRowToLite = (queue: any): QueueEntryLite => ({
+    queueId: queue.queueId,
+    patientId: queue.patientId,
+    patientName:
+      queue.patientFirstName && queue.patientLastName
+        ? `${queue.patientFirstName} ${queue.patientLastName}`
+        : queue.patientName || "Unknown Patient",
+    notes: queue.notes ?? "",
+  })
 
   const handleStartTriage = (queue: any) => {
     const patientId = queue.patientId?.toString() || ""
@@ -634,6 +663,22 @@ export default function QueueManagement() {
                                     View in Laboratory
                                   </DropdownMenuItem>
                                 )}
+                                {queue.servicePoint === "radiology" && (
+                                  <DropdownMenuItem
+                                    onClick={() => setRadiologyQueueForReport(queueRowToLite(queue))}
+                                  >
+                                    <Scan className="mr-2 h-4 w-4" />
+                                    Record report
+                                  </DropdownMenuItem>
+                                )}
+                                {queue.servicePoint === "procedure" && (
+                                  <DropdownMenuItem
+                                    onClick={() => setProcedureQueueForComplete(queueRowToLite(queue))}
+                                  >
+                                    <ClipboardList className="mr-2 h-4 w-4" />
+                                    Complete &amp; outcome
+                                  </DropdownMenuItem>
+                                )}
                                 <DropdownMenuItem onClick={() => handleEdit(queue)}>
                                   <Edit className="mr-2 h-4 w-4" />
                                   Edit
@@ -753,6 +798,23 @@ export default function QueueManagement() {
           </Card>
         </div>
       </div>
+
+      <RadiologyQueueReportDialog
+        queueEntry={radiologyQueueForReport}
+        onClose={() => setRadiologyQueueForReport(null)}
+        onSuccess={() => {
+          loadQueues()
+          loadAllQueues()
+        }}
+      />
+      <ProcedureQueueCompleteDialog
+        queueEntry={procedureQueueForComplete}
+        onClose={() => setProcedureQueueForComplete(null)}
+        onSuccess={() => {
+          loadQueues()
+          loadAllQueues()
+        }}
+      />
 
       <AddToQueueForm
         open={addQueueOpen}

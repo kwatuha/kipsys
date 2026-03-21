@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS lab_test_orders (
     orderDate DATE NOT NULL,
     priority ENUM('routine', 'urgent', 'stat') DEFAULT 'routine',
     clinicalIndication TEXT,
-    status ENUM('pending', 'sample_collected', 'in_progress', 'completed', 'cancelled') DEFAULT 'pending',
+    status ENUM('awaiting_payment', 'pending', 'sample_collected', 'in_progress', 'completed', 'cancelled') DEFAULT 'pending',
     sampleCollectionDate DATETIME NULL,
     expectedCompletionDate DATETIME NULL,
     notes TEXT,

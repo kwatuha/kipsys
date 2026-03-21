@@ -623,7 +623,7 @@ router.post('/sessions/:sessionId/start', async (req, res) => {
     const actorUserId = getUserId(req);
 
     const [rows] = await connection.execute(
-      `SELECT ts.sessionId, ts.status, ts.recordingConsentSatisfiedAt, ts.provider
+      `SELECT ts.sessionId, ts.status, ts.recordingConsentSatisfiedAt, ts.provider, ts.patientId
        FROM telemedicine_sessions ts
        WHERE ts.sessionId = ? FOR UPDATE`,
       [sessionId]
@@ -651,6 +651,32 @@ router.post('/sessions/:sessionId/start', async (req, res) => {
       [sessionId]
     );
     await addAudit(sessionId, 'teleconsult_started', actorUserId, s.provider || 'zoom_manual');
+
+    // Telemedicine queue: patient ready / in virtual visit (dedupe same day)
+    try {
+      const patientId = s.patientId;
+      const [existingTm] = await connection.execute(
+        `SELECT queueId FROM queue_entries
+         WHERE patientId = ? AND servicePoint = 'telemedicine'
+         AND DATE(arrivalTime) = CURDATE()
+         AND status NOT IN ('completed', 'cancelled')`,
+        [patientId]
+      );
+      if (existingTm.length === 0) {
+        const [tmCount] = await connection.execute(
+          'SELECT COUNT(*) as count FROM queue_entries WHERE DATE(arrivalTime) = CURDATE() AND servicePoint = "telemedicine"'
+        );
+        const ticketNum = (tmCount[0]?.count || 0) + 1;
+        const ticket = `TM-${String(ticketNum).padStart(3, '0')}`;
+        await connection.execute(
+          `INSERT INTO queue_entries (patientId, ticketNumber, servicePoint, priority, status, notes, createdBy)
+           VALUES (?, ?, 'telemedicine', 'normal', 'waiting', ?, ?)`,
+          [patientId, ticket, `Telemedicine session #${sessionId}`, actorUserId || null]
+        );
+      }
+    } catch (tmQErr) {
+      console.error('[TELEMEDICINE QUEUE]', tmQErr);
+    }
 
     await connection.commit();
     return res.status(200).json({ ok: true, startedRecordingNow: false });

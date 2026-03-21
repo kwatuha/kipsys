@@ -28,6 +28,8 @@ const getDisplayName = (servicePoint: string): string => {
     laboratory: "Laboratory",
     radiology: "Radiology",
     billing: "Billing",
+    telemedicine: "Telemedicine",
+    procedure: "Procedure",
   }
   return names[servicePoint] || servicePoint
 }

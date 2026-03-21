@@ -186,7 +186,9 @@ router.delete('/test-types/:id', async (req, res) => {
 
 /**
  * @route GET /api/laboratory/orders
- * @description Get lab test orders
+ * @description Get lab test orders.
+ * When `patientId` is omitted and `status` is omitted, excludes `awaiting_payment` (work queue only).
+ * Pass `status=awaiting_payment` to list unpaid orders, or pass `patientId` for full history for that patient.
  */
 router.get('/orders', async (req, res) => {
     try {
@@ -215,6 +217,9 @@ router.get('/orders', async (req, res) => {
         if (status) {
             query += ` AND lo.status = ?`;
             params.push(status);
+        } else if (!patientId) {
+            // Laboratory work list: unpaid orders (awaiting_payment) stay at cashier — do not list here
+            query += ` AND lo.status != 'awaiting_payment'`;
         }
 
         query += ` GROUP BY lo.orderId ORDER BY lo.orderDate DESC LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset)}`;
@@ -364,15 +369,83 @@ router.post('/orders', async (req, res) => {
             }
         }
 
-        // 3. Save order items only.
-        // Billing for labs is intentionally deferred until result completion
-        // (POST /orders/:id/results), not at order creation.
+        // 3. Save order items
         for (const item of finalItems) {
             await connection.execute(
                 `INSERT INTO lab_test_order_items (orderId, testTypeId, notes, status)
                  VALUES (?, ?, ?, 'pending')`,
                 [orderId, item.testTypeId, (item.notes || item.instructions || null)]
             );
+        }
+
+        // 4. Invoice + cashier queue at order time (patient pays before lab queue / sample collection)
+        const [orderItemsRows] = await connection.execute(
+            `SELECT loi.itemId, loi.testTypeId, ltt.testName, ltt.testCode, ltt.cost
+             FROM lab_test_order_items loi
+             JOIN lab_test_types ltt ON loi.testTypeId = ltt.testTypeId
+             WHERE loi.orderId = ?`,
+            [orderId]
+        );
+
+        let invoiceTotal = 0;
+        for (const row of orderItemsRows) {
+            invoiceTotal += parseFloat(row.cost || 0);
+        }
+
+        if (invoiceTotal > 0) {
+            await connection.execute(
+                `UPDATE lab_test_orders SET status = 'awaiting_payment' WHERE orderId = ?`,
+                [orderId]
+            );
+
+            const today = new Date().toISOString().split('T')[0].replace(/-/g, '');
+            const datePrefix = `INV-${today}-`;
+            const [maxResult] = await connection.execute(
+                `SELECT MAX(CAST(SUBSTRING_INDEX(invoiceNumber, '-', -1) AS UNSIGNED)) as maxNum
+                 FROM invoices WHERE invoiceNumber LIKE CONCAT(?, '%')`,
+                [datePrefix]
+            );
+            let nextNum = (maxResult[0]?.maxNum || 0) + 1;
+            let invoiceNumber = `${datePrefix}${String(nextNum).padStart(4, '0')}`;
+
+            const invoiceNotes = `Lab payment - Order: ${finalOrderNum}${admissionId ? ` (Admission ${admissionId})` : ''}`;
+
+            const [invResult] = await connection.execute(
+                `INSERT INTO invoices (invoiceNumber, patientId, invoiceDate, totalAmount, balance, status, notes, createdBy)
+                 VALUES (?, ?, CURDATE(), ?, ?, 'pending', ?, ?)`,
+                [invoiceNumber, patientId, invoiceTotal, invoiceTotal, invoiceNotes, userId]
+            );
+            const invoiceId = invResult.insertId;
+
+            for (const row of orderItemsRows) {
+                const lineCost = parseFloat(row.cost || 0);
+                if (lineCost <= 0) continue;
+                const itemDescription = `Lab Test: ${row.testName || 'Test'} (${row.testCode || 'N/A'}) - Order Item #${row.itemId}`;
+                await connection.execute(
+                    `INSERT INTO invoice_items (invoiceId, description, quantity, unitPrice, totalPrice)
+                     VALUES (?, ?, 1, ?, ?)`,
+                    [invoiceId, itemDescription, lineCost, lineCost]
+                );
+            }
+
+            const [existingCashier] = await connection.execute(
+                `SELECT queueId FROM queue_entries
+                 WHERE patientId = ? AND servicePoint = 'cashier'
+                   AND status IN ('waiting', 'called', 'serving')`,
+                [patientId]
+            );
+            if (existingCashier.length === 0) {
+                const [cashierCount] = await connection.execute(
+                    'SELECT COUNT(*) as count FROM queue_entries WHERE DATE(arrivalTime) = CURDATE() AND servicePoint = "cashier"'
+                );
+                const ticketNumber = `C-${String((cashierCount[0]?.count || 0) + 1).padStart(3, '0')}`;
+                const queuePriority = (priority === 'stat' || priority === 'urgent') ? 'urgent' : 'normal';
+                await connection.execute(
+                    `INSERT INTO queue_entries (patientId, ticketNumber, servicePoint, priority, status, notes, createdBy)
+                     VALUES (?, ?, 'cashier', ?, 'waiting', ?, ?)`,
+                    [patientId, ticketNumber, queuePriority, `Lab payment - Order: ${finalOrderNum}`, userId]
+                );
+            }
         }
 
         await connection.commit();
@@ -390,7 +463,15 @@ router.post('/orders', async (req, res) => {
     } catch (error) {
         await connection.rollback();
         console.error('Error creating lab order:', error);
-        res.status(500).json({ message: 'Error creating lab order', error: error.message });
+        let errMsg = error.message || String(error);
+        // Common when DB was never migrated: UPDATE ... status = 'awaiting_payment' fails
+        if (errMsg.includes('Data truncated') && errMsg.includes('status')) {
+            errMsg =
+                'lab_test_orders.status must include awaiting_payment (paid-before-lab workflow). ' +
+                'Run: api/database/migrations/46_lab_test_orders_awaiting_payment_enum.sql on your MySQL database, then retry. ' +
+                `Original error: ${error.message}`;
+        }
+        res.status(500).json({ message: 'Error creating lab order', error: errMsg });
     } finally {
         connection.release();
     }
@@ -600,6 +681,19 @@ router.post('/orders/:id/results', async (req, res) => {
             return res.status(404).json({ message: 'Order item not found' });
         }
 
+        const [orderStatusRows] = await connection.execute(
+            'SELECT status, orderNumber FROM lab_test_orders WHERE orderId = ?',
+            [id]
+        );
+        if (orderStatusRows.length > 0 && orderStatusRows[0].status === 'awaiting_payment') {
+            await connection.rollback();
+            return res.status(400).json({
+                message: 'Lab fees must be paid (cashier) before results can be entered.',
+                code: 'LAB_AWAITING_PAYMENT',
+                orderNumber: orderStatusRows[0].orderNumber,
+            });
+        }
+
         // Create result
         const [resultInsert] = await connection.execute(
             `INSERT INTO lab_test_results (orderItemId, testDate, status, notes, performedBy)
@@ -634,113 +728,7 @@ router.post('/orders/:id/results', async (req, res) => {
             ['completed', orderItemId]
         );
 
-        // Bill lab test on completion/result posting (one charge per order item).
-        // Guard against duplicate billing if endpoint is retried.
-        const [orderRows] = await connection.execute(
-            `SELECT lo.orderId, lo.orderNumber, lo.patientId, lo.priority, lo.admissionId,
-                    loi.itemId, ltt.testName, ltt.testCode, ltt.cost
-             FROM lab_test_orders lo
-             JOIN lab_test_order_items loi ON lo.orderId = loi.orderId
-             LEFT JOIN lab_test_types ltt ON loi.testTypeId = ltt.testTypeId
-             WHERE lo.orderId = ? AND loi.itemId = ?
-             LIMIT 1`,
-            [id, orderItemId]
-        );
-
-        if (orderRows.length > 0) {
-            const o = orderRows[0];
-            const itemCost = parseFloat(o.cost || 0);
-            const itemDescription = `Lab Test: ${o.testName || 'Test'} (${o.testCode || 'N/A'}) - Order Item #${o.itemId}`;
-
-            if (o.admissionId) {
-                const [admissionRows] = await connection.execute(
-                    'SELECT status FROM admissions WHERE admissionId = ? LIMIT 1',
-                    [o.admissionId]
-                );
-                if (admissionRows.length > 0 && admissionRows[0].status === 'discharged') {
-                    await connection.commit();
-                    const [result] = await connection.execute(
-                        `SELECT ltr.*,
-                                u1.firstName as performedByFirstName, u1.lastName as performedByLastName
-                         FROM lab_test_results ltr
-                         LEFT JOIN users u1 ON ltr.performedBy = u1.userId
-                         WHERE ltr.resultId = ?`,
-                        [resultId]
-                    );
-                    const [resultValues] = await connection.execute(
-                        `SELECT * FROM lab_result_values WHERE resultId = ? ORDER BY valueId`,
-                        [resultId]
-                    );
-                    result[0].values = resultValues;
-                    return res.status(201).json(result[0]);
-                }
-            }
-
-            // Duplicate protection: if item already billed on a non-cancelled invoice, skip creating another.
-            const [alreadyBilled] = await connection.execute(
-                `SELECT ii.itemId
-                 FROM invoice_items ii
-                 JOIN invoices i ON ii.invoiceId = i.invoiceId
-                 WHERE i.patientId = ?
-                   AND (i.status <> 'cancelled')
-                   AND ii.description = ?
-                 LIMIT 1`,
-                [o.patientId, itemDescription]
-            );
-
-            if (alreadyBilled.length === 0 && itemCost > 0) {
-                const today = new Date().toISOString().split('T')[0].replace(/-/g, '');
-                const datePrefix = `INV-${today}-`;
-
-                const [maxResult] = await connection.execute(
-                    `SELECT MAX(CAST(SUBSTRING_INDEX(invoiceNumber, '-', -1) AS UNSIGNED)) as maxNum
-                     FROM invoices WHERE invoiceNumber LIKE CONCAT(?, '%')`,
-                    [datePrefix]
-                );
-                let nextNum = (maxResult[0]?.maxNum || 0) + 1;
-                let invoiceNumber = `${datePrefix}${String(nextNum).padStart(4, '0')}`;
-
-                const [invResult] = await connection.execute(
-                    `INSERT INTO invoices (invoiceNumber, patientId, invoiceDate, totalAmount, balance, status, notes, createdBy)
-                     VALUES (?, ?, CURDATE(), ?, ?, 'pending', ?, ?)`,
-                    [
-                        invoiceNumber,
-                        o.patientId,
-                        itemCost,
-                        itemCost,
-                        `Lab payment - Order: ${o.orderNumber}${o.admissionId ? ` (Admission ${o.admissionId})` : ''}`,
-                        userId
-                    ]
-                );
-
-                await connection.execute(
-                    `INSERT INTO invoice_items (invoiceId, description, quantity, unitPrice, totalPrice)
-                     VALUES (?, ?, 1, ?, ?)`,
-                    [invResult.insertId, itemDescription, itemCost, itemCost]
-                );
-
-                // Queue patient at cashier if not already queued.
-                const [existingQueue] = await connection.execute(
-                    `SELECT queueId FROM queue_entries
-                     WHERE patientId = ? AND servicePoint = 'cashier'
-                       AND status IN ('waiting', 'called', 'serving')`,
-                    [o.patientId]
-                );
-                if (existingQueue.length === 0) {
-                    const [cashierCount] = await connection.execute(
-                        'SELECT COUNT(*) as count FROM queue_entries WHERE DATE(arrivalTime) = CURDATE() AND servicePoint = "cashier"'
-                    );
-                    const ticketNumber = `C-${String((cashierCount[0]?.count || 0) + 1).padStart(3, '0')}`;
-                    const queuePriority = (o.priority === 'stat' || o.priority === 'urgent') ? 'urgent' : 'normal';
-
-                    await connection.execute(
-                        `INSERT INTO queue_entries (patientId, ticketNumber, servicePoint, priority, status, notes, createdBy)
-                         VALUES (?, ?, 'cashier', ?, 'waiting', ?, ?)`,
-                        [o.patientId, ticketNumber, queuePriority, `Lab payment - Order: ${o.orderNumber}`, userId]
-                    );
-                }
-            }
-        }
+        // Lab billing is at order creation (invoice + cashier). No per-result invoicing here.
 
         await connection.commit();
 

@@ -2,6 +2,7 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
+const { resolveRegistrationFeeAmount } = require('../utils/registrationFee');
 
 /**
  * @route GET /api/triage
@@ -635,32 +636,20 @@ router.post('/', async (req, res) => {
                         console.log(`Patient ${patientId} already has a pending registration fee invoice (ID: ${existingRegFeeInvoice[0].invoiceId})`);
                     }
 
-                    // Only create registration fee invoice if one doesn't already exist
+                    // Only create registration fee invoice if one doesn't already exist and REG-FEE amount > 0
                     if (existingRegFeeInvoice.length === 0) {
-                        console.log(`Creating registration fee invoice for patient ${patientId}`);
-                        // Find or get registration fee service charge
-                        let [regFeeCharge] = await connection.execute(
-                            `SELECT chargeId, cost FROM service_charges
-                             WHERE (chargeCode = 'REG-FEE' OR name LIKE '%Registration%Fee%')
-                             AND status = 'Active'
-                             LIMIT 1`
-                        );
+                        const { amount: registrationFeeAmount, chargeId } = await resolveRegistrationFeeAmount(connection);
 
-                        let registrationFeeAmount = 500.00; // Default fee if not found
-                        let chargeId = null;
-
-                        if (regFeeCharge.length > 0) {
-                            chargeId = regFeeCharge[0].chargeId;
-                            registrationFeeAmount = parseFloat(regFeeCharge[0].cost);
-                        } else {
-                            // Create a default registration fee service charge if it doesn't exist
-                            const [newCharge] = await connection.execute(
-                                `INSERT INTO service_charges (chargeCode, name, category, cost, description, status)
-                                 VALUES ('REG-FEE', 'Patient Registration Fee', 'Registration', ?, 'Patient registration fee', 'Active')`,
-                                [registrationFeeAmount]
+                        if (registrationFeeAmount <= 0) {
+                            console.log(
+                                `[REG FEE] Skipping registration fee invoice (amount is 0 or REG-FEE not configured) for patient ${patientId}`
                             );
-                            chargeId = newCharge.insertId;
-                        }
+                        } else if (!chargeId) {
+                            console.warn(
+                                `[REG FEE] Skipping registration fee invoice: amount ${registrationFeeAmount} but no chargeId`
+                            );
+                        } else {
+                            console.log(`Creating registration fee invoice for patient ${patientId}`);
 
                         // Generate invoice number
                         const today = new Date().toISOString().split('T')[0].replace(/-/g, '');
@@ -758,6 +747,7 @@ router.post('/', async (req, res) => {
                                 console.error('Error creating registration fee invoice:', regInvoiceError);
                             }
                         }
+                        } // end: billable registration fee (amount > 0)
                     }
                 } else {
                     console.log(`[REG FEE CHECK] Patient ${patientId} not found in database`);

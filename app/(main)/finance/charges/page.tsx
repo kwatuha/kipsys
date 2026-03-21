@@ -395,7 +395,11 @@ export default function HospitalChargesPage() {
           <Card>
             <CardHeader>
               <CardTitle>Service Charges</CardTitle>
-              <CardDescription>View and manage all hospital service charges</CardDescription>
+              <CardDescription>
+                View and manage all hospital service charges. For patient registration: keep the{" "}
+                <span className="font-mono">REG-FEE</span> charge at <strong>0</strong> to skip registration
+                invoices and cashier queue; set a positive amount when the facility starts charging.
+              </CardDescription>
             </CardHeader>
             <CardContent>
               <div className="flex flex-col gap-4">

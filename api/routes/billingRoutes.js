@@ -1040,7 +1040,7 @@ router.post('/invoices/:id/payment', async (req, res) => {
                              FROM lab_test_orders lo
                              INNER JOIN invoice_items ii ON ii.description LIKE CONCAT('%Lab Test:%')
                              INNER JOIN invoices i ON i.invoiceId = ii.invoiceId
-                             WHERE i.invoiceId = ? AND lo.patientId = ? AND lo.status = 'pending'
+                             WHERE i.invoiceId = ? AND lo.patientId = ? AND lo.status IN ('pending', 'awaiting_payment')
                              ORDER BY lo.orderDate DESC
                              LIMIT 1`,
                             [id, invoice.patientId]
@@ -1055,7 +1055,7 @@ router.post('/invoices/:id/payment', async (req, res) => {
                             const [anyPending] = await connection.execute(
                                 `SELECT orderId, orderNumber, patientId, status
                                  FROM lab_test_orders
-                                 WHERE patientId = ? AND status = 'pending'
+                                 WHERE patientId = ? AND status IN ('pending', 'awaiting_payment')
                                  ORDER BY orderDate DESC
                                  LIMIT 1`,
                                 [invoice.patientId]
@@ -1069,7 +1069,7 @@ router.post('/invoices/:id/payment', async (req, res) => {
                         }
                     }
 
-                    if (labOrder && labOrder.status === 'pending') {
+                    if (labOrder && (labOrder.status === 'pending' || labOrder.status === 'awaiting_payment')) {
                         // Check if laboratory queue entry already exists for this patient
                         const [existingQueue] = await connection.execute(
                             `SELECT queueId FROM queue_entries
@@ -1099,11 +1099,19 @@ router.post('/invoices/:id/payment', async (req, res) => {
                                 ]
                             );
                             console.log(`[LABORATORY QUEUE] Successfully created laboratory queue entry for patient ${labOrder.patientId} with ticket ${labTicketNumber}`);
+                            await connection.execute(
+                                `UPDATE lab_test_orders SET status = 'pending' WHERE orderNumber = ? AND status = 'awaiting_payment'`,
+                                [labOrderNumber || labOrder.orderNumber]
+                            );
                         } else {
                             console.log(`[LABORATORY QUEUE] Patient ${labOrder.patientId} already exists in laboratory queue (queueId: ${existingQueue[0].queueId})`);
+                            await connection.execute(
+                                `UPDATE lab_test_orders SET status = 'pending' WHERE orderNumber = ? AND status = 'awaiting_payment'`,
+                                [labOrderNumber || labOrder.orderNumber]
+                            );
                         }
                     } else if (labOrder) {
-                        console.log(`[LABORATORY QUEUE] Lab order ${labOrderNumber || labOrder.orderId} is not pending (status: ${labOrder.status}) - skipping laboratory queue addition`);
+                        console.log(`[LABORATORY QUEUE] Lab order ${labOrderNumber || labOrder.orderId} wrong status for queue (status: ${labOrder.status}) - skipping`);
                     } else {
                         console.log(`[LABORATORY QUEUE] No pending lab order found for patient ${invoice.patientId} - cannot create laboratory queue entry`);
                     }
@@ -1111,6 +1119,141 @@ router.post('/invoices/:id/payment', async (req, res) => {
                     console.error('[LABORATORY QUEUE] Error creating laboratory queue entry:', laboratoryQueueError);
                     console.error('[LABORATORY QUEUE] Error stack:', laboratoryQueueError.stack);
                     // Don't fail the payment if laboratory queue creation fails
+                }
+            }
+
+            // Radiology invoice paid → radiology queue (patient ready for imaging)
+            if (invoice.notes && String(invoice.notes).includes('Radiology payment - Order:')) {
+                try {
+                    const radOrderMatch = invoice.notes.match(/Order:\s*([A-Z0-9-]+)/i);
+                    let radOrderNumber = null;
+                    let radOrder = null;
+
+                    if (radOrderMatch && radOrderMatch[1]) {
+                        radOrderNumber = radOrderMatch[1].trim();
+                        console.log(`[RADIOLOGY QUEUE] Extracted radiology order number from invoice notes: ${radOrderNumber}`);
+
+                        const [radOrders] = await connection.execute(
+                            'SELECT orderId, orderNumber, patientId, status, priority FROM radiology_exam_orders WHERE orderNumber = ?',
+                            [radOrderNumber]
+                        );
+
+                        if (radOrders.length > 0) {
+                            radOrder = radOrders[0];
+                            console.log(`[RADIOLOGY QUEUE] Found radiology order ${radOrderNumber} for patient ${radOrder.patientId}, status: ${radOrder.status}`);
+                        }
+                    }
+
+                    if (!radOrder) {
+                        const [pendingRad] = await connection.execute(
+                            `SELECT ro.orderId, ro.orderNumber, ro.patientId, ro.status, ro.priority
+                             FROM radiology_exam_orders ro
+                             INNER JOIN invoice_items ii ON ii.description LIKE CONCAT('%Radiology Exam:%')
+                             INNER JOIN invoices i ON i.invoiceId = ii.invoiceId
+                             WHERE i.invoiceId = ? AND ro.patientId = ? AND ro.status IN ('pending', 'awaiting_payment')
+                             ORDER BY ro.orderDate DESC
+                             LIMIT 1`,
+                            [id, invoice.patientId]
+                        );
+                        if (pendingRad.length > 0) {
+                            radOrder = pendingRad[0];
+                            radOrderNumber = radOrder.orderNumber;
+                            console.log(`[RADIOLOGY QUEUE] Found radiology order via fallback: ${radOrderNumber}`);
+                        } else {
+                            const [anyPending] = await connection.execute(
+                                `SELECT orderId, orderNumber, patientId, status, priority
+                                 FROM radiology_exam_orders
+                                 WHERE patientId = ? AND status IN ('pending', 'awaiting_payment')
+                                 ORDER BY orderDate DESC
+                                 LIMIT 1`,
+                                [invoice.patientId]
+                            );
+                            if (anyPending.length > 0) {
+                                radOrder = anyPending[0];
+                                radOrderNumber = radOrder.orderNumber;
+                                console.log(`[RADIOLOGY QUEUE] Found radiology order via last resort: ${radOrderNumber}`);
+                            }
+                        }
+                    }
+
+                    if (radOrder && (radOrder.status === 'pending' || radOrder.status === 'awaiting_payment')) {
+                        const [existingRadQ] = await connection.execute(
+                            `SELECT queueId FROM queue_entries
+                             WHERE patientId = ? AND servicePoint = 'radiology'
+                             AND status NOT IN ('completed', 'cancelled')`,
+                            [radOrder.patientId]
+                        );
+
+                        if (existingRadQ.length === 0) {
+                            const [radCount] = await connection.execute(
+                                'SELECT COUNT(*) as count FROM queue_entries WHERE DATE(arrivalTime) = CURDATE() AND servicePoint = "radiology"'
+                            );
+                            const radTicketNum = (radCount[0]?.count || 0) + 1;
+                            const radTicketNumber = `RX-${String(radTicketNum).padStart(3, '0')}`;
+                            const radQueuePriority =
+                                radOrder.priority === 'stat' || radOrder.priority === 'urgent' ? 'urgent' : 'normal';
+
+                            await connection.execute(
+                                `INSERT INTO queue_entries
+                                (patientId, ticketNumber, servicePoint, priority, status, notes, createdBy)
+                                VALUES (?, ?, 'radiology', ?, 'waiting', ?, ?)`,
+                                [
+                                    radOrder.patientId,
+                                    radTicketNumber,
+                                    radQueuePriority,
+                                    radOrderNumber ? `Radiology Order: ${radOrderNumber}` : `Invoice: ${invoice.invoiceNumber}`,
+                                    userId || null
+                                ]
+                            );
+                            console.log(`[RADIOLOGY QUEUE] Successfully created radiology queue entry for patient ${radOrder.patientId} with ticket ${radTicketNumber}`);
+                            await connection.execute(
+                                `UPDATE radiology_exam_orders SET status = 'pending' WHERE orderNumber = ? AND status = 'awaiting_payment'`,
+                                [radOrderNumber || radOrder.orderNumber]
+                            );
+                        } else {
+                            console.log(`[RADIOLOGY QUEUE] Patient ${radOrder.patientId} already in radiology queue (queueId: ${existingRadQ[0].queueId})`);
+                            await connection.execute(
+                                `UPDATE radiology_exam_orders SET status = 'pending' WHERE orderNumber = ? AND status = 'awaiting_payment'`,
+                                [radOrderNumber || radOrder.orderNumber]
+                            );
+                        }
+                    } else if (radOrder) {
+                        console.log(`[RADIOLOGY QUEUE] Radiology order ${radOrderNumber || radOrder.orderId} wrong status for queue (status: ${radOrder.status}) - skipping`);
+                    } else {
+                        console.log(`[RADIOLOGY QUEUE] No radiology order found for patient ${invoice.patientId} - cannot create radiology queue entry`);
+                    }
+                } catch (radiologyQueueError) {
+                    console.error('[RADIOLOGY QUEUE] Error creating radiology queue entry:', radiologyQueueError);
+                    console.error('[RADIOLOGY QUEUE] Error stack:', radiologyQueueError.stack);
+                }
+            }
+
+            // Procedure invoice paid → procedure queue (patient ready for procedure)
+            if (invoice.notes && String(invoice.notes).includes('Procedure payment')) {
+                try {
+                    const [existingProcQ] = await connection.execute(
+                        `SELECT queueId FROM queue_entries
+                         WHERE patientId = ? AND servicePoint = 'procedure'
+                         AND status NOT IN ('completed', 'cancelled')`,
+                        [invoice.patientId]
+                    );
+                    if (existingProcQ.length === 0) {
+                        const [procCount] = await connection.execute(
+                            'SELECT COUNT(*) as count FROM queue_entries WHERE DATE(arrivalTime) = CURDATE() AND servicePoint = "procedure"'
+                        );
+                        const procTicketNum = (procCount[0]?.count || 0) + 1;
+                        const procTicket = `PR-${String(procTicketNum).padStart(3, '0')}`;
+                        const procNotes = invoice.notes.length > 500 ? `${String(invoice.notes).slice(0, 497)}...` : invoice.notes;
+                        await connection.execute(
+                            `INSERT INTO queue_entries
+                            (patientId, ticketNumber, servicePoint, priority, status, notes, createdBy)
+                            VALUES (?, ?, 'procedure', 'normal', 'waiting', ?, ?)`,
+                            [invoice.patientId, procTicket, `Paid — ${procNotes}`, userId || null]
+                        );
+                        console.log(`[PROCEDURE QUEUE] Created procedure queue for patient ${invoice.patientId} ticket ${procTicket}`);
+                    }
+                } catch (procedureQueueError) {
+                    console.error('[PROCEDURE QUEUE] Error:', procedureQueueError);
                 }
             }
 

@@ -1,4 +1,13 @@
-export type ServicePointType = "triage" | "consultation" | "pharmacy" | "laboratory" | "radiology" | "billing" | "cashier"
+export type ServicePointType =
+  | "triage"
+  | "consultation"
+  | "pharmacy"
+  | "laboratory"
+  | "radiology"
+  | "billing"
+  | "cashier"
+  | "telemedicine"
+  | "procedure"
 
 // Alias for compatibility
 export type ServicePoint = ServicePointType
@@ -111,6 +120,8 @@ export function getServicePointName(servicePoint: ServicePointType): string {
     radiology: "Radiology",
     billing: "Billing",
     cashier: "Cashier",
+    telemedicine: "Telemedicine",
+    procedure: "Procedure",
   }
   return names[servicePoint] || servicePoint
 }

@@ -226,6 +226,8 @@ export function CallPatientPanel({ servicePoint, staffName, counterNumber = 1 }:
     "pharmacy",
     "cashier",
     "billing",
+    "telemedicine",
+    "procedure",
   ].filter((point) => point !== servicePoint)
 
   return (
