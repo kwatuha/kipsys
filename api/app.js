@@ -57,6 +57,7 @@ const proceduresRoutes = require('./routes/proceduresRoutes');
 const ambulanceRoutes = require('./routes/ambulanceRoutes');
 const waiverRoutes = require('./routes/waiverRoutes');
 const mohReportsRoutes = require('./routes/mohReportsRoutes');
+const telemedicineRoutes = require('./routes/telemedicineRoutes');
 
 const authenticate = require('./middleware/authenticate');
 
@@ -170,6 +171,7 @@ app.use('/api/icu', icuRoutes);
 app.use('/api/triage', triageRoutes);
 app.use('/api/workflow', workflowRoutes);
 app.use('/api/nursing', nursingRoutes);
+app.use('/api/telemedicine', telemedicineRoutes);
 app.use('/api/departments', departmentRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/roles', roleRoutes);

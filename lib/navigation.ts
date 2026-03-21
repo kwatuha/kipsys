@@ -33,6 +33,7 @@ import {
   Bell,
   Store,
   Ambulance,
+  Video,
 } from "lucide-react"
 
 export interface NavigationItem {
@@ -157,6 +158,12 @@ export const navigationCategories: NavigationCategory[] = [
         title: "Ambulance Management",
         icon: Ambulance,
         href: "/ambulance",
+      },
+      {
+        title: "Telemedicine",
+        icon: Video,
+        href: "/telemedicine",
+        description: "Remote video visits (Zoom link mode)",
       },
     ],
   },

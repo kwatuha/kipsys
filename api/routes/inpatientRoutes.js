@@ -320,6 +320,39 @@ router.post('/admissions', async (req, res) => {
             ['occupied', bedId]
         );
 
+        // Queue patient at cashier for deposit payment (same pattern as triage/lab/pharmacy)
+        if (needsDeposit && depositInvoiceId) {
+            try {
+                const [existingCashier] = await connection.execute(
+                    `SELECT queueId FROM queue_entries
+                     WHERE patientId = ? AND servicePoint = 'cashier'
+                       AND status IN ('waiting', 'called', 'serving')`,
+                    [patientId]
+                );
+                if (existingCashier.length === 0) {
+                    const [cashierCount] = await connection.execute(
+                        'SELECT COUNT(*) as count FROM queue_entries WHERE DATE(arrivalTime) = CURDATE() AND servicePoint = "cashier"'
+                    );
+                    const ticketNum = (cashierCount[0]?.count || 0) + 1;
+                    const cashierTicketNumber = `C-${String(ticketNum).padStart(3, '0')}`;
+                    await connection.execute(
+                        `INSERT INTO queue_entries
+                         (patientId, ticketNumber, servicePoint, priority, status, notes, createdBy)
+                         VALUES (?, ?, 'cashier', 'normal', 'waiting', ?, ?)`,
+                        [
+                            patientId,
+                            cashierTicketNumber,
+                            `Admission deposit payment - ${admissionNumber} (invoice pending)`,
+                            userId || null
+                        ]
+                    );
+                }
+            } catch (queueErr) {
+                console.error('[ADMISSION] Failed to add cashier queue for deposit:', queueErr.message);
+                // Do not fail admission if queue insert fails
+            }
+        }
+
         await connection.commit();
 
         // Fetch created admission

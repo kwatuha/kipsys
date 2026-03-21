@@ -5,7 +5,9 @@
   "main": "app.js",
   "scripts": {
     "start": "node app.js",
-    "dev": "nodemon app.js"
+    "dev": "nodemon app.js",
+    "migrate:telemedicine": "node scripts/run-telemedicine-migration.js",
+    "migrate:telemedicine:docker": "bash scripts/run-telemedicine-migration-docker.sh"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

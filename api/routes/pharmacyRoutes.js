@@ -598,15 +598,19 @@ router.put('/prescriptions/:id', async (req, res) => {
 
                 const drugInventory = drugInventories[0];
 
-                // A. Update Inventory Quantity
-                const oldQuantity = drugInventory.quantity;
-                const newQuantity = oldQuantity - item.quantity;
+                // A. Update Inventory Quantity (coerce DECIMAL/string from MySQL)
+                const oldQuantity = Number(drugInventory.quantity);
+                const deductQty = Number(item.quantity);
+                if (!Number.isFinite(oldQuantity) || !Number.isFinite(deductQty) || deductQty <= 0) {
+                    throw new Error(`Invalid quantity for invoice line: ${item.description || item.drugInventoryId}`);
+                }
+                const newQuantity = oldQuantity - deductQty;
 
                 const [updateResult] = await connection.execute(
                     `UPDATE drug_inventory
                      SET quantity = ?, updatedAt = NOW()
                      WHERE drugInventoryId = ? AND quantity >= ?`,
-                    [newQuantity < 0 ? 0 : newQuantity, item.drugInventoryId, item.quantity]
+                    [newQuantity < 0 ? 0 : newQuantity, item.drugInventoryId, deductQty]
                 );
 
                 if (updateResult.affectedRows === 0) {
@@ -618,8 +622,8 @@ router.put('/prescriptions/:id', async (req, res) => {
                 const transactionDate = new Date().toISOString().split('T')[0];
                 const unitPriceForTransaction = drugInventory.unitPrice || 0;
                 const sellPriceForTransaction = drugInventory.sellPrice || 0;
-                const totalValue = item.quantity * unitPriceForTransaction;
-                const totalSellValue = item.quantity * sellPriceForTransaction;
+                const totalValue = deductQty * unitPriceForTransaction;
+                const totalSellValue = deductQty * sellPriceForTransaction;
 
                 await connection.execute(
                     `INSERT INTO drug_inventory_transactions
@@ -631,7 +635,7 @@ router.put('/prescriptions/:id', async (req, res) => {
                         oldPrescription.patientId,
                         id, // prescriptionId
                         transactionDate,
-                        -item.quantity, // Negative for dispensation
+                        -deductQty, // Negative for dispensation
                         oldQuantity,
                         newQuantity < 0 ? 0 : newQuantity,
                         newQuantity < 0 ? 0 : newQuantity, // balanceAfter
@@ -658,7 +662,7 @@ router.put('/prescriptions/:id', async (req, res) => {
                             item.drugInventoryId,
                             item.medicationId,
                             transactionDate,
-                            -item.quantity,
+                            -deductQty,
                             drugInventory.batchNumber || 'UNKNOWN',
                             unitPriceForTransaction,
                             sellPriceForTransaction,
@@ -2161,9 +2165,15 @@ router.post('/dispensations', async (req, res) => {
         const { prescriptionItemId, drugInventoryId, quantityDispensed, batchNumber, expiryDate, notes } = req.body;
         const userId = req.user?.id || req.user?.userId || 1;
 
-        if (!prescriptionItemId || !quantityDispensed) {
+        if (!prescriptionItemId || quantityDispensed === undefined || quantityDispensed === null || quantityDispensed === '') {
             await connection.rollback();
             return res.status(400).json({ error: 'Prescription item ID and quantity are required' });
+        }
+
+        const qtyDisp = Number(quantityDispensed);
+        if (!Number.isFinite(qtyDisp) || qtyDisp <= 0) {
+            await connection.rollback();
+            return res.status(400).json({ error: 'quantityDispensed must be a positive number' });
         }
 
         // 1. Get prescription item
@@ -2179,7 +2189,15 @@ router.post('/dispensations', async (req, res) => {
 
         const prescriptionItem = prescriptionItems[0];
         let drugInventory;
-        let selectedDrugInventoryId = drugInventoryId;
+        let selectedDrugInventoryId = null;
+        if (drugInventoryId !== undefined && drugInventoryId !== null && drugInventoryId !== '') {
+            const invId = Number(drugInventoryId);
+            if (!Number.isInteger(invId) || invId <= 0) {
+                await connection.rollback();
+                return res.status(400).json({ error: 'Invalid drugInventoryId' });
+            }
+            selectedDrugInventoryId = invId;
+        }
 
         // 2. FIFO Logic / Inventory Selection
         if (!selectedDrugInventoryId && prescriptionItem.medicationId) {
@@ -2210,9 +2228,26 @@ router.post('/dispensations', async (req, res) => {
             drugInventory = drugInventories[0];
         }
 
-        if (drugInventory.quantity < quantityDispensed) {
+        if (
+            prescriptionItem.medicationId != null &&
+            drugInventory.medicationId != null &&
+            Number(prescriptionItem.medicationId) !== Number(drugInventory.medicationId)
+        ) {
             await connection.rollback();
-            return res.status(400).json({ error: `Insufficient stock. Available: ${drugInventory.quantity}` });
+            return res.status(400).json({
+                error: 'Selected inventory batch does not match the medication on this prescription line'
+            });
+        }
+
+        const availableQty = Number(drugInventory.quantity);
+        if (!Number.isFinite(availableQty)) {
+            await connection.rollback();
+            return res.status(500).json({ error: 'Invalid quantity on hand in drug inventory record' });
+        }
+
+        if (availableQty < qtyDisp) {
+            await connection.rollback();
+            return res.status(400).json({ error: `Insufficient stock. Available: ${availableQty}` });
         }
 
         // 3. Format Dates
@@ -2226,14 +2261,14 @@ router.post('/dispensations', async (req, res) => {
             `INSERT INTO dispensations
             (prescriptionItemId, dispensationDate, quantityDispensed, batchNumber, expiryDate, dispensedBy, notes)
             VALUES (?, CURDATE(), ?, ?, ?, ?, ?)`,
-            [prescriptionItemId, quantityDispensed, batchNumber || drugInventory.batchNumber, formattedExpiryDate || null, userId, notes || null]
+            [prescriptionItemId, qtyDisp, batchNumber || drugInventory.batchNumber, formattedExpiryDate || null, userId, notes || null]
         );
 
         const dispensationId = dispensationResult.insertId;
 
         // 5. Update drug inventory quantity
-        const oldQuantity = drugInventory.quantity;
-        const newQuantity = oldQuantity - quantityDispensed;
+        const oldQuantity = availableQty;
+        const newQuantity = oldQuantity - qtyDisp;
 
         if (newQuantity <= 0) {
             await connection.execute(
@@ -2269,10 +2304,10 @@ router.post('/dispensations', async (req, res) => {
                 VALUES (?, ?, ?, ?, 'DISPENSATION', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'dispensation', ?, ?, ?, ?)`,
                 [
                     selectedDrugInventoryId, patientId, prescriptionId, dispensationId,
-                    transactionDate, -quantityDispensed, oldQuantity, newQuantity,
-                    newQuantity, unitPrice, sellPrice, (quantityDispensed * unitPrice),
-                    (quantityDispensed * sellPrice), dispensationId, `DISP-${dispensationId}`, userId,
-                    `Dispensed ${quantityDispensed} units. Batch: ${drugInventory.batchNumber}`
+                    transactionDate, -qtyDisp, oldQuantity, newQuantity,
+                    newQuantity, unitPrice, sellPrice, qtyDisp * unitPrice,
+                    qtyDisp * sellPrice, dispensationId, `DISP-${dispensationId}`, userId,
+                    `Dispensed ${qtyDisp} units. Batch: ${drugInventory.batchNumber}`
                 ]
             );
         } catch (txError) {
@@ -2288,10 +2323,10 @@ router.post('/dispensations', async (req, res) => {
                  expiryDate, location, patientId, prescriptionId, dispensationId, referenceType, referenceId, referenceNumber, performedBy, notes)
                 VALUES (?, ?, 'DISPENSATION', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'dispensation', ?, ?, ?, ?)`,
                 [
-                    selectedDrugInventoryId, drugInventory.medicationId, transactionDate, -quantityDispensed,
+                    selectedDrugInventoryId, drugInventory.medicationId, transactionDate, -qtyDisp,
                     drugInventory.batchNumber || 'UNKNOWN', unitPrice, sellPrice, expForAdj,
                     drugInventory.location || null, patientId, prescriptionId, dispensationId,
-                    dispensationId, `DISP-${dispensationId}`, userId, `Dispensed ${quantityDispensed} units`
+                    dispensationId, `DISP-${dispensationId}`, userId, `Dispensed ${qtyDisp} units`
                 ]
             );
         } catch (adjError) {
@@ -2299,7 +2334,8 @@ router.post('/dispensations', async (req, res) => {
         }
 
         // 8. Update prescription status
-        if (quantityDispensed >= parseFloat(prescriptionItem.quantity)) {
+        const prescribedQty = Number(prescriptionItem.quantity);
+        if (Number.isFinite(prescribedQty) && qtyDisp >= prescribedQty) {
             await connection.execute('UPDATE prescription_items SET status = "dispensed", updatedAt = NOW() WHERE itemId = ?', [prescriptionItemId]);
         }
 
@@ -4073,6 +4109,282 @@ router.get('/nurse-pickups/ready', async (req, res) => {
 });
 
 /**
+ * Deduct stock FIFO for a prescription line (same rules as POST /dispensations) and create dispensation row(s).
+ * Used when nurse completes pickup but pharmacy never ran dispense, or pickup qty exceeds total already dispensed.
+ * @returns {Promise<number|null>} lastDispensationId created in this call (null if nothing deducted)
+ */
+async function deductInventoryForPrescriptionItemFifo(connection, {
+    prescriptionItemId,
+    prescriptionItem,
+    totalQuantityToDeduct,
+    userId,
+    patientId,
+    prescriptionId,
+    notesSuffix = ''
+}) {
+    let remaining = Number(totalQuantityToDeduct);
+    if (!Number.isFinite(remaining) || remaining <= 0) {
+        return null;
+    }
+
+    const medicationId = prescriptionItem.medicationId;
+    if (!medicationId) {
+        const err = new Error('Prescription item has no linked medication; cannot deduct inventory');
+        err.statusCode = 400;
+        throw err;
+    }
+
+    let lastDispensationId = null;
+
+    while (remaining > 0) {
+        const [oldestBatches] = await connection.execute(
+            `SELECT di.* FROM drug_inventory di
+             WHERE di.medicationId = ? AND di.quantity > 0 AND di.status = 'active'
+               AND (di.expiryDate IS NULL OR di.expiryDate >= CURDATE())
+             ORDER BY COALESCE(di.createdAt, NOW()) ASC, di.expiryDate ASC LIMIT 1`,
+            [medicationId]
+        );
+
+        if (oldestBatches.length === 0) {
+            const err = new Error(
+                `Insufficient stock for ${prescriptionItem.medicationName || 'medication'}. Need ${remaining} more unit(s).`
+            );
+            err.statusCode = 400;
+            throw err;
+        }
+
+        const drugInventory = oldestBatches[0];
+        const selectedDrugInventoryId = drugInventory.drugInventoryId;
+        const take = Math.min(remaining, Number(drugInventory.quantity));
+
+        let formattedExpiryDate = drugInventory.expiryDate;
+        if (formattedExpiryDate && typeof formattedExpiryDate === 'string' && formattedExpiryDate.includes('T')) {
+            formattedExpiryDate = formattedExpiryDate.split('T')[0];
+        }
+
+        const dispenseNotes = notesSuffix || 'Nurse pickup — FIFO stock deduction';
+
+        const [dispensationResult] = await connection.execute(
+            `INSERT INTO dispensations
+            (prescriptionItemId, dispensationDate, quantityDispensed, batchNumber, expiryDate, dispensedBy, notes)
+            VALUES (?, CURDATE(), ?, ?, ?, ?, ?)`,
+            [
+                prescriptionItemId,
+                take,
+                drugInventory.batchNumber,
+                formattedExpiryDate || null,
+                userId,
+                dispenseNotes
+            ]
+        );
+
+        const dispensationId = dispensationResult.insertId;
+        lastDispensationId = dispensationId;
+
+        const oldQuantity = drugInventory.quantity;
+        const newQuantity = oldQuantity - take;
+
+        if (newQuantity <= 0) {
+            await connection.execute(
+                `UPDATE drug_inventory SET quantity = 0, status = 'exhausted', dateExhausted = CURDATE(), updatedAt = NOW() WHERE drugInventoryId = ?`,
+                [selectedDrugInventoryId]
+            );
+        } else {
+            await connection.execute(
+                'UPDATE drug_inventory SET quantity = ?, updatedAt = NOW() WHERE drugInventoryId = ?',
+                [newQuantity, selectedDrugInventoryId]
+            );
+        }
+
+        const transactionDate = new Date().toISOString().split('T')[0];
+        const unitPrice = drugInventory.unitPrice || 0;
+        const sellPrice = drugInventory.sellPrice || 0;
+
+        await connection.execute(
+            `INSERT INTO drug_inventory_transactions
+            (drugInventoryId, patientId, prescriptionId, dispensationId, transactionType, transactionDate,
+             quantityChange, quantityBefore, quantityAfter, balanceAfter, unitPrice, sellPrice,
+             totalValue, totalSellValue, referenceType, referenceId, referenceNumber, performedBy, notes)
+            VALUES (?, ?, ?, ?, 'DISPENSATION', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'dispensation', ?, ?, ?, ?)`,
+            [
+                selectedDrugInventoryId,
+                patientId,
+                prescriptionId,
+                dispensationId,
+                transactionDate,
+                -take,
+                oldQuantity,
+                newQuantity,
+                newQuantity,
+                unitPrice,
+                sellPrice,
+                take * unitPrice,
+                take * sellPrice,
+                dispensationId,
+                `DISP-${dispensationId}`,
+                userId,
+                `Dispensed ${take} units (pickup path). Batch: ${drugInventory.batchNumber}`
+            ]
+        );
+
+        try {
+            const expForAdj = drugInventory.expiryDate || new Date(Date.now() + 31536000000).toISOString().split('T')[0];
+            await connection.execute(
+                `INSERT INTO drug_stock_adjustments
+                (drugInventoryId, medicationId, adjustmentType, adjustmentDate, quantity, batchNumber, unitPrice, sellPrice,
+                 expiryDate, location, patientId, prescriptionId, dispensationId, referenceType, referenceId, referenceNumber, performedBy, notes)
+                VALUES (?, ?, 'DISPENSATION', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'dispensation', ?, ?, ?, ?)`,
+                [
+                    selectedDrugInventoryId,
+                    drugInventory.medicationId,
+                    transactionDate,
+                    -take,
+                    drugInventory.batchNumber || 'UNKNOWN',
+                    unitPrice,
+                    sellPrice,
+                    expForAdj,
+                    drugInventory.location || null,
+                    patientId,
+                    prescriptionId,
+                    dispensationId,
+                    dispensationId,
+                    `DISP-${dispensationId}`,
+                    userId,
+                    `Dispensed ${take} units (nurse pickup path)`
+                ]
+            );
+        } catch (adjError) {
+            console.error('Adjustment log failed (pickup FIFO):', adjError.message);
+        }
+
+        remaining -= take;
+    }
+
+    const [sumRows] = await connection.execute(
+        `SELECT COALESCE(SUM(quantityDispensed), 0) AS total FROM dispensations WHERE prescriptionItemId = ?`,
+        [prescriptionItemId]
+    );
+    const totalDispensedForItem = parseFloat(sumRows[0].total) || 0;
+    if (totalDispensedForItem >= parseFloat(prescriptionItem.quantity)) {
+        await connection.execute('UPDATE prescription_items SET status = "dispensed", updatedAt = NOW() WHERE itemId = ?', [
+            prescriptionItemId
+        ]);
+    }
+
+    const [pendingItems] = await connection.execute(
+        'SELECT COUNT(*) as count FROM prescription_items WHERE prescriptionId = ? AND status = "pending"',
+        [prescriptionId]
+    );
+    if (pendingItems[0].count === 0) {
+        await connection.execute('UPDATE prescriptions SET status = "dispensed", updatedAt = NOW() WHERE prescriptionId = ?', [
+            prescriptionId
+        ]);
+    }
+
+    if (patientId) {
+        const [remainingPendingItems] = await connection.execute(
+            `SELECT COUNT(*) as count
+             FROM prescription_items pi
+             INNER JOIN prescriptions p ON pi.prescriptionId = p.prescriptionId
+             WHERE p.patientId = ? AND pi.status = 'pending'`,
+            [patientId]
+        );
+
+        if (remainingPendingItems[0].count === 0) {
+            const [pharmacyQueues] = await connection.execute(
+                `SELECT queueId FROM queue_entries
+                 WHERE patientId = ? AND servicePoint = 'pharmacy'
+                 AND status NOT IN ('completed', 'cancelled')
+                 ORDER BY queueId DESC
+                 LIMIT 1`,
+                [patientId]
+            );
+
+            if (pharmacyQueues.length > 0) {
+                await connection.execute(
+                    `UPDATE queue_entries
+                     SET status = 'completed', endTime = NOW(), updatedAt = NOW(),
+                         notes = CONCAT(COALESCE(notes, ''), ' - All medications dispensed')
+                     WHERE queueId = ?`,
+                    [pharmacyQueues[0].queueId]
+                );
+            }
+        }
+    }
+
+    return lastDispensationId;
+}
+
+/**
+ * Ensure dispensations + inventory reflect quantityPickedUp before recording pickup lines.
+ * If pharmacy already dispensed enough, only links existing rows (no extra stock movement).
+ */
+async function resolveDispensationForNursePickup(connection, {
+    prescriptionItemId,
+    quantityPickedUp,
+    dispensationId: requestedDispensationId,
+    prescriptionItem,
+    patientId,
+    prescriptionId,
+    userId
+}) {
+    const qty = Number(quantityPickedUp);
+
+    if (requestedDispensationId) {
+        const [rows] = await connection.execute(
+            'SELECT dispensationId, prescriptionItemId FROM dispensations WHERE dispensationId = ?',
+            [requestedDispensationId]
+        );
+        if (rows.length === 0) {
+            const err = new Error('Invalid dispensationId for pickup');
+            err.statusCode = 400;
+            throw err;
+        }
+        if (Number(rows[0].prescriptionItemId) !== Number(prescriptionItemId)) {
+            const err = new Error('Dispensation does not match prescription item');
+            err.statusCode = 400;
+            throw err;
+        }
+    }
+
+    const [sumRow] = await connection.execute(
+        `SELECT COALESCE(SUM(quantityDispensed), 0) AS total FROM dispensations WHERE prescriptionItemId = ?`,
+        [prescriptionItemId]
+    );
+    const already = parseFloat(sumRow[0].total) || 0;
+    const need = qty - already;
+
+    if (need > 0.00001) {
+        await deductInventoryForPrescriptionItemFifo(connection, {
+            prescriptionItemId,
+            prescriptionItem,
+            totalQuantityToDeduct: need,
+            userId,
+            patientId,
+            prescriptionId,
+            notesSuffix: 'Stock deducted at nurse pickup (shortfall vs prior dispensations)'
+        });
+    }
+
+    if (requestedDispensationId && need <= 0.00001) {
+        return requestedDispensationId;
+    }
+
+    const [latest] = await connection.execute(
+        `SELECT dispensationId FROM dispensations WHERE prescriptionItemId = ? ORDER BY dispensationDate DESC, dispensationId DESC LIMIT 1`,
+        [prescriptionItemId]
+    );
+    if (latest.length === 0) {
+        const err = new Error(
+            'No dispensation recorded for this line. Stock could not be adjusted — check medication link and inventory.'
+        );
+        err.statusCode = 400;
+        throw err;
+    }
+    return latest[0].dispensationId;
+}
+
+/**
  * @route POST /api/pharmacy/nurse-pickups
  * @description Create a nurse pickup record (nurse picks up drugs for one or more patients)
  */
@@ -4185,6 +4497,25 @@ router.post('/nurse-pickups', async (req, res) => {
 
                 const prescriptionItem = prescriptionItems[0];
 
+                let resolvedDispensationId;
+                try {
+                    resolvedDispensationId = await resolveDispensationForNursePickup(connection, {
+                        prescriptionItemId,
+                        quantityPickedUp,
+                        dispensationId,
+                        prescriptionItem,
+                        patientId,
+                        prescriptionId,
+                        userId
+                    });
+                } catch (resolveErr) {
+                    await connection.rollback();
+                    const code = resolveErr.statusCode || 500;
+                    return res.status(code).json({
+                        error: resolveErr.message || 'Could not apply inventory for nurse pickup'
+                    });
+                }
+
                 // Get pricing from original prescription invoice or drug inventory
                 let unitPrice = 0;
                 let drugInventoryId = null;
@@ -4208,15 +4539,15 @@ router.post('/nurse-pickups', async (req, res) => {
                     drugInventoryId = originalInvoiceItems[0].drugInventoryId;
                     description = originalInvoiceItems[0].description || description;
                 } else {
-                    // Fallback: Get price from drug inventory via dispensation
-                    if (dispensationId) {
+                    // Fallback: Get price from drug inventory via dispensation (resolved after stock sync)
+                    if (resolvedDispensationId) {
                         const [dispensations] = await connection.execute(
                             `SELECT d.*, di.sellPrice, di.drugInventoryId
                              FROM dispensations d
                              LEFT JOIN drug_inventory di ON di.batchNumber = d.batchNumber AND di.medicationId = ?
                              WHERE d.dispensationId = ?
                              LIMIT 1`,
-                            [prescriptionItem.medicationId, dispensationId]
+                            [prescriptionItem.medicationId, resolvedDispensationId]
                         );
 
                         if (dispensations.length > 0 && dispensations[0].sellPrice) {
@@ -4258,27 +4589,27 @@ router.post('/nurse-pickups', async (req, res) => {
                 if (isExistingPickup) {
                     await connection.execute(
                         `UPDATE nurse_pickup_items SET dispensationId = ?, quantityPickedUp = ?, notes = COALESCE(?, notes) WHERE pickupId = ? AND prescriptionItemId = ?`,
-                        [dispensationId || null, quantityPickedUp || 1, itemNotes || null, pickupId, prescriptionItemId]
+                        [resolvedDispensationId || null, quantityPickedUp || 1, itemNotes || null, pickupId, prescriptionItemId]
                     );
                 } else {
                     await connection.execute(
                         `INSERT INTO nurse_pickup_items
                          (pickupId, prescriptionItemId, dispensationId, quantityPickedUp, notes)
                          VALUES (?, ?, ?, ?, ?)`,
-                        [pickupId, prescriptionItemId, dispensationId || null, quantityPickedUp, itemNotes || null]
+                        [pickupId, prescriptionItemId, resolvedDispensationId || null, quantityPickedUp, itemNotes || null]
                     );
                 }
 
-                // Record in drug history for audit trail (inventory already reduced during dispensing)
+                // Record in drug history for audit trail (inventory reduced at dispense or during resolveDispensationForNursePickup)
                 // Get dispensation details to find drug inventory batch
-                if (dispensationId) {
+                if (resolvedDispensationId) {
                     const [dispensations] = await connection.execute(
                         `SELECT d.*, di.drugInventoryId, di.quantity as currentQuantity, di.unitPrice, di.sellPrice
                          FROM dispensations d
                          LEFT JOIN drug_inventory di ON di.batchNumber = d.batchNumber AND di.medicationId = ?
                          WHERE d.dispensationId = ?
                          LIMIT 1`,
-                        [prescriptionItem.medicationId, dispensationId]
+                        [prescriptionItem.medicationId, resolvedDispensationId]
                     );
 
                     if (dispensations.length > 0 && dispensations[0].drugInventoryId) {
@@ -4300,7 +4631,7 @@ router.post('/nurse-pickups', async (req, res) => {
                                     disp.drugInventoryId,
                                     patientId,
                                     prescriptionId,
-                                    dispensationId,
+                                    resolvedDispensationId,
                                     transactionDate,
                                     currentQuantity, // quantityBefore (no change)
                                     currentQuantity, // quantityAfter (no change)
@@ -4331,7 +4662,7 @@ router.post('/nurse-pickups', async (req, res) => {
                                     null, // location
                                     patientId,
                                     prescriptionId,
-                                    dispensationId,
+                                    resolvedDispensationId,
                                     pickupId,
                                     `NP-${pickupId}`,
                                     userId,

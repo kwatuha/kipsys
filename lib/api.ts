@@ -10,10 +10,12 @@ interface ApiOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: any;
   headers?: Record<string, string>;
+  /** Abort request after this many ms (avoids infinite hang if API is unreachable). */
+  timeoutMs?: number;
 }
 
 async function apiRequest<T>(endpoint: string, options: ApiOptions = {}): Promise<T> {
-  const { method = 'GET', body, headers = {} } = options;
+  const { method = 'GET', body, headers = {}, timeoutMs } = options;
 
   // Get token from localStorage (could be JWT from backend or simple token from frontend)
   let token: string | null = null;
@@ -24,8 +26,15 @@ async function apiRequest<T>(endpoint: string, options: ApiOptions = {}): Promis
             localStorage.getItem('auth_token');
   }
 
+  const controller = new AbortController();
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  if (typeof timeoutMs === 'number' && timeoutMs > 0) {
+    timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  }
+
   const config: RequestInit = {
     method,
+    signal: controller.signal,
     headers: {
       'Content-Type': 'application/json',
       ...(token && { 'Authorization': `Bearer ${token}` }),
@@ -37,7 +46,27 @@ async function apiRequest<T>(endpoint: string, options: ApiOptions = {}): Promis
     config.body = JSON.stringify(body);
   }
 
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, config);
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${endpoint}`, config);
+  } catch (err: any) {
+    if (err?.name === 'AbortError') {
+      const base =
+        typeof window !== 'undefined'
+          ? process.env.NEXT_PUBLIC_API_URL || '(same origin — set NEXT_PUBLIC_API_URL to your API host if the app runs on a different port)'
+          : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+      throw new Error(
+        timeoutMs
+          ? `Request timed out after ${timeoutMs}ms. The API may be slow, the database busy, or the request never reached the backend. ` +
+              `Configured API base: ${base}. ` +
+              `For local dev, set NEXT_PUBLIC_API_URL to your API (e.g. http://localhost:3003) and restart Next.js.`
+          : 'Request was cancelled.'
+      );
+    }
+    throw err;
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
 
   if (!response.ok) {
     // If 401, try to clear invalid token
@@ -875,6 +904,62 @@ export const appointmentsApi = {
 
   delete: (id: string) =>
     apiRequest<any>(`/api/appointments/${id}`, { method: 'DELETE' }),
+};
+
+// Telemedicine API (Zoom link mode: paste join URL from your Zoom app; no Zoom API keys)
+export const telemedicineApi = {
+  /** Per-user defaults (PMI link, passcode); copied into new sessions when no URL is sent */
+  getMyDefaults: () => apiRequest<any>('/api/telemedicine/my-defaults'),
+
+  updateMyDefaults: (data: { defaultZoomJoinUrl?: string | null; defaultZoomPassword?: string | null }) =>
+    apiRequest<any>('/api/telemedicine/my-defaults', { method: 'PUT', body: data }),
+
+  /** Paginated list: doctors see own sessions; admins see all */
+  listSessions: (params?: { page?: number; limit?: number }) => {
+    const q = new URLSearchParams();
+    if (params?.page != null) q.set('page', String(params.page));
+    if (params?.limit != null) q.set('limit', String(params.limit));
+    const qs = q.toString();
+    return apiRequest<{ sessions: any[]; page: number; limit: number; total: number }>(
+      `/api/telemedicine/sessions${qs ? `?${qs}` : ''}`
+    );
+  },
+
+  createSession: (data: any) =>
+    apiRequest<any>('/api/telemedicine/sessions', {
+      method: 'POST',
+      body: data,
+      /** Longer than most routes — create waits on DB pool + transaction */
+      timeoutMs: 60000,
+    }),
+
+  getSession: (sessionId: string) =>
+    apiRequest<any>(`/api/telemedicine/sessions/${sessionId}`),
+
+  /** Save or update pasted Zoom meeting link + optional password */
+  updateSessionLink: (sessionId: string, data: { zoomJoinUrl?: string | null; zoomPassword?: string | null }) =>
+    apiRequest<any>(`/api/telemedicine/sessions/${sessionId}/link`, {
+      method: 'PATCH',
+      body: data,
+    }),
+
+  recordConsent: (sessionId: string, data: any) =>
+    apiRequest<any>(`/api/telemedicine/sessions/${sessionId}/consent`, {
+      method: 'POST',
+      body: data,
+    }),
+
+  startSession: (sessionId: string) =>
+    apiRequest<any>(`/api/telemedicine/sessions/${sessionId}/start`, { method: 'POST' }),
+
+  endSession: (sessionId: string) =>
+    apiRequest<any>(`/api/telemedicine/sessions/${sessionId}/end`, { method: 'POST' }),
+
+  /** Returns { joinUrl, zoomPassword } from stored session (doctor/admin only) */
+  getDoctorJoinUrl: (sessionId: string) =>
+    apiRequest<any>(`/api/telemedicine/sessions/${sessionId}/join-url?${new URLSearchParams({
+      participant: 'doctor',
+    })}`),
 };
 
 // Workflow API

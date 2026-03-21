@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
+import { useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -13,7 +14,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Plus, Clock, Activity, Stethoscope, Pill, FlaskConical, Calendar, User, FileText, AlertCircle, AlertTriangle, Eye, Package, Scan, Pencil, Trash2, LogOut, ArrowRightLeft, Printer, Receipt, Download, Loader2 } from "lucide-react"
-import { inpatientApi, laboratoryApi, userApi, doctorsApi, serviceChargeApi, billingApi, proceduresApi, pharmacyApi, radiologyApi, roleApi } from "@/lib/api"
+import { inpatientApi, laboratoryApi, userApi, doctorsApi, serviceChargeApi, billingApi, proceduresApi, pharmacyApi, radiologyApi, roleApi, telemedicineApi } from "@/lib/api"
 import { format } from "date-fns"
 import { toast } from "@/components/ui/use-toast"
 import { useAuth } from "@/lib/auth/auth-context"
@@ -21,6 +22,7 @@ import { ProcedureCombobox } from "@/components/procedure-combobox"
 import { TestTypeCombobox } from "@/components/test-type-combobox"
 import { ExamTypeCombobox } from "@/components/exam-type-combobox"
 import { DischargeSummary } from "@/components/discharge-summary"
+import { MedicationCombobox } from "@/components/medication-combobox"
 
 interface InpatientManagementProps {
   admissionId: string
@@ -31,6 +33,7 @@ interface InpatientManagementProps {
 }
 
 export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissionUpdated }: InpatientManagementProps) {
+  const router = useRouter()
   const { user } = useAuth()
   const currentRoleName = String((user as any)?.role || (user as any)?.roleName || "").toLowerCase()
   const canApproveBillAdjustments =
@@ -60,6 +63,17 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
     nextReviewDate: "",
   })
   const [savingReview, setSavingReview] = useState(false)
+
+  const [startingTelemedicine, setStartingTelemedicine] = useState(false)
+  const telemedicineInFlightRef = useRef(false)
+
+  // Clear stuck "Starting…" when the admission dialog closes (parent may unmount without intermediate open=false)
+  useEffect(() => {
+    if (!open) {
+      telemedicineInFlightRef.current = false
+      setStartingTelemedicine(false)
+    }
+  }, [open])
 
   // Nursing Care states
   const [nursingDialogOpen, setNursingDialogOpen] = useState(false)
@@ -134,7 +148,6 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
 
   // Medications/Prescriptions states
   const [prescriptionDialogOpen, setPrescriptionDialogOpen] = useState(false)
-  const [medications, setMedications] = useState<any[]>([])
   const [medicationsInventory, setMedicationsInventory] = useState<Record<number, { totalQuantity: number; hasStock: boolean }>>({})
   const [prescriptionForm, setPrescriptionForm] = useState({
     medicationId: "",
@@ -464,20 +477,9 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
     }
   }
 
-  const loadMedications = async () => {
-    try {
-      const medicationsList = await pharmacyApi.getMedications(undefined, 1, 1000) // Get all medications
-      console.log("Loaded medications:", medicationsList?.length || 0, medicationsList)
-      setMedications(medicationsList || [])
-      await loadMedicationInventory()
-    } catch (error) {
-      console.error("Error loading medications:", error)
-      toast({
-        title: "Error",
-        description: "Failed to load medications. Please try again.",
-        variant: "destructive",
-      })
-    }
+  /** Inventory totals for prescription form badges (combobox loads catalog + stock in dropdown like encounter form). */
+  const refreshPrescriptionInventory = async () => {
+    await loadMedicationInventory()
   }
 
   const loadMedicationInventory = async () => {
@@ -700,6 +702,64 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
       })
     } finally {
       setSavingReview(false)
+    }
+  }
+
+  /** Create telemedicine session (Zoom link mode) and open session page */
+  const handleStartTelemedicine = async () => {
+    if (telemedicineInFlightRef.current) return
+    telemedicineInFlightRef.current = true
+    setStartingTelemedicine(true)
+    try {
+      if (!overview?.admission?.patientId) {
+        toast({
+          title: "Missing patient",
+          description: "Patient ID is not available for this admission.",
+          variant: "destructive",
+        })
+        return
+      }
+      if (!admissionId) {
+        toast({ title: "Missing admission", description: "Admission ID is not available.", variant: "destructive" })
+        return
+      }
+      const actorDoctorId = (user as any)?.userId ?? (user as any)?.id
+      if (!actorDoctorId) {
+        toast({ title: "Missing doctor", description: "Doctor user is not available.", variant: "destructive" })
+        return
+      }
+
+      const created = await telemedicineApi.createSession({
+        originType: "inpatient",
+        admissionId: Number(admissionId),
+        patientId: Number(overview.admission.patientId),
+        doctorId: Number(actorDoctorId),
+        notes: `Inpatient remote review (Admission: ${overview.admission.admissionNumber || admissionId})`,
+      })
+
+      if (!created?.sessionId) {
+        toast({ title: "Telemedicine", description: "Session created but no sessionId returned.", variant: "destructive" })
+        return
+      }
+
+      const path = `/telemedicine/${created.sessionId}`
+      router.push(path)
+      // Close admission dialog — if we don't, the full-screen modal stays above the new route
+      onOpenChange(false)
+      toast({
+        title: "Telemedicine session ready",
+        description: "Paste your Zoom join link on the next screen.",
+      })
+    } catch (err: any) {
+      console.error("Telemedicine create failed:", err)
+      toast({
+        title: "Telemedicine failed",
+        description: err?.message || "Could not create telemedicine session",
+        variant: "destructive",
+      })
+    } finally {
+      telemedicineInFlightRef.current = false
+      setStartingTelemedicine(false)
     }
   }
 
@@ -971,7 +1031,7 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
 
   useEffect(() => {
     if (prescriptionDialogOpen) {
-      loadMedications()
+      refreshPrescriptionInventory()
     }
   }, [prescriptionDialogOpen])
 
@@ -1784,25 +1844,28 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
               {admission.status}
             </Badge>
           </DialogTitle>
-          <DialogDescription className="flex flex-wrap items-center justify-between gap-2">
-            <span>{admission.firstName} {admission.lastName} - {admission.wardName} - Bed {admission.bedNumber}</span>
-            <div className="flex gap-2 flex-shrink-0">
-              <Button variant="outline" size="sm" onClick={() => setDischargeSummaryOpen(true)}>
-                <Printer className="h-4 w-4 mr-2" />
-                Print discharge summary
-              </Button>
-              {admission.status === "admitted" && (
-                <>
-                  <Button variant="outline" size="sm" onClick={() => { setDischargeDate(new Date().toISOString().slice(0, 10)); setDischargeNotes(""); setDischargeDialogOpen(true); }}>
-                    <LogOut className="h-4 w-4 mr-2" />
-                    Discharge
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={openTransferDialog}>
-                    <ArrowRightLeft className="h-4 w-4 mr-2" />
-                    Transfer
-                  </Button>
-                </>
-              )}
+          {/* asChild: Radix Description is a <p> by default; block children (div/button row) must use a wrapper div */}
+          <DialogDescription asChild className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <span>{admission.firstName} {admission.lastName} - {admission.wardName} - Bed {admission.bedNumber}</span>
+              <div className="flex gap-2 flex-shrink-0">
+                <Button variant="outline" size="sm" onClick={() => setDischargeSummaryOpen(true)}>
+                  <Printer className="h-4 w-4 mr-2" />
+                  Print discharge summary
+                </Button>
+                {admission.status === "admitted" && (
+                  <>
+                    <Button variant="outline" size="sm" onClick={() => { setDischargeDate(new Date().toISOString().slice(0, 10)); setDischargeNotes(""); setDischargeDialogOpen(true); }}>
+                      <LogOut className="h-4 w-4 mr-2" />
+                      Discharge
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={openTransferDialog}>
+                      <ArrowRightLeft className="h-4 w-4 mr-2" />
+                      Transfer
+                    </Button>
+                  </>
+                )}
+              </div>
             </div>
           </DialogDescription>
         </DialogHeader>
@@ -1850,6 +1913,35 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
               </Card>
             </div>
 
+            <Card className="border-primary/20 bg-muted/30">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">Telemedicine (Zoom)</CardTitle>
+                <CardDescription>
+                  Start a remote visit: HMIS records consent and audit. Create the meeting in your Zoom app, then paste the join link on the next screen.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button
+                  type="button"
+                  variant="default"
+                  size="sm"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    void handleStartTelemedicine()
+                  }}
+                  disabled={startingTelemedicine}
+                  title="Start a remote doctor review (telemedicine)"
+                >
+                  <Activity className="mr-2 h-4 w-4" />
+                  {startingTelemedicine ? "Starting…" : "Start Telemedicine"}
+                </Button>
+                <p className="text-xs text-muted-foreground mt-2">
+                  Also available under the <strong>Reviews</strong> tab next to &quot;Add Review&quot;.
+                </p>
+              </CardContent>
+            </Card>
+
             <div className="grid grid-cols-4 gap-4">
               <Card>
                 <CardHeader className="pb-2">
@@ -1891,8 +1983,9 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
 
           {/* Doctor Reviews Tab */}
           <TabsContent value="reviews" className="space-y-4">
-            <div className="flex justify-between items-center">
-              <h3 className="text-lg font-semibold">Doctor Reviews & Rounds</h3>
+            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+              <h3 className="text-lg font-semibold shrink-0">Doctor Reviews & Rounds</h3>
+              <div className="flex flex-wrap items-center gap-2">
               <Dialog open={reviewDialogOpen} onOpenChange={(open) => {
                 setReviewDialogOpen(open)
                 if (!open) {
@@ -2037,6 +2130,22 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
                   </div>
                 </DialogContent>
               </Dialog>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    void handleStartTelemedicine()
+                  }}
+                  disabled={startingTelemedicine}
+                  title="Start a remote doctor review (telemedicine)"
+                >
+                  <Activity className="mr-2 h-4 w-4" />
+                  {startingTelemedicine ? "Starting…" : "Start Telemedicine"}
+                </Button>
+              </div>
             </div>
 
             <Card>
@@ -3885,24 +3994,18 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
                   <div className="space-y-4">
                     <div>
                       <Label>Medication *</Label>
-                      <Select value={prescriptionForm.medicationId} onValueChange={(v) => setPrescriptionForm({ ...prescriptionForm, medicationId: v })}>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select medication" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {medications.length > 0 ? (
-                            medications.map((med: any) => (
-                              <SelectItem key={med.medicationId} value={med.medicationId.toString()}>
-                                {med.name || med.medicationName} {med.strength && `(${med.strength})`}
-                              </SelectItem>
-                            ))
-                          ) : (
-                            <div className="px-2 py-1.5 text-sm text-muted-foreground">
-                              No medications available
-                            </div>
-                          )}
-                        </SelectContent>
-                      </Select>
+                      <MedicationCombobox
+                        value={prescriptionForm.medicationId || undefined}
+                        onValueChange={(v) => setPrescriptionForm({ ...prescriptionForm, medicationId: v })}
+                        placeholder="Search medication (stock shown in list)..."
+                        allowCreate
+                        onMedicationCreated={() => {
+                          void loadMedicationInventory()
+                        }}
+                      />
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Same as patient encounter: each option shows available quantity or out of stock.
+                      </p>
                       {prescriptionForm.medicationId ? (
                         <div className="mt-2">
                           {getMedicationInventoryStatus(prescriptionForm.medicationId).hasStock ? (

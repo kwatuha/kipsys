@@ -7,9 +7,13 @@
 set -e
 
 # --- Configuration ---
+# Usage: ./deploy/remote-deploy.sh [SERVER_IP] [SSH_KEY_PATH]
+# Or:   SERVER_IP=x SSH_KEY_PATH=~/.key ./deploy/remote-deploy.sh
 SERVER_IP="${SERVER_IP:-41.89.173.8}"
 SSH_KEY_PATH="${SSH_KEY_PATH:-~/.ssh/id_asusme}"
 SSH_USER="${SSH_USER:-fhir}"
+if [ -n "${1:-}" ]; then SERVER_IP="$1"; fi
+if [ -n "${2:-}" ]; then SSH_KEY_PATH="$2"; fi
 
 # Colors
 RED='\033[0;31m'

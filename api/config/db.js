@@ -9,8 +9,10 @@ const pool = mysql.createPool({
     database: process.env.DB_NAME || 'kiplombe_hmis',
     port: process.env.DB_PORT || 3306,
     waitForConnections: true,
-    connectionLimit: 10,
-    queueLimit: 0,
+    // Higher limit reduces waits when many routes hold connections; tune via env if needed
+    connectionLimit: Number(process.env.DB_POOL_SIZE || 20),
+    // Cap queue so clients fail fast instead of hanging indefinitely when pool is saturated
+    queueLimit: Number(process.env.DB_POOL_QUEUE_LIMIT || 50),
     charset: 'utf8mb4'
 });
 

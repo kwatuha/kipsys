@@ -30,6 +30,10 @@ npm install
 
 ### 2. Database Setup
 
+**Copy production data to local (Docker MySQL)** — see the repo guide:
+
+- [`deploy/SYNC_REMOTE_TO_LOCAL.md`](../deploy/SYNC_REMOTE_TO_LOCAL.md) — dump from `41.89.173.8`, restore locally, run migrations.
+
 1. Create MySQL database:
 ```sql
 CREATE DATABASE kiplombe_hmis CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
@@ -57,6 +61,11 @@ DB_PASSWORD=your_password
 DB_NAME=kiplombe_hmis
 DB_PORT=3306
 
+# Connection pool (optional; defaults in config/db.js)
+# DB_POOL_SIZE=20
+# DB_POOL_QUEUE_LIMIT=50
+# DB_POOL_ACQUIRE_TIMEOUT_MS=15000
+
 # JWT Secret (change this in production!)
 JWT_SECRET=your_super_secret_jwt_key_change_this_in_production
 
@@ -67,6 +76,30 @@ NODE_ENV=development
 # API Base URL
 API_BASE_URL=http://localhost:3001
 ```
+
+**Telemedicine (Zoom link mode)** – No Zoom API credentials or `DAILY_*` variables are required. **Create the tables once.**
+
+**Docker (MySQL container `kiplombe_mysql`)** — matches `docker-compose.yml` defaults (`kiplombe_user` / `kiplombe_password` / `kiplombe_hmis`):
+
+```bash
+cd api
+npm run migrate:telemedicine:docker
+```
+
+Or: `bash api/scripts/run-telemedicine-migration-docker.sh`
+
+**Local MySQL** (uses `api/.env` `DB_*`):
+
+```bash
+cd api
+npm run migrate:telemedicine
+```
+
+Or manually: `mysql -u USER -p kiplombe_hmis < database/migrations/40_telemedicine_sessions_schema.sql`
+
+Clinicians paste the meeting join URL from the Zoom app into HMIS; the API only stores metadata and consent.
+
+**Per-user defaults:** `user_telemedicine_settings` stores optional `defaultZoomJoinUrl` / `defaultZoomPassword` per `userId`. `GET/PUT /api/telemedicine/my-defaults` — new sessions copy the **doctor’s** defaults when the create request omits a link.
 
 ### 4. Start the Server
 

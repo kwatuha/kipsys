@@ -4,13 +4,13 @@ import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { CalendarIcon, ChevronLeft, ChevronRight, Search, Plus, Edit, Trash2, MoreHorizontal, Loader2, Eye } from "lucide-react"
+import { CalendarIcon, ChevronLeft, ChevronRight, Search, Plus, Edit, Trash2, MoreHorizontal, Loader2, Eye, Video } from "lucide-react"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { AddAppointmentForm } from "@/components/add-appointment-form"
-import { appointmentsApi } from "@/lib/api"
+import { appointmentsApi, telemedicineApi } from "@/lib/api"
 import { toast } from "@/components/ui/use-toast"
 import {
   AlertDialog,
@@ -48,6 +48,7 @@ export default function AppointmentsPage() {
   const [searchQuery, setSearchQuery] = useState("")
   const [statusFilter, setStatusFilter] = useState<string | null>(null)
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split("T")[0])
+  const [telemedicineStartingId, setTelemedicineStartingId] = useState<number | null>(null)
 
   // Load appointments from API
   useEffect(() => {
@@ -131,6 +132,52 @@ export default function AppointmentsPage() {
         description: "Patient ID not found",
         variant: "destructive",
       })
+    }
+  }
+
+  const handleStartTelemedicine = async (appointment: any) => {
+    if (!appointment.patientId) {
+      toast({
+        title: "Missing patient",
+        description: "Patient ID is not available for this appointment.",
+        variant: "destructive",
+      })
+      return
+    }
+    if (!appointment.doctorId) {
+      toast({
+        title: "Missing doctor",
+        description: "Assign a doctor to this appointment before starting telemedicine.",
+        variant: "destructive",
+      })
+      return
+    }
+    if (telemedicineStartingId != null) return
+    setTelemedicineStartingId(appointment.appointmentId)
+    try {
+      const created = await telemedicineApi.createSession({
+        originType: "appointment",
+        appointmentId: Number(appointment.appointmentId),
+        patientId: Number(appointment.patientId),
+        doctorId: Number(appointment.doctorId),
+        notes: `Telemedicine from appointment #${appointment.appointmentId}`,
+      })
+      if (created?.sessionId) {
+        router.push(`/telemedicine/${created.sessionId}`)
+        toast({
+          title: "Telemedicine session created",
+          description: "Paste your Zoom join link on the next screen.",
+        })
+      }
+    } catch (error: any) {
+      console.error("Telemedicine create failed:", error)
+      toast({
+        title: "Telemedicine failed",
+        description: error?.message || "Could not create telemedicine session",
+        variant: "destructive",
+      })
+    } finally {
+      setTelemedicineStartingId(null)
     }
   }
 
@@ -331,6 +378,17 @@ export default function AppointmentsPage() {
                                 View Records
                               </DropdownMenuItem>
                               <DropdownMenuItem
+                                onClick={() => handleStartTelemedicine(appointment)}
+                                disabled={telemedicineStartingId === appointment.appointmentId}
+                              >
+                                {telemedicineStartingId === appointment.appointmentId ? (
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Video className="mr-2 h-4 w-4" />
+                                )}
+                                Start Telemedicine
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
                                 onClick={() => setDeletingAppointment(appointment)}
                                 className="text-red-600"
                               >
@@ -423,6 +481,17 @@ export default function AppointmentsPage() {
                               <DropdownMenuItem onClick={() => handleViewRecords(appointment)}>
                                 <Eye className="mr-2 h-4 w-4" />
                                 View Records
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={() => handleStartTelemedicine(appointment)}
+                                disabled={telemedicineStartingId === appointment.appointmentId}
+                              >
+                                {telemedicineStartingId === appointment.appointmentId ? (
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Video className="mr-2 h-4 w-4" />
+                                )}
+                                Start Telemedicine
                               </DropdownMenuItem>
                               <DropdownMenuItem
                                 onClick={() => setDeletingAppointment(appointment)}
@@ -519,6 +588,17 @@ export default function AppointmentsPage() {
                                 View Records
                               </DropdownMenuItem>
                               <DropdownMenuItem
+                                onClick={() => handleStartTelemedicine(appointment)}
+                                disabled={telemedicineStartingId === appointment.appointmentId}
+                              >
+                                {telemedicineStartingId === appointment.appointmentId ? (
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Video className="mr-2 h-4 w-4" />
+                                )}
+                                Start Telemedicine
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
                                 onClick={() => setDeletingAppointment(appointment)}
                                 className="text-red-600"
                               >
@@ -613,6 +693,17 @@ export default function AppointmentsPage() {
                                 View Records
                               </DropdownMenuItem>
                               <DropdownMenuItem
+                                onClick={() => handleStartTelemedicine(appointment)}
+                                disabled={telemedicineStartingId === appointment.appointmentId}
+                              >
+                                {telemedicineStartingId === appointment.appointmentId ? (
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Video className="mr-2 h-4 w-4" />
+                                )}
+                                Start Telemedicine
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
                                 onClick={() => setDeletingAppointment(appointment)}
                                 className="text-red-600"
                               >
@@ -705,6 +796,17 @@ export default function AppointmentsPage() {
                               <DropdownMenuItem onClick={() => handleViewRecords(appointment)}>
                                 <Eye className="mr-2 h-4 w-4" />
                                 View Records
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={() => handleStartTelemedicine(appointment)}
+                                disabled={telemedicineStartingId === appointment.appointmentId}
+                              >
+                                {telemedicineStartingId === appointment.appointmentId ? (
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Video className="mr-2 h-4 w-4" />
+                                )}
+                                Start Telemedicine
                               </DropdownMenuItem>
                               <DropdownMenuItem
                                 onClick={() => setDeletingAppointment(appointment)}

@@ -227,6 +227,17 @@ WHERE TABLE_SCHEMA = 'kiplombe_hmis'
 AND REFERENCED_TABLE_NAME IS NOT NULL;
 ```
 
+### Telemedicine (optional module)
+
+- `migrations/40_telemedicine_sessions_schema.sql` — `telemedicine_sessions` + `telemedicine_session_audit`
+- `migrations/41_telemedicine_zoom_manual.sql` — optional; adds `zoomJoinUrl` / `zoomPassword` if upgrading an old DB
+
+From `api/`: `npm run migrate:telemedicine` (uses `.env` `DB_*` settings).
+
+**Docker:** with MySQL running as container `kiplombe_mysql` (see repo `docker-compose.yml`): `npm run migrate:telemedicine:docker`.
+
+- `migrations/42_user_telemedicine_defaults.sql` — optional `user_telemedicine_settings` (per-user default Zoom link); included in `migrate:telemedicine` scripts.
+
 ## Summary
 
 **Total Files**: 14 (1 base + 13 module files)
