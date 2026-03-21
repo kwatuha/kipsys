@@ -49,7 +49,7 @@ fi
 
 # Expand SSH key path
 SSH_KEY_PATH="${SSH_KEY_PATH/#\~/$HOME}"
-SSH_CMD="ssh -i \"$SSH_KEY_PATH\" -o StrictHostKeyChecking=no \"$SSH_USER@$SERVER_IP\""
+SSH_CMD="ssh -q -T -o BatchMode=yes -i \"$SSH_KEY_PATH\" -o StrictHostKeyChecking=no \"$SSH_USER@$SERVER_IP\""
 
 echo -e "${BLUE}============================================${NC}"
 echo -e "${BLUE}Upload and Restore Database to Remote${NC}"

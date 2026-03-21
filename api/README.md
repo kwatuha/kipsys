@@ -88,6 +88,14 @@ npm run migrate:telemedicine:docker
 
 Or: `bash api/scripts/run-telemedicine-migration-docker.sh`
 
+To use **`mysql` root** (e.g. `-uroot -proot_password` like `docker-compose`):
+
+```bash
+MYSQL_TELEMEDICINE_USE_ROOT=1 MYSQL_ROOT_PASSWORD=root_password bash api/scripts/run-telemedicine-migration-docker.sh
+```
+
+**Production server (SSH from your laptop):** apply 40–43 on `41.89.173.8` with `deploy/run-telemedicine-migrations-remote.sh` — see `deploy/DATABASE_REMOTE_WORKFLOW.md`.
+
 **Local MySQL** (uses `api/.env` `DB_*`):
 
 ```bash

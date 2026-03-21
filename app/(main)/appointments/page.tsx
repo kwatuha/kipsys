@@ -33,9 +33,11 @@ import {
 } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
+import { useAuth } from "@/lib/auth/auth-context"
 
 export default function AppointmentsPage() {
   const router = useRouter()
+  const { user } = useAuth()
   const [addAppointmentOpen, setAddAppointmentOpen] = useState(false)
   const [editingAppointment, setEditingAppointment] = useState<any>(null)
   const [deletingAppointment, setDeletingAppointment] = useState<any>(null)
@@ -144,10 +146,17 @@ export default function AppointmentsPage() {
       })
       return
     }
-    if (!appointment.doctorId) {
+    // Same idea as inpatient: use appointment's doctor, or fall back to signed-in user (clinician starting the visit)
+    const actorId = (user as { id?: string; userId?: string })?.userId ?? (user as { id?: string })?.id
+    const fromAppointment =
+      appointment.doctorId != null && appointment.doctorId !== "" ? Number(appointment.doctorId) : NaN
+    const fromUser = actorId != null && actorId !== "" ? Number(actorId) : NaN
+    const doctorId = Number.isFinite(fromAppointment) ? fromAppointment : fromUser
+
+    if (!Number.isFinite(doctorId)) {
       toast({
         title: "Missing doctor",
-        description: "Assign a doctor to this appointment before starting telemedicine.",
+        description: "Assign a doctor to this appointment, or sign in as the clinician who will run the telemedicine visit.",
         variant: "destructive",
       })
       return
@@ -159,7 +168,7 @@ export default function AppointmentsPage() {
         originType: "appointment",
         appointmentId: Number(appointment.appointmentId),
         patientId: Number(appointment.patientId),
-        doctorId: Number(appointment.doctorId),
+        doctorId,
         notes: `Telemedicine from appointment #${appointment.appointmentId}`,
       })
       if (created?.sessionId) {
@@ -378,8 +387,10 @@ export default function AppointmentsPage() {
                                 View Records
                               </DropdownMenuItem>
                               <DropdownMenuItem
-                                onClick={() => handleStartTelemedicine(appointment)}
                                 disabled={telemedicineStartingId === appointment.appointmentId}
+                                onSelect={() => {
+                                  setTimeout(() => void handleStartTelemedicine(appointment), 0)
+                                }}
                               >
                                 {telemedicineStartingId === appointment.appointmentId ? (
                                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -483,8 +494,10 @@ export default function AppointmentsPage() {
                                 View Records
                               </DropdownMenuItem>
                               <DropdownMenuItem
-                                onClick={() => handleStartTelemedicine(appointment)}
                                 disabled={telemedicineStartingId === appointment.appointmentId}
+                                onSelect={() => {
+                                  setTimeout(() => void handleStartTelemedicine(appointment), 0)
+                                }}
                               >
                                 {telemedicineStartingId === appointment.appointmentId ? (
                                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -588,8 +601,10 @@ export default function AppointmentsPage() {
                                 View Records
                               </DropdownMenuItem>
                               <DropdownMenuItem
-                                onClick={() => handleStartTelemedicine(appointment)}
                                 disabled={telemedicineStartingId === appointment.appointmentId}
+                                onSelect={() => {
+                                  setTimeout(() => void handleStartTelemedicine(appointment), 0)
+                                }}
                               >
                                 {telemedicineStartingId === appointment.appointmentId ? (
                                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -693,8 +708,10 @@ export default function AppointmentsPage() {
                                 View Records
                               </DropdownMenuItem>
                               <DropdownMenuItem
-                                onClick={() => handleStartTelemedicine(appointment)}
                                 disabled={telemedicineStartingId === appointment.appointmentId}
+                                onSelect={() => {
+                                  setTimeout(() => void handleStartTelemedicine(appointment), 0)
+                                }}
                               >
                                 {telemedicineStartingId === appointment.appointmentId ? (
                                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -798,8 +815,10 @@ export default function AppointmentsPage() {
                                 View Records
                               </DropdownMenuItem>
                               <DropdownMenuItem
-                                onClick={() => handleStartTelemedicine(appointment)}
                                 disabled={telemedicineStartingId === appointment.appointmentId}
+                                onSelect={() => {
+                                  setTimeout(() => void handleStartTelemedicine(appointment), 0)
+                                }}
                               >
                                 {telemedicineStartingId === appointment.appointmentId ? (
                                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />

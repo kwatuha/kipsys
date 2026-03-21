@@ -2,6 +2,8 @@
 
 Use this when you want a **copy of production data** on your machine and an **up-to-date schema** (including telemedicine and other migrations).
 
+**Related:** [DATABASE_REMOTE_WORKFLOW.md](./DATABASE_REMOTE_WORKFLOW.md) — full picture (dump/restore/upload, **run telemedicine on server**).
+
 ## Prerequisites
 
 1. **Local MySQL (Docker)** — from repo root:
