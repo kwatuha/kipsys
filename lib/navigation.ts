@@ -41,7 +41,24 @@ export interface NavigationItem {
   href: string
   icon: any
   description?: string
+  /** Optional sidebar subgroup (e.g. Clinical Services) — renders as a collapsible section */
+  group?: string
 }
+
+/** Order for clinical-services groups in the sidebar (collapsible sections) */
+export const CLINICAL_SIDEBAR_GROUP_ORDER = [
+  "Outpatient & diagnostics",
+  "Wards & beds",
+  "Support & outreach",
+] as const
+
+/** Order for financial-management groups in the sidebar */
+export const FINANCIAL_SIDEBAR_GROUP_ORDER = [
+  "Ledger & reporting",
+  "Payables & receivables",
+  "Planning & assets",
+  "Billing & insurance",
+] as const
 
 export interface NavigationCategory {
   id: string
@@ -123,53 +140,63 @@ export const navigationCategories: NavigationCategory[] = [
         title: "Doctors Module",
         icon: Stethoscope,
         href: "/doctors",
+        group: "Outpatient & diagnostics",
       },
       {
         title: "Pharmacy",
         icon: Pill,
         href: "/pharmacy",
+        group: "Outpatient & diagnostics",
       },
       {
         title: "Laboratory",
         icon: FlaskConical,
         href: "/laboratory",
+        group: "Outpatient & diagnostics",
       },
       {
         title: "Radiology",
         icon: ImageIcon,
         href: "/radiology",
+        group: "Outpatient & diagnostics",
       },
       {
         title: "Procedures performed",
         icon: ClipboardList,
         href: "/procedures/performed",
         description: "Register of procedures done on patients (incl. outcomes from queue)",
+        group: "Outpatient & diagnostics",
       },
       {
         title: "Inpatient",
         icon: BedDouble,
         href: "/inpatient",
+        group: "Wards & beds",
       },
       {
         title: "Maternity",
         icon: Baby,
         href: "/maternity",
+        group: "Wards & beds",
       },
       {
         title: "ICU",
         icon: HeartPulse,
         href: "/icu",
+        group: "Wards & beds",
       },
       {
         title: "Ambulance Management",
         icon: Ambulance,
         href: "/ambulance",
+        group: "Support & outreach",
       },
       {
         title: "Telemedicine",
         icon: Video,
         href: "/telemedicine",
         description: "Remote video visits (Zoom link mode)",
+        group: "Support & outreach",
       },
     ],
   },
@@ -183,56 +210,67 @@ export const navigationCategories: NavigationCategory[] = [
         title: "General Ledger",
         icon: Clipboard,
         href: "/finance/ledger",
+        group: "Ledger & reporting",
       },
       {
         title: "Financial Reports",
         icon: FileText,
         href: "/finance/reports",
+        group: "Ledger & reporting",
       },
       {
         title: "Ledger Accounts",
         icon: Clipboard,
         href: "/finance/accounts",
+        group: "Ledger & reporting",
       },
       {
         title: "Financial Statements",
         icon: FileText,
         href: "/finance/statements",
+        group: "Ledger & reporting",
       },
       {
         title: "Accounts Payable",
         icon: Receipt,
         href: "/finance/payable",
+        group: "Payables & receivables",
       },
       {
         title: "Accounts Receivable",
         icon: CreditCard,
         href: "/finance/receivable",
-      },
-      {
-        title: "Budgeting",
-        icon: DollarSign,
-        href: "/finance/budgeting",
+        group: "Payables & receivables",
       },
       {
         title: "Cash Management",
         icon: DollarSign,
         href: "/finance/cash",
+        group: "Payables & receivables",
+      },
+      {
+        title: "Budgeting",
+        icon: DollarSign,
+        href: "/finance/budgeting",
+        group: "Planning & assets",
       },
       {
         title: "Fixed Assets",
         icon: Building2,
         href: "/finance/assets",
+        group: "Planning & assets",
       },
       {
         title: "Billing & Invoicing",
         icon: Receipt,
         href: "/billing",
+        group: "Billing & insurance",
       },
       {
         title: "Insurance Management",
         icon: FileText,
         href: "/insurance",
+        group: "Billing & insurance",
       },
     ],
   },
