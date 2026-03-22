@@ -109,6 +109,10 @@ Clinicians paste the meeting join URL from the Zoom app into HMIS; the API only 
 
 **Per-user defaults:** `user_telemedicine_settings` stores optional `defaultZoomJoinUrl` / `defaultZoomPassword` per `userId`. `GET/PUT /api/telemedicine/my-defaults` — new sessions copy the **doctor’s** defaults when the create request omits a link.
 
+**One active session per patient:** `POST /api/telemedicine/sessions` looks for an existing row with `status <> 'ended'` for the same `patientId`. If found, it returns **200** with `reusedExistingSession: true` and the same `sessionId` (so nurses and other providers join the same meeting). A new row is created only when there is no active visit. Optional body `forceNew: true` skips reuse and inserts another session (use sparingly; can create overlapping visits).
+
+**New visit requires saved defaults:** A **new** `INSERT` (no active session to reuse) requires the **logged-in user** to have a non-empty `defaultZoomJoinUrl` in `user_telemedicine_settings` (Telemedicine → My Zoom defaults). If not, **403** with `code: TELEMEDICINE_ZOOM_DEFAULTS_REQUIRED`. Reusing an active session does not require this. Staff without defaults join via **Join meeting** / **Join in HMIS** on the facility telemedicine board.
+
 ### 4. Start the Server
 
 Development mode (with auto-reload):

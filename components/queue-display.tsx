@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
-import { MoreHorizontal, FileText, PlayCircle, Stethoscope, Pill, Scan, ClipboardList, Video } from "lucide-react"
+import { MoreHorizontal, FileText, PlayCircle, Stethoscope, Pill, Scan, ClipboardList, Video, ChevronDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   getQueueByServicePoint,
@@ -18,6 +18,15 @@ import { QueueTabsIndicator } from "@/components/queue-tabs-indicator"
 import { useScreenSize } from "@/hooks/use-screen-size"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { queueApi, medicalRecordsApi, telemedicineApi } from "@/lib/api"
+import { TelemedicineProviderSelect } from "@/components/telemedicine-provider-select"
+import {
+  TelemedicineOptionalMeetingLinkFields,
+  telemedicineOptionalLinkBody,
+} from "@/components/telemedicine-optional-meeting-link-fields"
+import type { TelemedicineVideoProviderId } from "@/lib/telemedicine-providers"
+import { telemedicineCreateToast } from "@/lib/telemedicine-create-result"
+import { TelemedicineZoomDefaultsRequiredBanner } from "@/components/telemedicine-zoom-defaults-banner"
+import { useTelemedicineZoomDefaults } from "@/lib/hooks/use-telemedicine-zoom-defaults"
 import { PatientEncounterForm } from "@/components/patient-encounter-form"
 import { DispenseMedicationDialog } from "@/components/dispense-medication-dialog"
 import { AddTriageForm } from "@/components/add-triage-form"
@@ -347,8 +356,13 @@ function QueueContent({
   const [radiologyQueueForReport, setRadiologyQueueForReport] = useState<QueueEntryLite | null>(null)
   const [procedureQueueForComplete, setProcedureQueueForComplete] = useState<QueueEntryLite | null>(null)
   const [telemedicineStartingQueueId, setTelemedicineStartingQueueId] = useState<number | string | null>(null)
+  const [telemedicineVideoProvider, setTelemedicineVideoProvider] = useState<TelemedicineVideoProviderId>("zoom_manual")
+  const [telemedicineMeetingUrl, setTelemedicineMeetingUrl] = useState("")
+  const [telemedicineMeetingPasscode, setTelemedicineMeetingPasscode] = useState("")
   const { user } = useAuth()
   const { openSession: openTelemedicineFloating } = useTelemedicineFloating()
+  const { loading: zoomDefaultsLoading, hasDefaults: hasZoomDefaults } = useTelemedicineZoomDefaults()
+  const canStartNewTelemedicineVisit = !zoomDefaultsLoading && hasZoomDefaults
   const isConsultation = servicePoint === "consultation"
   const isPharmacy = servicePoint === "pharmacy"
   const isTriage = servicePoint === "triage"
@@ -488,6 +502,14 @@ function QueueContent({
   }
 
   const handleStartTelemedicine = async (entry: any) => {
+    if (!canStartNewTelemedicineVisit) {
+      toast({
+        title: "Meeting defaults required",
+        description: "Save Telemedicine → My Zoom defaults before starting a new visit, or join an active visit from Telemedicine.",
+        variant: "destructive",
+      })
+      return
+    }
     const patientId = entry.patientId
     if (!patientId) {
       toast({
@@ -513,27 +535,34 @@ function QueueContent({
     try {
       const qid = Number(entry.queueId ?? entry.id)
       const useQueueOrigin = Number.isFinite(qid) && qid > 0
+      const linkExtra = telemedicineOptionalLinkBody(telemedicineMeetingUrl, telemedicineMeetingPasscode)
       const created = await telemedicineApi.createSession(
         useQueueOrigin
           ? {
               originType: "queue",
               queueEntryId: qid,
               doctorId,
+              videoProvider: telemedicineVideoProvider,
               notes: `Telemedicine from queue (ticket ${entry.ticketNumber || rowKey || "—"})`,
+              ...linkExtra,
             }
           : {
               originType: "standalone",
               patientId: Number(patientId),
               doctorId,
+              videoProvider: telemedicineVideoProvider,
               notes: `Telemedicine from queue (ticket ${entry.ticketNumber || rowKey || "—"})`,
+              ...linkExtra,
             },
       )
       if (created?.sessionId) {
         openTelemedicineFloating(created.sessionId)
-        toast({
-          title: "Telemedicine session ready",
-          description: "Use the floating panel — minimize it to browse charts or notes.",
-        })
+        toast(
+          telemedicineCreateToast(created, {
+            title: "Telemedicine session ready",
+            description: "Use the floating panel — minimize it to browse charts or notes.",
+          }),
+        )
       }
     } catch (error: any) {
       console.error("Telemedicine create failed:", error)
@@ -990,6 +1019,36 @@ function QueueContent({
           </>
         ) : isTelemedicine ? (
           <>
+            <div className="px-3 pt-3 pb-2 border-b bg-muted/20 space-y-2">
+              <TelemedicineZoomDefaultsRequiredBanner loading={zoomDefaultsLoading} hasDefaults={hasZoomDefaults} />
+              <Collapsible defaultOpen={false} className="rounded-md border border-dashed bg-background/50">
+                <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 px-2 py-2 text-left text-sm font-medium hover:bg-muted/30 rounded-md [&[data-state=open]>svg]:rotate-180">
+                  <span>
+                    Video platform for this queue{" "}
+                    <span className="block text-xs font-normal text-muted-foreground mt-0.5">
+                      Optional — expand for non-Zoom (later). Collapsed by default.
+                    </span>
+                  </span>
+                  <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200" />
+                </CollapsibleTrigger>
+                <CollapsibleContent className="space-y-2 pb-1 pt-0">
+                  <TelemedicineProviderSelect
+                    variant="compact"
+                    label="Video platform for this queue"
+                    value={telemedicineVideoProvider}
+                    onChange={setTelemedicineVideoProvider}
+                  />
+                  <TelemedicineOptionalMeetingLinkFields
+                    compact
+                    videoProvider={telemedicineVideoProvider}
+                    joinUrl={telemedicineMeetingUrl}
+                    onJoinUrlChange={setTelemedicineMeetingUrl}
+                    passcode={telemedicineMeetingPasscode}
+                    onPasscodeChange={setTelemedicineMeetingPasscode}
+                  />
+                </CollapsibleContent>
+              </Collapsible>
+            </div>
             <div className="grid grid-cols-12 bg-muted/50 p-3 text-sm font-medium">
               <div className="col-span-1">#</div>
               <div className="col-span-3">Patient</div>
@@ -1027,7 +1086,16 @@ function QueueContent({
                         variant="default"
                         size="sm"
                         onClick={() => handleStartTelemedicine(entry)}
-                        disabled={telemedicineStartingQueueId === (entry.queueId ?? entry.id)}
+                        disabled={
+                          telemedicineStartingQueueId === (entry.queueId ?? entry.id) ||
+                          zoomDefaultsLoading ||
+                          !canStartNewTelemedicineVisit
+                        }
+                        title={
+                          !canStartNewTelemedicineVisit && !zoomDefaultsLoading
+                            ? "Save Telemedicine → My Zoom defaults before starting"
+                            : undefined
+                        }
                         className="w-full"
                       >
                         <Video className="h-3 w-3 mr-1" />

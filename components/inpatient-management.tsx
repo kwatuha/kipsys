@@ -14,7 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
-import { Plus, Clock, Activity, Stethoscope, Pill, FlaskConical, Calendar, User, FileText, AlertCircle, AlertTriangle, Eye, Package, Scan, Pencil, Trash2, LogOut, ArrowRightLeft, Printer, Receipt, Download, Loader2 } from "lucide-react"
+import { Plus, Clock, Activity, Stethoscope, Pill, FlaskConical, Calendar, User, FileText, AlertCircle, AlertTriangle, Eye, Package, Scan, Pencil, Trash2, LogOut, ArrowRightLeft, Printer, Receipt, Download, Loader2, Video } from "lucide-react"
 import { inpatientApi, laboratoryApi, userApi, doctorsApi, serviceChargeApi, billingApi, proceduresApi, pharmacyApi, radiologyApi, roleApi, telemedicineApi } from "@/lib/api"
 import { format } from "date-fns"
 import { toast } from "@/components/ui/use-toast"
@@ -26,6 +26,15 @@ import { ExamTypeCombobox } from "@/components/exam-type-combobox"
 import { DischargeSummary } from "@/components/discharge-summary"
 import { MedicationCombobox } from "@/components/medication-combobox"
 import { PatientVitals } from "@/components/patient-vitals"
+import { TelemedicineProviderSelect } from "@/components/telemedicine-provider-select"
+import {
+  TelemedicineOptionalMeetingLinkFields,
+  telemedicineOptionalLinkBody,
+} from "@/components/telemedicine-optional-meeting-link-fields"
+import type { TelemedicineVideoProviderId } from "@/lib/telemedicine-providers"
+import { telemedicineCreateToast } from "@/lib/telemedicine-create-result"
+import { TelemedicineZoomDefaultsRequiredBanner } from "@/components/telemedicine-zoom-defaults-banner"
+import { useTelemedicineZoomDefaults } from "@/lib/hooks/use-telemedicine-zoom-defaults"
 
 interface InpatientManagementProps {
   admissionId: string
@@ -39,6 +48,8 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
   const router = useRouter()
   const { user } = useAuth()
   const { openSession: openTelemedicineFloating } = useTelemedicineFloating()
+  const { loading: zoomDefaultsLoading, hasDefaults: hasZoomDefaults } = useTelemedicineZoomDefaults()
+  const canStartNewTelemedicineVisit = !zoomDefaultsLoading && hasZoomDefaults
   const currentRoleName = String((user as any)?.role || (user as any)?.roleName || "").toLowerCase()
   const canApproveBillAdjustments =
     currentRoleName.includes("admin") ||
@@ -68,7 +79,11 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
   })
   const [savingReview, setSavingReview] = useState(false)
 
+  const [telemedicineModalOpen, setTelemedicineModalOpen] = useState(false)
   const [startingTelemedicine, setStartingTelemedicine] = useState(false)
+  const [telemedicineVideoProvider, setTelemedicineVideoProvider] = useState<TelemedicineVideoProviderId>("zoom_manual")
+  const [telemedicineMeetingUrl, setTelemedicineMeetingUrl] = useState("")
+  const [telemedicineMeetingPasscode, setTelemedicineMeetingPasscode] = useState("")
   const telemedicineInFlightRef = useRef(false)
 
   // Clear stuck "Starting…" when the admission dialog closes (parent may unmount without intermediate open=false)
@@ -76,6 +91,7 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
     if (!open) {
       telemedicineInFlightRef.current = false
       setStartingTelemedicine(false)
+      setTelemedicineModalOpen(false)
     }
   }, [open])
 
@@ -712,6 +728,14 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
 
   /** Create telemedicine session (Zoom link mode) and open session page */
   const handleStartTelemedicine = async () => {
+    if (!canStartNewTelemedicineVisit) {
+      toast({
+        title: "Meeting defaults required",
+        description: "Save Telemedicine → My Zoom defaults before starting a new visit, or join an active visit from Telemedicine.",
+        variant: "destructive",
+      })
+      return
+    }
     if (telemedicineInFlightRef.current) return
     telemedicineInFlightRef.current = true
     setStartingTelemedicine(true)
@@ -739,7 +763,9 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
         admissionId: Number(admissionId),
         patientId: Number(overview.admission.patientId),
         doctorId: Number(actorDoctorId),
+        videoProvider: telemedicineVideoProvider,
         notes: `Inpatient remote review (Admission: ${overview.admission.admissionNumber || admissionId})`,
+        ...telemedicineOptionalLinkBody(telemedicineMeetingUrl, telemedicineMeetingPasscode),
       })
 
       if (!created?.sessionId) {
@@ -750,10 +776,12 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
       openTelemedicineFloating(created.sessionId)
       // Close admission dialog — if we don't, the full-screen modal stays above the floating panel
       onOpenChange(false)
-      toast({
-        title: "Telemedicine session ready",
-        description: "Use the floating panel — minimize it to browse charts or notes.",
-      })
+      toast(
+        telemedicineCreateToast(created, {
+          title: "Telemedicine session ready",
+          description: "Use the floating panel — minimize it to browse charts or notes.",
+        }),
+      )
     } catch (err: any) {
       console.error("Telemedicine create failed:", err)
       toast({
@@ -1855,6 +1883,10 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
             <div>
               <span>{admission.firstName} {admission.lastName} - {admission.wardName} - Bed {admission.bedNumber}</span>
               <div className="flex gap-2 flex-shrink-0">
+                <Button variant="outline" size="sm" onClick={() => setTelemedicineModalOpen(true)}>
+                  <Video className="h-4 w-4 mr-2" />
+                  Telemedicine
+                </Button>
                 <Button variant="outline" size="sm" onClick={() => setDischargeSummaryOpen(true)}>
                   <Printer className="h-4 w-4 mr-2" />
                   Print discharge summary
@@ -1876,7 +1908,9 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
           </DialogDescription>
         </DialogHeader>
 
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+        <div className="space-y-2">
+          <p className="text-xs text-muted-foreground font-medium px-0.5">Inpatient chart &amp; billing</p>
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <TabsList className="flex flex-wrap h-auto gap-1 p-1">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="reviews">Reviews</TabsTrigger>
@@ -1918,41 +1952,6 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
                 </CardContent>
               </Card>
             </div>
-
-            <Card className="border-primary/20 bg-muted/30">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm">Telemedicine (Zoom) — inpatient</CardTitle>
-                <CardDescription>
-                  Starts a session linked to this admission (ward / remote review). For outpatients who were added to the{" "}
-                  <strong>telemedicine queue</strong>, use <strong>Telemedicine → Create session</strong> and choose <strong>From queue</strong>{" "}
-                  instead. HMIS records consent and audit; paste your Zoom join link on the next screen if needed.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Button
-                  type="button"
-                  variant="default"
-                  size="sm"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    void handleStartTelemedicine()
-                  }}
-                  disabled={startingTelemedicine}
-                  title="Start a remote doctor review linked to this admission"
-                >
-                  <Activity className="mr-2 h-4 w-4" />
-                  {startingTelemedicine ? "Starting…" : "Start Telemedicine"}
-                </Button>
-                <p className="text-xs text-muted-foreground mt-2">
-                  Also under <strong>Reviews</strong> next to &quot;Add Review&quot;. Queue-based outpatients:{" "}
-                  <Link href="/telemedicine/create" className="text-primary underline-offset-2 hover:underline">
-                    Create session (from queue)
-                  </Link>
-                  .
-                </p>
-              </CardContent>
-            </Card>
 
             <div className="grid grid-cols-4 gap-4">
               <Card>
@@ -2142,21 +2141,6 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
                   </div>
                 </DialogContent>
               </Dialog>
-
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    void handleStartTelemedicine()
-                  }}
-                  disabled={startingTelemedicine}
-                  title="Start a remote doctor review (telemedicine)"
-                >
-                  <Activity className="mr-2 h-4 w-4" />
-                  {startingTelemedicine ? "Starting…" : "Start Telemedicine"}
-                </Button>
               </div>
             </div>
 
@@ -4227,6 +4211,7 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
             </Card>
           </TabsContent>
         </Tabs>
+        </div>
 
         {/* View Procedure Dialog */}
         <Dialog open={viewProcedureDialogOpen} onOpenChange={setViewProcedureDialogOpen}>
@@ -4778,6 +4763,67 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
               <Button onClick={handleTransfer} disabled={!transferBedId || savingTransfer}>
                 {savingTransfer ? "Transferring..." : "Confirm Transfer"}
               </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Telemedicine — start session linked to this admission */}
+        <Dialog open={telemedicineModalOpen} onOpenChange={setTelemedicineModalOpen}>
+          <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Video className="h-5 w-5" />
+                Telemedicine
+              </DialogTitle>
+              <DialogDescription>
+                HMIS records consent and audit. For outpatients in the <strong>telemedicine queue</strong>, use{" "}
+                <Link href="/telemedicine/create" className="underline font-medium" onClick={() => setTelemedicineModalOpen(false)}>
+                  Telemedicine → Create session (from queue)
+                </Link>{" "}
+                instead.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3 pt-1">
+              <TelemedicineZoomDefaultsRequiredBanner loading={zoomDefaultsLoading} hasDefaults={hasZoomDefaults} startActionLabel="Start Telemedicine" />
+              <TelemedicineProviderSelect
+                variant="compact"
+                label="Video platform"
+                value={telemedicineVideoProvider}
+                onChange={setTelemedicineVideoProvider}
+                disabled={startingTelemedicine}
+              />
+              <TelemedicineOptionalMeetingLinkFields
+                compact
+                videoProvider={telemedicineVideoProvider}
+                joinUrl={telemedicineMeetingUrl}
+                onJoinUrlChange={setTelemedicineMeetingUrl}
+                passcode={telemedicineMeetingPasscode}
+                onPasscodeChange={setTelemedicineMeetingPasscode}
+              />
+              <div className="flex flex-wrap gap-2 justify-end pt-2">
+                <Button type="button" variant="outline" size="sm" onClick={() => setTelemedicineModalOpen(false)}>
+                  Close
+                </Button>
+                <Button
+                  type="button"
+                  variant="default"
+                  size="sm"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    void handleStartTelemedicine()
+                  }}
+                  disabled={startingTelemedicine || zoomDefaultsLoading || !canStartNewTelemedicineVisit}
+                  title={
+                    !canStartNewTelemedicineVisit && !zoomDefaultsLoading
+                      ? "Save Telemedicine → My Zoom defaults before starting a new visit"
+                      : "Start a remote doctor review linked to this admission"
+                  }
+                >
+                  <Activity className="mr-2 h-4 w-4" />
+                  {startingTelemedicine ? "Starting…" : "Start Telemedicine"}
+                </Button>
+              </div>
             </div>
           </DialogContent>
         </Dialog>

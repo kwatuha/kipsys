@@ -7,8 +7,11 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { telemedicineApi } from "@/lib/api"
+import { getTelemedicineProviderLabel } from "@/lib/telemedicine-providers"
 import { useToast } from "@/hooks/use-toast"
 import { ChevronLeft, ChevronRight, Loader2, Plus, Settings, Video } from "lucide-react"
+import { TelemedicineFacilityActiveVisits } from "@/components/telemedicine-facility-active-visits"
+import { TelemedicineMeetingLinkActions } from "@/components/telemedicine-meeting-link-actions"
 
 const PAGE_SIZE = 25
 
@@ -24,7 +27,11 @@ export default function TelemedicineHubPage() {
     ;(async () => {
       try {
         setLoading(true)
-        const res = await telemedicineApi.listSessions({ page, limit: PAGE_SIZE })
+        const res = await telemedicineApi.listSessions({
+          page,
+          limit: PAGE_SIZE,
+          scope: "facility",
+        })
         if (cancelled) return
         setSessions(res.sessions || [])
         setTotal(res.total ?? 0)
@@ -44,7 +51,7 @@ export default function TelemedicineHubPage() {
     return () => {
       cancelled = true
     }
-  }, [page])
+  }, [page, toast])
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
@@ -65,8 +72,9 @@ export default function TelemedicineHubPage() {
             <Video className="h-7 w-7" />
             Telemedicine
           </h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            Video visits using your Zoom meeting link (paste join URL per session). Doctors see their sessions; admins see all.
+          <p className="text-muted-foreground text-sm mt-1 max-w-2xl">
+            Active visits show the <strong>meeting link</strong> stored in HMIS. Other providers use <strong>Join meeting</strong> (browser) or{" "}
+            <strong>Join in HMIS</strong> (same session panel) — no second video room for the same patient.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -85,10 +93,18 @@ export default function TelemedicineHubPage() {
         </div>
       </div>
 
+      <TelemedicineFacilityActiveVisits />
+
       <Card>
         <CardHeader>
-          <CardTitle>Sessions</CardTitle>
-          <CardDescription>Recent telemedicine sessions. Open a row to paste or update the Zoom link and run the visit.</CardDescription>
+          <CardTitle>All sessions (recent)</CardTitle>
+          <CardDescription>
+            Paginated history — facility staff see all visits when your role allows. Use{" "}
+            <Link href="/telemedicine/create" className="underline">
+              Telemedicine sessions
+            </Link>{" "}
+            for a larger board with filters.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           {loading ? (
@@ -105,88 +121,81 @@ export default function TelemedicineHubPage() {
             </p>
           ) : (
             <>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>ID</TableHead>
-                    <TableHead>Patient</TableHead>
-                    <TableHead>Doctor</TableHead>
-                    <TableHead>Origin</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Created</TableHead>
-                    <TableHead className="text-right">Link</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {sessions.map((s) => (
-                    <TableRow key={s.sessionId}>
-                      <TableCell className="font-mono text-sm">
-                        <Link href={`/telemedicine/${s.sessionId}`} className="text-primary hover:underline">
-                          #{s.sessionId}
-                        </Link>
-                      </TableCell>
-                      <TableCell>
-                        <div>
-                          <p className="font-medium">
-                            {s.patientFirstName || s.patientLastName
-                              ? `${s.patientFirstName || ""} ${s.patientLastName || ""}`.trim()
-                              : "—"}
-                          </p>
-                          {s.patientNumber && (
-                            <p className="text-xs text-muted-foreground">{s.patientNumber}</p>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        {s.doctorFirstName || s.doctorLastName
-                          ? `${s.doctorFirstName || ""} ${s.doctorLastName || ""}`.trim()
-                          : "—"}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline">{s.originType || "—"}</Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="secondary">{s.status || "—"}</Badge>
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
-                        {formatWhen(s.createdAt)}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {s.zoomJoinUrl ? (
-                          <Badge variant="default" className="text-xs">
-                            Set
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline" className="text-xs">
-                            Pending
-                          </Badge>
-                        )}
-                      </TableCell>
+              <div className="rounded-md border overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>ID</TableHead>
+                      <TableHead>Patient</TableHead>
+                      <TableHead>Doctor</TableHead>
+                      <TableHead>Platform</TableHead>
+                      <TableHead>Origin</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Created</TableHead>
+                      <TableHead className="min-w-[200px]">Join</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {sessions.map((s) => (
+                      <TableRow key={s.sessionId}>
+                        <TableCell className="font-mono text-sm">
+                          <Link href={`/telemedicine/${s.sessionId}`} className="text-primary hover:underline">
+                            #{s.sessionId}
+                          </Link>
+                        </TableCell>
+                        <TableCell>
+                          <div>
+                            <p className="font-medium">
+                              {s.patientFirstName || s.patientLastName
+                                ? `${s.patientFirstName || ""} ${s.patientLastName || ""}`.trim()
+                                : "—"}
+                            </p>
+                            {s.patientNumber && <p className="text-xs text-muted-foreground">{s.patientNumber}</p>}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          {s.doctorFirstName || s.doctorLastName
+                            ? `${s.doctorFirstName || ""} ${s.doctorLastName || ""}`.trim()
+                            : "—"}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="secondary" className="font-normal">
+                            {getTelemedicineProviderLabel(s.provider)}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline">{s.originType || "—"}</Badge>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="secondary">{s.status || "—"}</Badge>
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                          {formatWhen(s.createdAt)}
+                        </TableCell>
+                        <TableCell className="align-top">
+                          <TelemedicineMeetingLinkActions
+                            compact
+                            sessionId={s.sessionId}
+                            zoomJoinUrl={s.zoomJoinUrl}
+                            provider={s.provider}
+                          />
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
 
               <div className="flex items-center justify-between mt-4 pt-4 border-t">
                 <p className="text-sm text-muted-foreground">
                   Page {page} of {totalPages} · {total} total
                 </p>
                 <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={page <= 1}
-                    onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  >
+                  <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
                     <ChevronLeft className="h-4 w-4" />
                     Previous
                   </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={page >= totalPages}
-                    onClick={() => setPage((p) => p + 1)}
-                  >
+                  <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>
                     Next
                     <ChevronRight className="h-4 w-4" />
                   </Button>

@@ -141,6 +141,15 @@ function normalizeZoomUrl(url) {
   return t;
 }
 
+/** Same normalization for Zoom, Meet, Teams, or any pasted HTTPS join URL */
+const TELEMEDICINE_VIDEO_PROVIDERS = new Set([
+  'zoom_manual',
+  'google_meet',
+  'microsoft_teams',
+  'other_link',
+  'daily',
+]);
+
 /** Defaults for a clinician (Personal Meeting link, etc.) — optional table until migration 42. */
 async function fetchUserTelemedicineDefaults(conn, userId) {
   if (userId == null || userId === '') return null;
@@ -152,6 +161,22 @@ async function fetchUserTelemedicineDefaults(conn, userId) {
     return rows[0] || null;
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE') return null;
+    throw e;
+  }
+}
+
+/** True if user has a non-empty saved join URL (required to INSERT a new telemedicine session; reuse/join exempt). */
+async function userHasSavedZoomDefaults(executor, userId) {
+  if (userId == null || userId === '') return false;
+  try {
+    const [rows] = await executor.execute(
+      `SELECT defaultZoomJoinUrl FROM user_telemedicine_settings WHERE userId = ? LIMIT 1`,
+      [Number(userId)]
+    );
+    const u = rows[0]?.defaultZoomJoinUrl;
+    return !!(u && String(u).trim() !== '');
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE') return false;
     throw e;
   }
 }
@@ -235,7 +260,22 @@ router.post('/sessions', async (req, res) => {
     notes,
     zoomJoinUrl,
     zoomPassword,
+    videoProvider,
+    provider: providerBody,
+    forceNew,
   } = req.body || {};
+
+  let providerToStore = 'zoom_manual';
+  const rawProvider = videoProvider != null && String(videoProvider).trim() !== '' ? videoProvider : providerBody;
+  if (rawProvider != null && String(rawProvider).trim() !== '') {
+    const p = String(rawProvider).trim();
+    if (!TELEMEDICINE_VIDEO_PROVIDERS.has(p)) {
+      return res.status(400).json({
+        error: `Invalid videoProvider. Allowed: ${[...TELEMEDICINE_VIDEO_PROVIDERS].join(', ')}`,
+      });
+    }
+    providerToStore = p;
+  }
 
   // Validate before acquiring a pool connection (avoids tying up connections on bad requests)
   if (!originType || !['appointment', 'inpatient', 'standalone', 'queue'].includes(originType)) {
@@ -301,45 +341,140 @@ router.post('/sessions', async (req, res) => {
   let zUrl = normalizeZoomUrl(zoomJoinUrl);
   let zPass = zoomPassword != null && String(zoomPassword).trim() !== '' ? String(zoomPassword).trim() : null;
 
-  // Load defaults using the pool (no transaction connection) before we start the transaction
-  if (!zUrl && doctorId) {
-    try {
-      const defs = await fetchUserTelemedicineDefaults(pool, Number(doctorId));
-      if (defs?.defaultZoomJoinUrl) {
-        zUrl = normalizeZoomUrl(defs.defaultZoomJoinUrl);
-        if (!zPass && defs.defaultZoomPassword) {
-          zPass = String(defs.defaultZoomPassword).trim() || null;
+  // Load "My Zoom defaults" only for Zoom — other platforms paste links on the session screen.
+  // Try both doctorId (request) and logged-in user so defaults apply even if the client sent a mismatched id.
+  if (!zUrl && providerToStore === 'zoom_manual') {
+    const candidateUserIds = [];
+    if (doctorId != null && String(doctorId).trim() !== '') {
+      const d = Number(doctorId);
+      if (Number.isFinite(d)) candidateUserIds.push(d);
+    }
+    if (userId != null && String(userId).trim() !== '') {
+      const u = Number(userId);
+      if (Number.isFinite(u) && !candidateUserIds.includes(u)) candidateUserIds.push(u);
+    }
+    for (const uid of candidateUserIds) {
+      try {
+        const defs = await fetchUserTelemedicineDefaults(pool, uid);
+        if (defs?.defaultZoomJoinUrl) {
+          zUrl = normalizeZoomUrl(defs.defaultZoomJoinUrl);
+          if (!zPass && defs.defaultZoomPassword) {
+            zPass = String(defs.defaultZoomPassword).trim() || null;
+          }
+          break;
         }
-      }
-    } catch (defErr) {
-      if (defErr.code === 'ER_NO_SUCH_TABLE') {
-        // optional migration
-      } else {
-        console.error('Telemedicine defaults fetch (pre-session):', defErr);
-        return res.status(500).json({ error: defErr.message || 'Could not load Zoom defaults' });
+      } catch (defErr) {
+        if (defErr.code === 'ER_NO_SUCH_TABLE') {
+          // optional migration
+        } else {
+          console.error('Telemedicine defaults fetch (pre-session):', defErr);
+          return res.status(500).json({ error: defErr.message || 'Could not load Zoom defaults' });
+        }
       }
     }
   }
+
+  const pid = Number(patientId);
+  if (!Number.isFinite(pid) || pid <= 0) {
+    return res.status(400).json({ error: 'Invalid patientId' });
+  }
+
+  const wantForceNew =
+    forceNew === true ||
+    forceNew === 1 ||
+    String(forceNew || '').toLowerCase() === 'true';
 
   let connection;
   try {
     connection = await acquirePoolConnection();
     await connection.beginTransaction();
 
+    // Serialize session creation per patient so concurrent "Start telemedicine" never opens two active rooms.
+    const [patientLock] = await connection.execute(`SELECT patientId FROM patients WHERE patientId = ? FOR UPDATE`, [pid]);
+    if (!patientLock || patientLock.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ error: 'Patient not found' });
+    }
+
+    if (!wantForceNew) {
+      const [existingRows] = await connection.execute(
+        `SELECT sessionId, sessionUuid, provider, zoomJoinUrl, zoomPassword, status, doctorId
+         FROM telemedicine_sessions
+         WHERE patientId = ? AND status <> 'ended'
+         ORDER BY createdAt DESC
+         LIMIT 1
+         FOR UPDATE`,
+        [pid]
+      );
+
+      if (existingRows && existingRows.length > 0) {
+        const ex = existingRows[0];
+        let outUrl = ex.zoomJoinUrl;
+        let outPass = ex.zoomPassword;
+        // If the visit has no link yet, apply this request's URL/pass (e.g. second clinician brings the Meet link).
+        const existingEmpty = !ex.zoomJoinUrl || String(ex.zoomJoinUrl).trim() === '';
+        if (existingEmpty && zUrl) {
+          await connection.execute(
+            `UPDATE telemedicine_sessions
+             SET zoomJoinUrl = ?, zoomPassword = ?, updatedAt = NOW()
+             WHERE sessionId = ?`,
+            [zUrl, zPass, ex.sessionId]
+          );
+          outUrl = zUrl;
+          outPass = zPass;
+        }
+
+        await addAudit(
+          ex.sessionId,
+          'session_reused_join',
+          actor,
+          `Joined existing active visit for patient ${pid} (requesting doctorId=${doctorId}; primary doctorId=${ex.doctorId})`,
+          connection
+        );
+        await connection.commit();
+
+        return res.status(200).json({
+          sessionId: ex.sessionId,
+          sessionUuid: ex.sessionUuid,
+          provider: ex.provider,
+          zoomJoinUrl: outUrl,
+          status: ex.status,
+          reusedExistingSession: true,
+          primaryDoctorId: ex.doctorId,
+        });
+      }
+    }
+
+    // New visit only: require saved "My Zoom defaults" join URL for the logged-in user (joining an existing active visit is handled above).
+    if (!userId) {
+      await connection.rollback();
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    const canStartNewVisit = await userHasSavedZoomDefaults(connection, userId);
+    if (!canStartNewVisit) {
+      await connection.rollback();
+      return res.status(403).json({
+        error:
+          'Save your meeting defaults under Telemedicine → My Zoom defaults before starting a new visit. You can join an active visit using Join meeting or Join in HMIS on the telemedicine board.',
+        code: 'TELEMEDICINE_ZOOM_DEFAULTS_REQUIRED',
+      });
+    }
+
     const [result] = await connection.execute(
       `INSERT INTO telemedicine_sessions
        (sessionUuid, originType, appointmentId, admissionId, queueEntryId, provider, roomName, roomUrl, zoomJoinUrl, zoomPassword,
         patientId, doctorId, status, recordingPolicyEnabled, notes, createdBy)
-       VALUES (?, ?, ?, ?, ?, 'zoom_manual', NULL, NULL, ?, ?, ?, ?, 'created', 0, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, 'created', 0, ?, ?)`,
       [
         sessionUuid,
         originType,
         appointmentId || null,
         admissionId || null,
         resolvedQueueEntryId,
+        providerToStore,
         zUrl,
         zPass,
-        patientId,
+        pid,
         doctorId,
         notes || null,
         actor,
@@ -347,7 +482,7 @@ router.post('/sessions', async (req, res) => {
     );
 
     const sessionId = result.insertId;
-    const auditHint = zUrl ? 'zoom_manual with join URL' : 'zoom_manual (link pending)';
+    const auditHint = zUrl ? `${providerToStore} with join URL` : `${providerToStore} (link pending)`;
     await addAudit(sessionId, 'session_created', actor, auditHint, connection);
 
     await connection.commit();
@@ -355,9 +490,10 @@ router.post('/sessions', async (req, res) => {
     return res.status(201).json({
       sessionId,
       sessionUuid,
-      provider: 'zoom_manual',
+      provider: providerToStore,
       zoomJoinUrl: zUrl,
       status: 'created',
+      reusedExistingSession: false,
     });
   } catch (err) {
     if (connection) {
@@ -377,6 +513,14 @@ router.post('/sessions', async (req, res) => {
     if (err.code === 'ER_BAD_FIELD_ERROR' && String(err.sqlMessage || err.message || '').includes('queueEntryId')) {
       return res.status(503).json({
         error: 'Database migration required: run api/database/migrations/43_telemedicine_queue_origin.sql',
+      });
+    }
+    if (
+      err.code === 'ER_TRUNCATED_WRONG_VALUE_FOR_FIELD' ||
+      (err.code === 'WARN_DATA_TRUNCATED' && String(err.sqlMessage || '').includes('provider'))
+    ) {
+      return res.status(503).json({
+        error: 'Database migration required: run api/database/migrations/49_telemedicine_video_providers.sql',
       });
     }
     console.error('Telemedicine session create error:', err);
@@ -490,6 +634,7 @@ router.get('/sessions', async (req, res) => {
               ts.sessionUuid,
               ts.originType,
               ts.status,
+              ts.provider,
               ts.patientId,
               ts.doctorId,
               ts.appointmentId,

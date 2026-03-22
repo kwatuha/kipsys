@@ -988,6 +988,10 @@ export const telemedicineApi = {
     );
   },
 
+  /**
+   * Creates a telemedicine session, or returns an existing active one for the same patient
+   * (`reusedExistingSession: true`). Optional `forceNew: true` skips reuse (advanced).
+   */
   createSession: (data: any) =>
     apiRequest<any>('/api/telemedicine/sessions', {
       method: 'POST',

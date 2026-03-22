@@ -35,7 +35,7 @@ DB_NAME="${MYSQL_DATABASE:-kiplombe_hmis}"
 SQL40="$REPO_ROOT/api/database/migrations/40_telemedicine_sessions_schema.sql"
 SQL41="$REPO_ROOT/api/database/migrations/41_telemedicine_zoom_manual.sql"
 SQL42="$REPO_ROOT/api/database/migrations/42_user_telemedicine_defaults.sql"
-SQL43="$REPO_ROOT/api/database/migrations/43_telemedicine_standalone_origin.sql"
+SQL43="$REPO_ROOT/api/database/migrations/43_telemedicine_queue_origin.sql"
 
 for f in "$SQL40" "$SQL41" "$SQL42" "$SQL43"; do
   if [[ ! -f "$f" ]]; then
@@ -114,7 +114,7 @@ run_one() {
 run_one 40 "40_telemedicine_sessions_schema.sql"
 run_one 41 "41_telemedicine_zoom_manual.sql"
 run_one 42 "42_user_telemedicine_defaults.sql"
-run_one 43 "43_telemedicine_standalone_origin.sql"
+run_one 43 "43_telemedicine_queue_origin.sql"
 
 rm -rf "\$REMOTE_TMP"
 echo "   (removed \$REMOTE_TMP)"

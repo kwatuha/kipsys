@@ -78,7 +78,7 @@ Your local examples use **root** + **`root_password`** (matches `docker-compose.
 docker exec -i kiplombe_mysql mysql -uroot -proot_password kiplombe_hmis < api/database/migrations/40_telemedicine_sessions_schema.sql
 docker exec -i kiplombe_mysql mysql -uroot -proot_password kiplombe_hmis < api/database/migrations/41_telemedicine_zoom_manual.sql
 docker exec -i kiplombe_mysql mysql -uroot -proot_password kiplombe_hmis < api/database/migrations/42_user_telemedicine_defaults.sql
-docker exec -i kiplombe_mysql mysql -uroot -proot_password kiplombe_hmis < api/database/migrations/43_telemedicine_standalone_origin.sql
+docker exec -i kiplombe_mysql mysql -uroot -proot_password kiplombe_hmis < api/database/migrations/43_telemedicine_queue_origin.sql
 ```
 
 Or one command:
@@ -89,6 +89,52 @@ cd api && npm run migrate:telemedicine:docker
 
 That script uses the **app DB user** (`kiplombe_user` / `kiplombe_password`) by default; if that user lacks privileges, use the manual **root** commands above.
 
-## Order of operations (40 → 43)
+## E) `43_telemedicine_queue_origin.sql` + `49_telemedicine_video_providers.sql` on REMOTE
 
-Always **40 → 41 → 42 → 43**. Re-running is usually safe (uses `CREATE TABLE IF NOT EXISTS` / `ALTER` patterns where applicable); read errors if a step was already applied.
+If telemedicine **40–42** are already applied and you need **`queue`** origin + `queueEntryId`, and the **video provider** enum (Zoom / Meet / Teams / …):
+
+**Option A — from your laptop (uses SSH + server `.env` for MySQL root password):**
+
+Runs **43** then **49** in order:
+
+```bash
+chmod +x deploy/run-43-queue-origin-remote.sh
+./deploy/run-43-queue-origin-remote.sh
+```
+
+**Option B — already SSH’d into the server, repo path and `root_password` match your compose:**
+
+```bash
+cd ~/kiplombe-hmis   # or your deploy path
+docker exec -i kiplombe_mysql mysql -uroot -proot_password kiplombe_hmis < api/database/migrations/43_telemedicine_queue_origin.sql
+docker exec -i kiplombe_mysql mysql -uroot -proot_password kiplombe_hmis < api/database/migrations/49_telemedicine_video_providers.sql
+```
+
+Use the **real** root password from the server `.env` (`MYSQL_ROOT_PASSWORD`) if it is not `root_password`.
+
+**Option C — from laptop** (replace `USER@HOST` and password; run **43** then **49**):
+
+```bash
+ssh USER@HOST 'docker exec -i kiplombe_mysql mysql -uroot -pYOUR_ROOT_PASSWORD kiplombe_hmis' \
+  < api/database/migrations/43_telemedicine_queue_origin.sql
+ssh USER@HOST 'docker exec -i kiplombe_mysql mysql -uroot -pYOUR_ROOT_PASSWORD kiplombe_hmis' \
+  < api/database/migrations/49_telemedicine_video_providers.sql
+```
+
+## Order of operations (40 → 43 → 49)
+
+Always **40 → 41 → 42 → 43 → 49** for full queue-linked telemedicine + video provider enum. The current **`43_*.sql`** for telemedicine is **`43_telemedicine_queue_origin.sql`** (adds `queue` to `originType` and `queueEntryId`). An older file **`43_telemedicine_standalone_origin.sql`** only expanded the enum to include `standalone`; if you apply the **queue** migration, it is not needed separately.
+
+Re-running is usually safe (uses `CREATE TABLE IF NOT EXISTS` / `ALTER` patterns where applicable); read errors if a step was already applied.
+
+## F) Video platform enum — `49_telemedicine_video_providers.sql` (alone)
+
+If you **only** need **49** (provider enum; **43** already applied), or to re-run after a failed partial apply:
+
+Extends `telemedicine_sessions.provider` with **Google Meet**, **Microsoft Teams**, **other_link**, alongside **Zoom** and **Daily.co**.
+
+```bash
+docker exec -i kiplombe_mysql mysql -uroot -proot_password kiplombe_hmis < api/database/migrations/49_telemedicine_video_providers.sql
+```
+
+**Note:** `deploy/run-43-queue-origin-remote.sh` applies **43 + 49** in one go — use section **E** for a normal deploy.

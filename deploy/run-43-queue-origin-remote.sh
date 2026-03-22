@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Run SQL migrations 43–48 on the REMOTE server (e.g. 41.89.173.8)
-# =============================================================================
-# Two files share prefix 43 (lab + telemedicine); there is no 47_*.sql in repo.
-# Order: lab 43 → telemedicine 43 → 44 → 45 → 46 → 48
+# Apply telemedicine migrations on REMOTE (in order):
+#   1) 43_telemedicine_queue_origin.sql — originType 'queue' + queueEntryId
+#   2) 49_telemedicine_video_providers.sql — Zoom / Meet / Teams / other_link / daily enum
 #
 # From repo root:
-#   chmod +x deploy/run-migrations-43-48-remote.sh
-#   ./deploy/run-migrations-43-48-remote.sh
+#   chmod +x deploy/run-43-queue-origin-remote.sh
+#   ./deploy/run-43-queue-origin-remote.sh
 #
-# Optional: SERVER_IP=x SSH_USER=x SSH_KEY_PATH=~/.ssh/key ./deploy/run-migrations-43-48-remote.sh
+# Uses same SSH / server / .env password resolution as run-telemedicine-migrations-remote.sh
 # =============================================================================
 
 set -euo pipefail
@@ -30,16 +29,10 @@ SSH_KEY_PATH="${SSH_KEY_PATH/#\~/$HOME}"
 CONTAINER_NAME="${MYSQL_CONTAINER:-kiplombe_mysql}"
 DB_NAME="${MYSQL_DATABASE:-kiplombe_hmis}"
 
-MIGRATIONS=(
-  "$REPO_ROOT/api/database/migrations/43_lab_awaiting_payment_status.sql"
-  "$REPO_ROOT/api/database/migrations/43_telemedicine_queue_origin.sql"
-  "$REPO_ROOT/api/database/migrations/44_role_queue_telemedicine_procedure.sql"
-  "$REPO_ROOT/api/database/migrations/45_radiology_awaiting_payment_status.sql"
-  "$REPO_ROOT/api/database/migrations/46_lab_test_orders_awaiting_payment_enum.sql"
-  "$REPO_ROOT/api/database/migrations/48_patient_procedures_outcome.sql"
-)
+SQL43="$REPO_ROOT/api/database/migrations/43_telemedicine_queue_origin.sql"
+SQL49="$REPO_ROOT/api/database/migrations/49_telemedicine_video_providers.sql"
 
-for f in "${MIGRATIONS[@]}"; do
+for f in "$SQL43" "$SQL49"; do
   if [[ ! -f "$f" ]]; then
     echo "❌ Missing: $f"
     exit 1
@@ -51,14 +44,15 @@ if [[ ! -f "$SSH_KEY_PATH" ]]; then
   exit 1
 fi
 
-REMOTE_TMP="/tmp/kiplombe_m43_48_$(date +%s)"
+REMOTE_TMP="/tmp/kiplombe_tmig_43_49_$(date +%s)"
 REMOTE_PASS="${MYSQL_ROOT_PASSWORD:-kiplombe_root_pass_2024}"
 
 echo "=============================================="
-echo " Migrations 43–48 → REMOTE MySQL"
+echo " Telemedicine migrations 43 + 49 → REMOTE"
 echo "=============================================="
 echo " Server:     $SSH_USER@$SERVER_IP"
-echo " Staging:    $REMOTE_TMP"
+echo "   43:       43_telemedicine_queue_origin.sql"
+echo "   49:       49_telemedicine_video_providers.sql"
 echo " Container:  $CONTAINER_NAME"
 echo " Database:   $DB_NAME"
 echo ""
@@ -66,13 +60,10 @@ echo ""
 ssh -q -T -o BatchMode=yes -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no \
   "${SSH_USER}@${SERVER_IP}" "mkdir -p $REMOTE_TMP"
 
-i=0
-for f in "${MIGRATIONS[@]}"; do
-  i=$((i + 1))
-  bn=$(printf "%02d_%s" "$i" "$(basename "$f")")
-  scp -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no \
-    "$f" "${SSH_USER}@${SERVER_IP}:${REMOTE_TMP}/${bn}"
-done
+scp -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no \
+  "$SQL43" "${SSH_USER}@${SERVER_IP}:${REMOTE_TMP}/43.sql"
+scp -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no \
+  "$SQL49" "${SSH_USER}@${SERVER_IP}:${REMOTE_TMP}/49.sql"
 
 echo "📥 Running migrations inside Docker MySQL on server..."
 # shellcheck disable=SC2029
@@ -103,14 +94,15 @@ if [ -z "\$C" ]; then
 fi
 echo "   container: \$C"
 
-for sql in "\$REMOTE_TMP"/*.sql; do
-  echo "==> \$(basename "\$sql")"
-  docker exec -i "\$C" mysql -uroot -p"\$MYSQL_ROOT_PASSWORD" "\$DB_NAME" < "\$sql"
-done
+echo "==> 43_telemedicine_queue_origin.sql"
+docker exec -i "\$C" mysql -uroot -p"\$MYSQL_ROOT_PASSWORD" "\$DB_NAME" < "\$REMOTE_TMP/43.sql"
+
+echo "==> 49_telemedicine_video_providers.sql"
+docker exec -i "\$C" mysql -uroot -p"\$MYSQL_ROOT_PASSWORD" "\$DB_NAME" < "\$REMOTE_TMP/49.sql"
 
 rm -rf "\$REMOTE_TMP"
 echo "   (removed \$REMOTE_TMP)"
 REMOTE_EOF
 
 echo ""
-echo "✅ Migrations 43–48 finished on remote (${DB_NAME})."
+echo "✅ Migrations 43 + 49 applied on remote (${DB_NAME})."

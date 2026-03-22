@@ -11,6 +11,12 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { useToast } from "@/hooks/use-toast"
 import { telemedicineApi } from "@/lib/api"
+import {
+  getTelemedicineProviderLabel,
+  isZoomProvider,
+  meetingLinkFieldLabel,
+  openMeetingButtonLabel,
+} from "@/lib/telemedicine-providers"
 
 function calculateAgeYears(dob: string | null | undefined) {
   if (!dob) return null
@@ -139,6 +145,14 @@ export function TelemedicineSessionPanel({
   }, [patientConsentGranted, guardianConsentGranted, guardianConsentRequired])
 
   const handleApplyMyDefaults = async () => {
+    if (!isZoomProvider(session?.provider as string)) {
+      toast({
+        title: "Zoom only",
+        description: "Saved defaults apply to Zoom sessions. Paste a link manually for this platform.",
+        variant: "destructive",
+      })
+      return
+    }
     try {
       setLoadingDefaults(true)
       const d = await telemedicineApi.getMyDefaults()
@@ -179,11 +193,11 @@ export function TelemedicineSessionPanel({
       })
       const refreshed = await telemedicineApi.getSession(sessionId)
       setSession(refreshed)
-      toast({ title: "Saved", description: "Zoom meeting link updated." })
+      toast({ title: "Saved", description: "Meeting link updated." })
     } catch (err: any) {
       toast({
         title: "Save failed",
-        description: err?.message || "Could not save Zoom link",
+        description: err?.message || "Could not save meeting link",
         variant: "destructive",
       })
     } finally {
@@ -217,7 +231,7 @@ export function TelemedicineSessionPanel({
       await telemedicineApi.startSession(sessionId)
       toast({
         title: "Teleconsultation started",
-        description: "Session is in progress. Open Zoom when ready.",
+        description: `Session is in progress. Open ${getTelemedicineProviderLabel(session?.provider as string)} when ready.`,
       })
 
       const refreshed = await telemedicineApi.getSession(sessionId)
@@ -279,7 +293,7 @@ export function TelemedicineSessionPanel({
             }
           }
           toast({
-            title: "Cannot open Zoom",
+            title: "Cannot open meeting",
             description: "Save a join URL first or check permissions.",
             variant: "destructive",
           })
@@ -322,7 +336,7 @@ export function TelemedicineSessionPanel({
         window.open(resolved, "_blank", "noopener,noreferrer")
       } catch (err: any) {
         toast({
-          title: "Cannot open Zoom",
+          title: "Cannot open meeting",
           description: err?.message || "Save a join URL first or check permissions.",
           variant: "destructive",
         })
@@ -365,6 +379,8 @@ export function TelemedicineSessionPanel({
     )
   }
 
+  const videoProviderId = (session.provider as string) || "zoom_manual"
+
   const hasLink = !!(session.zoomJoinUrl || zoomJoinUrl.trim())
 
   const wrapperClass = isFloating ? "space-y-3 text-sm" : "max-w-3xl mx-auto space-y-4"
@@ -373,7 +389,9 @@ export function TelemedicineSessionPanel({
     <div className={wrapperClass}>
       <Card className={isFloating ? "border-0 shadow-none" : undefined}>
         <CardHeader className={isFloating ? "py-3 px-0" : undefined}>
-          <CardTitle className={isFloating ? "text-base" : undefined}>Telemedicine (Zoom)</CardTitle>
+          <CardTitle className={isFloating ? "text-base" : undefined}>
+            Video visit ({getTelemedicineProviderLabel(videoProviderId)})
+          </CardTitle>
           <CardDescription className={isFloating ? "text-xs" : undefined}>
             Patient: {session.patientFirstName} {session.patientLastName} • Status: {session.status}
           </CardDescription>
@@ -383,37 +401,66 @@ export function TelemedicineSessionPanel({
             <Alert>
               <AlertTitle>How it works</AlertTitle>
               <AlertDescription>
-                New sessions use your <Link href="/telemedicine/settings" className="underline font-medium">saved Zoom defaults</Link> when
-                available. You can still paste a different link for this visit. HMIS does not call the Zoom API—only stores the link, consent, and
-                audit.
+                {isZoomProvider(videoProviderId) ? (
+                  <>
+                    For <strong>Zoom</strong>, new sessions can use your{" "}
+                    <Link href="/telemedicine/settings" className="underline font-medium">
+                      saved Zoom defaults
+                    </Link>{" "}
+                    when available. HMIS does not call vendor APIs—only stores the join link, optional passcode, consent, and audit.
+                  </>
+                ) : (
+                  <>
+                    Paste the <strong>{getTelemedicineProviderLabel(videoProviderId)}</strong> join link below. HMIS stores the link, optional
+                    passcode, consent, and audit. Vendor APIs are not integrated yet.
+                  </>
+                )}
               </AlertDescription>
             </Alert>
           )}
           {isFloating && (
             <p className="text-xs text-muted-foreground">
-              Minimize this panel to browse charts or notes.{" "}
-              <Link href="/telemedicine/settings" className="underline">
-                Zoom defaults
-              </Link>
+              Minimize this panel to browse charts or notes.
+              {isZoomProvider(videoProviderId) && (
+                <>
+                  {" "}
+                  <Link href="/telemedicine/settings" className="underline">
+                    Zoom defaults
+                  </Link>
+                </>
+              )}
             </p>
           )}
 
           <div className={`space-y-3 rounded-lg border p-4 ${isFloating ? "p-3" : ""}`}>
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <Label className={`font-semibold ${isFloating ? "text-sm" : "text-base"}`}>Zoom meeting link</Label>
+              <Label className={`font-semibold ${isFloating ? "text-sm" : "text-base"}`}>
+                {meetingLinkFieldLabel(videoProviderId)}
+              </Label>
               <div className="flex flex-wrap gap-2">
-                {!isFloating && (
+                {!isFloating && isZoomProvider(videoProviderId) && (
                   <Button type="button" variant="secondary" size="sm" asChild>
                     <Link href="/telemedicine/settings">My Zoom defaults</Link>
                   </Button>
                 )}
-                <Button type="button" variant="outline" size="sm" onClick={handleApplyMyDefaults} disabled={loadingDefaults}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleApplyMyDefaults}
+                  disabled={loadingDefaults || !isZoomProvider(videoProviderId)}
+                  title={!isZoomProvider(videoProviderId) ? "Saved defaults apply to Zoom sessions only" : undefined}
+                >
                   {loadingDefaults ? "Applying…" : "Apply my saved link"}
                 </Button>
               </div>
             </div>
             <Input
-              placeholder="https://zoom.us/j/… or https://us02web.zoom.us/j/…"
+              placeholder={
+                isZoomProvider(videoProviderId)
+                  ? "https://zoom.us/j/… or https://us02web.zoom.us/j/…"
+                  : "https://… (paste the join link from your video app)"
+              }
               value={zoomJoinUrl}
               onChange={(e) => setZoomJoinUrl(e.target.value)}
               className={isFloating ? "text-sm" : undefined}
@@ -498,9 +545,9 @@ export function TelemedicineSessionPanel({
               variant="outline"
               onClick={handleOpenZoom}
               disabled={!hasLink}
-              title={!hasLink ? "Paste and save a Zoom join link first" : undefined}
+              title={!hasLink ? "Paste and save a join link first" : undefined}
             >
-              Open Zoom
+              {openMeetingButtonLabel(videoProviderId)}
             </Button>
             <Button size={isFloating ? "sm" : "default"} variant="outline" onClick={handleEndSession} disabled={session.status === "ended"}>
               End session
@@ -510,7 +557,7 @@ export function TelemedicineSessionPanel({
           {isFloating && floatingZoomOpenUrl && (
             <div className="space-y-2 rounded-lg border bg-muted/30 p-3">
               <p className="text-xs text-muted-foreground leading-snug">
-                Zoom does not allow its pages inside HMIS (browser security). The meeting opens in a{" "}
+                Many providers block embedding. The meeting opens in a{" "}
                 <strong>separate window</strong> so you can keep this panel open.
               </p>
               <div className="flex flex-wrap gap-2">

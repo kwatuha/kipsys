@@ -37,7 +37,8 @@ import { AddToQueueForm } from "@/components/add-to-queue-form"
 import { AddTriageForm } from "@/components/add-triage-form"
 import { queueApi, medicalRecordsApi, telemedicineApi } from "@/lib/api"
 import { toast } from "@/components/ui/use-toast"
-import { Search, Plus, Edit, Trash2, MoreHorizontal, Loader2, ArrowRight, Monitor, Users, Receipt, FileText, PlayCircle, Stethoscope, FlaskConical, Scan, ClipboardList, Video } from "lucide-react"
+import { Search, Plus, Edit, Trash2, MoreHorizontal, Loader2, ArrowRight, Monitor, Users, Receipt, FileText, PlayCircle, Stethoscope, FlaskConical, Scan, ClipboardList, Video, ChevronDown } from "lucide-react"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { ViewBillDialog } from "@/components/view-bill-dialog"
@@ -48,6 +49,15 @@ import { useTelemedicineFloating } from "@/lib/telemedicine-floating-context"
 import { format } from "date-fns"
 import { Pill } from "lucide-react"
 import { useRoleMenuAccess } from "@/lib/hooks/use-role-menu-access"
+import { TelemedicineProviderSelect } from "@/components/telemedicine-provider-select"
+import {
+  TelemedicineOptionalMeetingLinkFields,
+  telemedicineOptionalLinkBody,
+} from "@/components/telemedicine-optional-meeting-link-fields"
+import type { TelemedicineVideoProviderId } from "@/lib/telemedicine-providers"
+import { telemedicineCreateToast } from "@/lib/telemedicine-create-result"
+import { TelemedicineZoomDefaultsRequiredBanner } from "@/components/telemedicine-zoom-defaults-banner"
+import { useTelemedicineZoomDefaults } from "@/lib/hooks/use-telemedicine-zoom-defaults"
 import { filterQueueServicePoints } from "@/lib/role-menu-filter"
 import {
   RadiologyQueueReportDialog,
@@ -110,8 +120,13 @@ export default function QueueManagement() {
   const [radiologyQueueForReport, setRadiologyQueueForReport] = useState<QueueEntryLite | null>(null)
   const [procedureQueueForComplete, setProcedureQueueForComplete] = useState<QueueEntryLite | null>(null)
   const [telemedicineStartingQueueId, setTelemedicineStartingQueueId] = useState<number | null>(null)
+  const [telemedicineVideoProvider, setTelemedicineVideoProvider] = useState<TelemedicineVideoProviderId>("zoom_manual")
+  const [telemedicineMeetingUrl, setTelemedicineMeetingUrl] = useState("")
+  const [telemedicineMeetingPasscode, setTelemedicineMeetingPasscode] = useState("")
   const { user } = useAuth()
   const { openSession: openTelemedicineFloating } = useTelemedicineFloating()
+  const { loading: zoomDefaultsLoading, hasDefaults: hasZoomDefaults } = useTelemedicineZoomDefaults()
+  const canStartNewTelemedicineVisit = !zoomDefaultsLoading && hasZoomDefaults
   const { menuAccess, loading: menuLoading } = useRoleMenuAccess(user?.id)
 
   // Filter service points based on role access
@@ -351,6 +366,14 @@ export default function QueueManagement() {
   }
 
   const handleStartTelemedicine = async (queue: any) => {
+    if (!canStartNewTelemedicineVisit) {
+      toast({
+        title: "Meeting defaults required",
+        description: "Save Telemedicine → My Zoom defaults before starting a new visit, or join an active visit from Telemedicine.",
+        variant: "destructive",
+      })
+      return
+    }
     const patientId = queue.patientId
     if (!patientId) {
       toast({
@@ -374,18 +397,35 @@ export default function QueueManagement() {
     const qid = Number(queue.queueId ?? 0)
     setTelemedicineStartingQueueId(qid)
     try {
-      const created = await telemedicineApi.createSession({
-        originType: "standalone",
-        patientId: Number(patientId),
-        doctorId,
-        notes: `Telemedicine from queue (ticket ${queue.ticketNumber || qid || "—"})`,
-      })
+      const useQueueOrigin = Number.isFinite(qid) && qid > 0
+      const linkExtra = telemedicineOptionalLinkBody(telemedicineMeetingUrl, telemedicineMeetingPasscode)
+      const created = await telemedicineApi.createSession(
+        useQueueOrigin
+          ? {
+              originType: "queue",
+              queueEntryId: qid,
+              doctorId,
+              videoProvider: telemedicineVideoProvider,
+              notes: `Telemedicine from queue (ticket ${queue.ticketNumber || qid || "—"})`,
+              ...linkExtra,
+            }
+          : {
+              originType: "standalone",
+              patientId: Number(patientId),
+              doctorId,
+              videoProvider: telemedicineVideoProvider,
+              notes: `Telemedicine from queue (ticket ${queue.ticketNumber || qid || "—"})`,
+              ...linkExtra,
+            },
+      )
       if (created?.sessionId) {
         openTelemedicineFloating(created.sessionId)
-        toast({
-          title: "Telemedicine session ready",
-          description: "Use the floating panel — minimize it to browse charts or notes.",
-        })
+        toast(
+          telemedicineCreateToast(created, {
+            title: "Telemedicine session ready",
+            description: "Use the floating panel — minimize it to browse charts or notes.",
+          }),
+        )
       }
     } catch (error: any) {
       console.error("Telemedicine create failed:", error)
@@ -601,6 +641,39 @@ export default function QueueManagement() {
                 </div>
               </div>
 
+              {servicePointFilter === "telemedicine" && (
+                <div className="mb-4 max-w-xl space-y-3">
+                  <TelemedicineZoomDefaultsRequiredBanner loading={zoomDefaultsLoading} hasDefaults={hasZoomDefaults} />
+                  <Collapsible defaultOpen={false} className="rounded-md border border-dashed bg-muted/20">
+                    <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left text-sm font-medium hover:bg-muted/40 rounded-md [&[data-state=open]>svg]:rotate-180">
+                      <span>
+                        Video platform for this queue{" "}
+                        <span className="block text-xs font-normal text-muted-foreground mt-0.5">
+                          Optional — expand when choosing other providers (coming later). Defaults to Zoom.
+                        </span>
+                      </span>
+                      <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200" />
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="space-y-3 px-3 pb-3 pt-0">
+                      <TelemedicineProviderSelect
+                        variant="compact"
+                        label="Video platform for this queue"
+                        value={telemedicineVideoProvider}
+                        onChange={setTelemedicineVideoProvider}
+                      />
+                      <TelemedicineOptionalMeetingLinkFields
+                        compact
+                        videoProvider={telemedicineVideoProvider}
+                        joinUrl={telemedicineMeetingUrl}
+                        onJoinUrlChange={setTelemedicineMeetingUrl}
+                        passcode={telemedicineMeetingPasscode}
+                        onPasscodeChange={setTelemedicineMeetingPasscode}
+                      />
+                    </CollapsibleContent>
+                  </Collapsible>
+                </div>
+              )}
+
               <div className="rounded-md border">
                 <Table>
                   <TableHeader>
@@ -677,7 +750,16 @@ export default function QueueManagement() {
                                 {queue.servicePoint === "telemedicine" && queue.patientId && (
                                   <DropdownMenuItem
                                     onClick={() => handleStartTelemedicine(queue)}
-                                    disabled={telemedicineStartingQueueId === queue.queueId}
+                                    disabled={
+                                      telemedicineStartingQueueId === queue.queueId ||
+                                      zoomDefaultsLoading ||
+                                      !canStartNewTelemedicineVisit
+                                    }
+                                    title={
+                                      !canStartNewTelemedicineVisit && !zoomDefaultsLoading
+                                        ? "Save Telemedicine → My Zoom defaults before starting"
+                                        : undefined
+                                    }
                                   >
                                     <Video className="mr-2 h-4 w-4" />
                                     {telemedicineStartingQueueId === queue.queueId
