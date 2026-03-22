@@ -41,7 +41,7 @@ import { PatientQueueStatus } from "@/components/patient-queue-status"
 import { patientApi, insuranceApi, queueApi } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
 import Link from "next/link"
-import { ConfirmAddToTriageDialog } from "@/components/confirm-add-to-triage-dialog"
+import { AddToQueueDialog, type QueueServicePointChoice, queueTypeLabel } from "@/components/add-to-queue-dialog"
 
 export default function PatientProfilePage() {
   const { toast } = useToast()
@@ -103,24 +103,26 @@ export default function PatientProfilePage() {
     return (first + last).toUpperCase()
   }
 
-  const executeAddToTriage = async () => {
+  const executeAddToQueue = async (servicePoint: QueueServicePointChoice) => {
     if (!patient || !patient.patientId) return
 
     try {
       setAddingToTriage(true)
 
-      const triageQueues = await queueApi.getAll("triage", undefined, 1, 100, false)
-      const existingEntry = triageQueues.find(
+      const queues = await queueApi.getAll(servicePoint, undefined, 1, 100, false)
+      const existingEntry = queues.find(
         (entry: any) =>
           entry.patientId?.toString() === patient.patientId.toString() &&
           entry.status !== "completed" &&
           entry.status !== "cancelled",
       )
 
+      const label = queueTypeLabel(servicePoint)
+
       if (existingEntry) {
         toast({
-          title: "Patient Already in Triage Queue",
-          description: `${patient.firstName} ${patient.lastName} is already in the triage queue (Ticket: ${existingEntry.ticketNumber || "N/A"}).`,
+          title: `Patient Already in ${label} Queue`,
+          description: `${patient.firstName} ${patient.lastName} is already in the ${label.toLowerCase()} queue (Ticket: ${existingEntry.ticketNumber || "N/A"}).`,
           variant: "default",
         })
         return
@@ -128,24 +130,24 @@ export default function PatientProfilePage() {
 
       const payload = {
         patientId: patient.patientId,
-        servicePoint: "triage",
+        servicePoint,
         priority: "normal",
         status: "waiting",
-        notes: "Returning patient - added to triage queue",
+        notes: `Returning patient - added to ${servicePoint} queue`,
       }
 
       await queueApi.create(payload)
 
       toast({
-        title: "✅ Patient Added to Triage Queue",
-        description: `${patient.firstName} ${patient.lastName} has been successfully added to the triage queue.`,
+        title: `✅ Patient Added to ${label} Queue`,
+        description: `${patient.firstName} ${patient.lastName} has been successfully added to the ${label.toLowerCase()} queue.`,
         variant: "default",
       })
     } catch (error: any) {
-      console.error("Error adding patient to triage queue:", error)
+      console.error("Error adding patient to queue:", error)
       toast({
         title: "Error",
-        description: error.message || "Failed to add patient to triage queue. Please try again.",
+        description: error.message || "Failed to add patient to queue. Please try again.",
         variant: "destructive",
       })
     } finally {
@@ -153,8 +155,8 @@ export default function PatientProfilePage() {
     }
   }
 
-  const handleConfirmAddToTriage = async () => {
-    await executeAddToTriage()
+  const handleConfirmAddToQueue = async (servicePoint: QueueServicePointChoice) => {
+    await executeAddToQueue(servicePoint)
     setConfirmTriageOpen(false)
   }
 
@@ -219,12 +221,12 @@ export default function PatientProfilePage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <ConfirmAddToTriageDialog
+      <AddToQueueDialog
         open={confirmTriageOpen}
         onOpenChange={setConfirmTriageOpen}
         patientName={`${patient.firstName} ${patient.lastName}`}
         patientNumber={patient.patientNumber}
-        onConfirm={handleConfirmAddToTriage}
+        onConfirm={handleConfirmAddToQueue}
         loading={addingToTriage}
       />
 
@@ -240,7 +242,7 @@ export default function PatientProfilePage() {
             disabled={addingToTriage}
           >
             <Stethoscope className="mr-2 h-4 w-4" />
-            Add to Triage Queue
+            Add to queue
           </Button>
           <Button variant="outline" asChild>
             <Link href={`/patients/${patientId}/history`}>

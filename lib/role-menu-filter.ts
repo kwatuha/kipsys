@@ -8,10 +8,35 @@
 import { NavigationCategory, NavigationItem } from './navigation'
 
 export interface RoleMenuAccess {
+  /** True if role_menu_categories or role_menu_items has any rows (saved in Menu & Tab Access). */
+  menuConfigPresent: boolean
+  /** categoryIds that have ≥1 row in role_menu_items (distinguishes "no item rows" vs "all items denied"). */
+  categoriesWithMenuItemRows: string[]
   categories: string[]  // Allowed category IDs
   menuItems: Array<{ categoryId: string; path: string }>  // Allowed menu item paths
   tabs: Array<{ pagePath: string; tabId: string }>  // Allowed tabs
   queues: string[]  // Allowed queue service points
+}
+
+/**
+ * Effective top-level category IDs for filtering.
+ * - If `role_menu_categories` has rows → use those.
+ * - Else if `role_menu_items` has rows but categories are empty → derive unique categoryIds
+ *   from menu items (admins often configure sidebar paths without duplicating category rows).
+ * - Else → none configured (caller shows full nav).
+ */
+export function getEffectiveAllowedCategoryIds(roleAccess: RoleMenuAccess): string[] {
+  if (roleAccess.categories.length > 0) {
+    return roleAccess.categories
+  }
+  if (roleAccess.menuItems.length > 0) {
+    return [...new Set(roleAccess.menuItems.map((m) => m.categoryId))]
+  }
+  return []
+}
+
+function isLegacyUnconfiguredMenu(roleAccess: RoleMenuAccess): boolean {
+  return !roleAccess.menuConfigPresent
 }
 
 /**
@@ -25,14 +50,18 @@ export function filterNavigationCategories(
     return []
   }
 
-  // No rows in role_menu_categories (empty array from API) = not configured → show all categories
-  if (roleAccess.categories.length === 0) {
+  const allowedCategoryIds = getEffectiveAllowedCategoryIds(roleAccess)
+
+  // Saved in Menu & Tab Access but nothing allowed → hide all top categories
+  if (allowedCategoryIds.length === 0) {
+    if (!isLegacyUnconfiguredMenu(roleAccess)) {
+      return []
+    }
+    // Never saved menu config for this role → legacy permissive default (show all)
     return categories
   }
 
-  return categories.filter(category =>
-    roleAccess.categories.includes(category.id)
-  )
+  return categories.filter((category) => allowedCategoryIds.includes(category.id))
 }
 
 /**
@@ -47,23 +76,59 @@ export function filterSidebarItems(
     return []
   }
 
-  // If specific categories are configured, hide items for categories not in the list
-  if (roleAccess.categories.length > 0 && !roleAccess.categories.includes(categoryId)) {
+  const hasExplicitCategories = roleAccess.categories.length > 0
+  const hasMenuItemRows = roleAccess.menuItems.length > 0
+
+  // Menu config saved but every category/item denied → API returns empty allow lists
+  if (
+    roleAccess.menuConfigPresent &&
+    roleAccess.categories.length === 0 &&
+    roleAccess.menuItems.length === 0
+  ) {
+    return []
+  }
+
+  // Explicit category list: hide sidebar for categories not allowed
+  if (hasExplicitCategories && !roleAccess.categories.includes(categoryId)) {
     return []
   }
 
   // Get allowed paths for this category
   const allowedPaths = roleAccess.menuItems
-    .filter(item => item.categoryId === categoryId)
-    .map(item => item.path)
+    .filter((item) => item.categoryId === categoryId)
+    .map((item) => item.path)
 
-  // If no specific menu item restrictions, allow all items in the category
+  const hasItemRowsForCategory =
+    roleAccess.categoriesWithMenuItemRows?.includes(categoryId) ?? false
+
+  /**
+   * Menu-item-only configuration: `role_menu_categories` empty but `role_menu_items` has rows.
+   * In that mode, a category with no allowed paths is hidden (do not show full category sidebar).
+   */
+  if (!hasExplicitCategories && hasMenuItemRows) {
+    if (allowedPaths.length === 0) {
+      return []
+    }
+    return items.filter((item) => allowedPaths.includes(item.href))
+  }
+
+  // Top category allowed + item-level rows exist for this category but no allowed paths → all denied
+  if (
+    hasExplicitCategories &&
+    roleAccess.categories.includes(categoryId) &&
+    allowedPaths.length === 0 &&
+    roleAccess.menuConfigPresent &&
+    hasItemRowsForCategory
+  ) {
+    return []
+  }
+
+  // Category allowed and no per-item restrictions in DB → show all items in that category
   if (allowedPaths.length === 0) {
     return items
   }
 
-  // Filter items based on allowed paths
-  return items.filter(item => allowedPaths.includes(item.href))
+  return items.filter((item) => allowedPaths.includes(item.href))
 }
 
 /**

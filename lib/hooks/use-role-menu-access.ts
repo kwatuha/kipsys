@@ -25,6 +25,10 @@ export function useRoleMenuAccess(userId?: string) {
 
       // Transform API response to RoleMenuAccess format
       const access: RoleMenuAccess = {
+        menuConfigPresent: Boolean(data.menuConfigPresent),
+        categoriesWithMenuItemRows: Array.isArray(data.categoriesWithMenuItemRows)
+          ? data.categoriesWithMenuItemRows
+          : [],
         categories: data.categories || [],
         menuItems: data.menuItems || [],
         tabs: data.tabs || [],

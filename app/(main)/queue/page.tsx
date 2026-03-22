@@ -35,15 +35,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Label } from "@/components/ui/label"
 import { AddToQueueForm } from "@/components/add-to-queue-form"
 import { AddTriageForm } from "@/components/add-triage-form"
-import { queueApi, medicalRecordsApi } from "@/lib/api"
+import { queueApi, medicalRecordsApi, telemedicineApi } from "@/lib/api"
 import { toast } from "@/components/ui/use-toast"
-import { Search, Plus, Edit, Trash2, MoreHorizontal, Loader2, ArrowRight, Monitor, Users, Receipt, FileText, PlayCircle, Stethoscope, FlaskConical, Scan, ClipboardList } from "lucide-react"
+import { Search, Plus, Edit, Trash2, MoreHorizontal, Loader2, ArrowRight, Monitor, Users, Receipt, FileText, PlayCircle, Stethoscope, FlaskConical, Scan, ClipboardList, Video } from "lucide-react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { ViewBillDialog } from "@/components/view-bill-dialog"
 import { DispenseMedicationDialog } from "@/components/dispense-medication-dialog"
 import { PatientEncounterForm } from "@/components/patient-encounter-form"
 import { useAuth } from "@/lib/auth/auth-context"
+import { useTelemedicineFloating } from "@/lib/telemedicine-floating-context"
 import { format } from "date-fns"
 import { Pill } from "lucide-react"
 import { useRoleMenuAccess } from "@/lib/hooks/use-role-menu-access"
@@ -108,7 +109,9 @@ export default function QueueManagement() {
   const [selectedPatientForTriage, setSelectedPatientForTriage] = useState<{ patientId: string; patientName: string; queueId: number } | null>(null)
   const [radiologyQueueForReport, setRadiologyQueueForReport] = useState<QueueEntryLite | null>(null)
   const [procedureQueueForComplete, setProcedureQueueForComplete] = useState<QueueEntryLite | null>(null)
+  const [telemedicineStartingQueueId, setTelemedicineStartingQueueId] = useState<number | null>(null)
   const { user } = useAuth()
+  const { openSession: openTelemedicineFloating } = useTelemedicineFloating()
   const { menuAccess, loading: menuLoading } = useRoleMenuAccess(user?.id)
 
   // Filter service points based on role access
@@ -345,6 +348,55 @@ export default function QueueManagement() {
 
     setSelectedPatientForTriage({ patientId, patientName, queueId: queue.queueId })
     setTriageFormOpen(true)
+  }
+
+  const handleStartTelemedicine = async (queue: any) => {
+    const patientId = queue.patientId
+    if (!patientId) {
+      toast({
+        title: "Missing patient",
+        description: "This queue entry has no patient linked.",
+        variant: "destructive",
+      })
+      return
+    }
+    const actorId = (user as { id?: string; userId?: string })?.userId ?? (user as { id?: string })?.id
+    const doctorId = actorId != null && actorId !== "" ? Number(actorId) : NaN
+    if (!Number.isFinite(doctorId)) {
+      toast({
+        title: "Missing clinician",
+        description: "Sign in as the clinician who will run the telemedicine visit.",
+        variant: "destructive",
+      })
+      return
+    }
+    if (telemedicineStartingQueueId != null) return
+    const qid = Number(queue.queueId ?? 0)
+    setTelemedicineStartingQueueId(qid)
+    try {
+      const created = await telemedicineApi.createSession({
+        originType: "standalone",
+        patientId: Number(patientId),
+        doctorId,
+        notes: `Telemedicine from queue (ticket ${queue.ticketNumber || qid || "—"})`,
+      })
+      if (created?.sessionId) {
+        openTelemedicineFloating(created.sessionId)
+        toast({
+          title: "Telemedicine session ready",
+          description: "Use the floating panel — minimize it to browse charts or notes.",
+        })
+      }
+    } catch (error: any) {
+      console.error("Telemedicine create failed:", error)
+      toast({
+        title: "Telemedicine failed",
+        description: error?.message || "Could not create telemedicine session",
+        variant: "destructive",
+      })
+    } finally {
+      setTelemedicineStartingQueueId(null)
+    }
   }
 
   const handleCloseForm = (open: boolean) => {
@@ -620,6 +672,17 @@ export default function QueueManagement() {
                                   <DropdownMenuItem onClick={() => handleStartTriage(queue)}>
                                     <Stethoscope className="mr-2 h-4 w-4" />
                                     Triage Assessment
+                                  </DropdownMenuItem>
+                                )}
+                                {queue.servicePoint === "telemedicine" && queue.patientId && (
+                                  <DropdownMenuItem
+                                    onClick={() => handleStartTelemedicine(queue)}
+                                    disabled={telemedicineStartingQueueId === queue.queueId}
+                                  >
+                                    <Video className="mr-2 h-4 w-4" />
+                                    {telemedicineStartingQueueId === queue.queueId
+                                      ? "Starting…"
+                                      : "Start telemedicine"}
                                   </DropdownMenuItem>
                                 )}
                                 {queue.servicePoint === "consultation" && (

@@ -49,8 +49,14 @@ export function ConfigurableLanding({ landingConfig }: ConfigurableLandingProps)
     setHasEnteredApp(sessionStorage.getItem(LANDING_ENTERED_KEY) === "1")
   }, [])
 
-  // Check if user has top menu access (has categories)
-  const hasTopMenuAccess = menuAccess && menuAccess.categories && menuAccess.categories.length > 0
+  // Full shell (top nav + sidebar):
+  // - Legacy: no rows in role_menu_* → menuConfigPresent false → still use full shell.
+  // - After Menu & Tab Access save: menuConfigPresent true; need ≥1 allowed category/item, else minimal shell.
+  const hasTopMenuAccess =
+    !!menuAccess &&
+    (!menuAccess.menuConfigPresent ||
+      (menuAccess.categories?.length ?? 0) > 0 ||
+      (menuAccess.menuItems?.length ?? 0) > 0)
 
   // Normalize landing config early - handle both formats (before hooks that need it)
   // This needs to be computed before hooks, but we can safely use optional chaining

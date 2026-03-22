@@ -125,8 +125,14 @@ services:
     restart: unless-stopped
     ports:
       - "${NGINX_PORT:-80}:80"
+      # After TLS is configured in deploy/nginx.conf, publish HTTPS:
+      # - "443:443"
     volumes:
       - ./deploy/nginx.conf:/etc/nginx/nginx.conf:ro
+      # Shared with host: sudo certbot certonly --webroot -w ./deploy/certbot/www -d your.domain
+      - ./deploy/certbot/www:/var/www/certbot
+      # After certificates exist, mount Let’s Encrypt (read-only) for ssl_certificate paths:
+      # - /etc/letsencrypt:/etc/letsencrypt:ro
       - nginx_cache:/var/cache/nginx
       - nginx_logs:/var/log/nginx
     depends_on:

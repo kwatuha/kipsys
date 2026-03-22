@@ -182,6 +182,8 @@ router.get('/users/me/menu-access', async (req, res) => {
             // If no user ID, return empty access (secure by default)
             // In production, this should return 401
             return res.status(200).json({
+                menuConfigPresent: false,
+                categoriesWithMenuItemRows: [],
                 categories: [],
                 menuItems: [],
                 tabs: []
@@ -203,11 +205,32 @@ router.get('/users/me/menu-access', async (req, res) => {
         if (!roleId) {
             // No role assigned - return empty access
             return res.status(200).json({
+                menuConfigPresent: false,
+                categoriesWithMenuItemRows: [],
                 categories: [],
                 menuItems: [],
                 tabs: []
             });
         }
+
+        // True if this role has any saved rows in menu tables (even if all isAllowed = FALSE).
+        // The client uses this to tell "explicitly denied everything" from "never configured" (legacy show-all).
+        const [[menuConfigCounts]] = await pool.query(
+            `SELECT
+                (SELECT COUNT(*) FROM role_menu_categories WHERE roleId = ?) AS catRows,
+                (SELECT COUNT(*) FROM role_menu_items WHERE roleId = ?) AS itemRows`,
+            [roleId, roleId]
+        );
+        const menuConfigPresent =
+            Number(menuConfigCounts?.catRows || 0) > 0 ||
+            Number(menuConfigCounts?.itemRows || 0) > 0;
+
+        // Categories that have ≥1 row in role_menu_items (so empty allow list = all items denied, not "no restriction")
+        const [itemCategoryRows] = await pool.query(
+            'SELECT DISTINCT categoryId FROM role_menu_items WHERE roleId = ?',
+            [roleId]
+        );
+        const categoriesWithMenuItemRows = itemCategoryRows.map((r) => r.categoryId);
 
         // Get allowed categories
         const [categories] = await pool.query(
@@ -243,6 +266,8 @@ router.get('/users/me/menu-access', async (req, res) => {
 
         res.status(200).json({
             roleId: roleId,
+            menuConfigPresent,
+            categoriesWithMenuItemRows,
             categories: categories.map(c => c.categoryId),
             menuItems: menuItems.map(m => ({ categoryId: m.categoryId, path: m.menuItemPath })),
             tabs: tabs.map(t => ({ pagePath: t.pagePath, tabId: t.tabId })),

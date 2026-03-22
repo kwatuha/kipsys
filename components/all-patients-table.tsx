@@ -13,7 +13,7 @@ import { PatientProfileDialog } from "./patient-profile-dialog"
 import { hasPermission } from "@/lib/auth/permissions"
 import { queueApi } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
-import { ConfirmAddToTriageDialog } from "@/components/confirm-add-to-triage-dialog"
+import { AddToQueueDialog, type QueueServicePointChoice, queueTypeLabel } from "@/components/add-to-queue-dialog"
 
 // Sample patient data
 const patients = [
@@ -114,21 +114,27 @@ export function AllPatientsTable({ onAddToQueue }: AllPatientsTableProps) {
     }
   }
 
-  const executeAddToTriage = async (patientId: string, patientName: string) => {
+  const executeAddToQueue = async (
+    patientId: string,
+    patientName: string,
+    servicePoint: QueueServicePointChoice,
+  ) => {
     try {
       setAddingToTriage(true)
-      const triageQueues = await queueApi.getAll("triage", undefined, 1, 100, false)
-      const existingEntry = triageQueues.find(
+      const queues = await queueApi.getAll(servicePoint, undefined, 1, 100, false)
+      const existingEntry = queues.find(
         (entry: any) =>
           entry.patientId?.toString() === patientId.toString() &&
           entry.status !== "completed" &&
           entry.status !== "cancelled",
       )
 
+      const label = queueTypeLabel(servicePoint)
+
       if (existingEntry) {
         toast({
-          title: "Patient Already in Triage Queue",
-          description: `${patientName} is already in the triage queue (Ticket: ${existingEntry.ticketNumber || "N/A"}).`,
+          title: `Patient Already in ${label} Queue`,
+          description: `${patientName} is already in the ${label.toLowerCase()} queue (Ticket: ${existingEntry.ticketNumber || "N/A"}).`,
           variant: "default",
         })
         return
@@ -136,24 +142,24 @@ export function AllPatientsTable({ onAddToQueue }: AllPatientsTableProps) {
 
       const payload = {
         patientId: parseInt(patientId, 10),
-        servicePoint: "triage",
+        servicePoint,
         priority: "normal",
         status: "waiting",
-        notes: "Returning patient - added to triage queue",
+        notes: `Returning patient - added to ${servicePoint} queue`,
       }
 
       await queueApi.create(payload)
 
       toast({
-        title: "✅ Patient Added to Triage Queue",
-        description: `${patientName} has been successfully added to the triage queue.`,
+        title: `✅ Patient Added to ${label} Queue`,
+        description: `${patientName} has been successfully added to the ${label.toLowerCase()} queue.`,
         variant: "default",
       })
     } catch (error: any) {
-      console.error("Error adding patient to triage queue:", error)
+      console.error("Error adding patient to queue:", error)
       toast({
         title: "Error",
-        description: error.message || "Failed to add patient to triage queue. Please try again.",
+        description: error.message || "Failed to add patient to queue. Please try again.",
         variant: "destructive",
       })
     } finally {
@@ -161,9 +167,9 @@ export function AllPatientsTable({ onAddToQueue }: AllPatientsTableProps) {
     }
   }
 
-  const handleConfirmAddToTriage = async () => {
+  const handleConfirmAddToQueue = async (servicePoint: QueueServicePointChoice) => {
     if (!triagePending) return
-    await executeAddToTriage(triagePending.id, triagePending.name)
+    await executeAddToQueue(triagePending.id, triagePending.name, servicePoint)
     setTriagePending(null)
   }
 
@@ -275,7 +281,7 @@ export function AllPatientsTable({ onAddToQueue }: AllPatientsTableProps) {
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem onClick={() => setTriagePending({ id: patient.id, name: patient.name })}>
                             <Stethoscope className="mr-2 h-4 w-4" />
-                            Add to Triage Queue
+                            Add to queue
                           </DropdownMenuItem>
                           <DropdownMenuItem>Edit Patient</DropdownMenuItem>
                           <DropdownMenuItem>Schedule Appointment</DropdownMenuItem>
@@ -332,12 +338,12 @@ export function AllPatientsTable({ onAddToQueue }: AllPatientsTableProps) {
         </div>
       )}
 
-      <ConfirmAddToTriageDialog
+      <AddToQueueDialog
         open={!!triagePending}
         onOpenChange={(open) => !open && setTriagePending(null)}
         patientName={triagePending?.name ?? ""}
         patientNumber={triagePending?.id}
-        onConfirm={handleConfirmAddToTriage}
+        onConfirm={handleConfirmAddToQueue}
         loading={addingToTriage}
       />
 

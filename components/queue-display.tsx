@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
-import { MoreHorizontal, FileText, PlayCircle, Stethoscope, Pill, Scan, ClipboardList } from "lucide-react"
+import { MoreHorizontal, FileText, PlayCircle, Stethoscope, Pill, Scan, ClipboardList, Video } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   getQueueByServicePoint,
@@ -17,13 +17,14 @@ import {
 import { QueueTabsIndicator } from "@/components/queue-tabs-indicator"
 import { useScreenSize } from "@/hooks/use-screen-size"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
-import { queueApi, medicalRecordsApi } from "@/lib/api"
+import { queueApi, medicalRecordsApi, telemedicineApi } from "@/lib/api"
 import { PatientEncounterForm } from "@/components/patient-encounter-form"
 import { DispenseMedicationDialog } from "@/components/dispense-medication-dialog"
 import { AddTriageForm } from "@/components/add-triage-form"
 import { ViewBillDialog } from "@/components/view-bill-dialog"
 import { AddToQueueForm } from "@/components/add-to-queue-form"
 import { useAuth } from "@/lib/auth/auth-context"
+import { useTelemedicineFloating } from "@/lib/telemedicine-floating-context"
 import { format } from "date-fns"
 import { useRoleMenuAccess } from "@/lib/hooks/use-role-menu-access"
 import { filterQueueServicePoints } from "@/lib/role-menu-filter"
@@ -345,13 +346,16 @@ function QueueContent({
   const [statusLoading, setStatusLoading] = useState(false)
   const [radiologyQueueForReport, setRadiologyQueueForReport] = useState<QueueEntryLite | null>(null)
   const [procedureQueueForComplete, setProcedureQueueForComplete] = useState<QueueEntryLite | null>(null)
+  const [telemedicineStartingQueueId, setTelemedicineStartingQueueId] = useState<number | string | null>(null)
   const { user } = useAuth()
+  const { openSession: openTelemedicineFloating } = useTelemedicineFloating()
   const isConsultation = servicePoint === "consultation"
   const isPharmacy = servicePoint === "pharmacy"
   const isTriage = servicePoint === "triage"
   const isCashier = servicePoint === "cashier"
   const isRadiology = servicePoint === "radiology"
   const isProcedure = servicePoint === "procedure"
+  const isTelemedicine = servicePoint === "telemedicine"
 
   // Get current doctor ID
   useEffect(() => {
@@ -481,6 +485,55 @@ function QueueContent({
   const handleStartTriage = (patientId: string, patientName: string, queueId: number) => {
     setSelectedPatientForTriage({ patientId, patientName, queueId })
     setTriageFormOpen(true)
+  }
+
+  const handleStartTelemedicine = async (entry: any) => {
+    const patientId = entry.patientId
+    if (!patientId) {
+      toast({
+        title: "Missing patient",
+        description: "This queue entry has no patient linked.",
+        variant: "destructive",
+      })
+      return
+    }
+    const actorId = (user as { id?: string; userId?: string })?.userId ?? (user as { id?: string })?.id
+    const doctorId = actorId != null && actorId !== "" ? Number(actorId) : NaN
+    if (!Number.isFinite(doctorId)) {
+      toast({
+        title: "Missing clinician",
+        description: "Sign in as the clinician who will run the telemedicine visit.",
+        variant: "destructive",
+      })
+      return
+    }
+    if (telemedicineStartingQueueId != null) return
+    const rowKey = entry.queueId ?? entry.id
+    setTelemedicineStartingQueueId(rowKey)
+    try {
+      const created = await telemedicineApi.createSession({
+        originType: "standalone",
+        patientId: Number(patientId),
+        doctorId,
+        notes: `Telemedicine from queue (ticket ${entry.ticketNumber || rowKey || "—"})`,
+      })
+      if (created?.sessionId) {
+        openTelemedicineFloating(created.sessionId)
+        toast({
+          title: "Telemedicine session ready",
+          description: "Use the floating panel — minimize it to browse charts or notes.",
+        })
+      }
+    } catch (error: any) {
+      console.error("Telemedicine create failed:", error)
+      toast({
+        title: "Telemedicine failed",
+        description: error?.message || "Could not create telemedicine session",
+        variant: "destructive",
+      })
+    } finally {
+      setTelemedicineStartingQueueId(null)
+    }
   }
 
   const handleDelete = async () => {
@@ -913,6 +966,61 @@ function QueueContent({
                       >
                         <ClipboardList className="h-3 w-3 mr-1" />
                         Complete & outcome
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="p-6 text-center text-muted-foreground">
+                No patients in queue for {getServicePointName(servicePoint)}
+              </div>
+            )}
+          </>
+        ) : isTelemedicine ? (
+          <>
+            <div className="grid grid-cols-12 bg-muted/50 p-3 text-sm font-medium">
+              <div className="col-span-1">#</div>
+              <div className="col-span-3">Patient</div>
+              <div className="col-span-2">Priority</div>
+              <div className="col-span-2">Status</div>
+              <div className="col-span-2">Wait Time</div>
+              <div className="col-span-2">Action</div>
+            </div>
+            {loading ? (
+              <div className="p-6 text-center text-muted-foreground">Loading queue data...</div>
+            ) : queueData.length > 0 ? (
+              <div className="divide-y">
+                {queueData.map((entry) => (
+                  <div key={entry.id} className="grid grid-cols-12 p-3 text-sm items-center">
+                    <div className="col-span-1">{entry.ticketNumber || entry.queueNumber}</div>
+                    <div className="col-span-3 font-medium">{entry.patientName}</div>
+                    <div className="col-span-2">
+                      <Badge variant="outline" className={`${getPriorityColor(entry.priority)}`}>
+                        {entry.priority}
+                      </Badge>
+                    </div>
+                    <div className="col-span-2">
+                      <Badge variant={entry.status === "waiting" || entry.status === "called" ? "secondary" : "default"}>
+                        {entry.status === "waiting" ? "Waiting" : entry.status === "called" ? "Called" : "In Service"}
+                      </Badge>
+                    </div>
+                    <div className="col-span-2 text-muted-foreground">
+                      {calculateWaitTime(entry)} min
+                      {entry.estimatedWaitTime && entry.status === "waiting" && (
+                        <span> (Est. {entry.estimatedWaitTime} min)</span>
+                      )}
+                    </div>
+                    <div className="col-span-2">
+                      <Button
+                        variant="default"
+                        size="sm"
+                        onClick={() => handleStartTelemedicine(entry)}
+                        disabled={telemedicineStartingQueueId === (entry.queueId ?? entry.id)}
+                        className="w-full"
+                      >
+                        <Video className="h-3 w-3 mr-1" />
+                        {telemedicineStartingQueueId === (entry.queueId ?? entry.id) ? "Starting…" : "Start telemedicine"}
                       </Button>
                     </div>
                   </div>
