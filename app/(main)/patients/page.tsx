@@ -5,6 +5,7 @@ import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { PatientForm } from "@/components/patient-form"
+import { ConfirmAddToTriageDialog } from "@/components/confirm-add-to-triage-dialog"
 import { patientApi } from "@/lib/api"
 import {
   AlertDialog,
@@ -52,6 +53,7 @@ export default function PatientsPage() {
   const [deletingPatient, setDeletingPatient] = useState<Patient | null>(null)
   const [deleteLoading, setDeleteLoading] = useState(false)
   const [addingToTriage, setAddingToTriage] = useState<number | null>(null)
+  const [patientPendingTriage, setPatientPendingTriage] = useState<Patient | null>(null)
 
   useEffect(() => {
     // Debounce search to avoid too many API calls
@@ -119,28 +121,27 @@ export default function PatientsPage() {
     return new Date(date).toLocaleDateString()
   }
 
-  const handleAddToTriage = async (patient: Patient) => {
+  const executeAddToTriage = async (patient: Patient) => {
     try {
       setAddingToTriage(patient.patientId)
-      
-      // Check if patient is already in triage queue with active status
+
       const triageQueues = await queueApi.getAll("triage", undefined, 1, 100, false)
-      const existingEntry = triageQueues.find((entry: any) => 
-        entry.patientId?.toString() === patient.patientId.toString() &&
-        entry.status !== 'completed' &&
-        entry.status !== 'cancelled'
+      const existingEntry = triageQueues.find(
+        (entry: any) =>
+          entry.patientId?.toString() === patient.patientId.toString() &&
+          entry.status !== "completed" &&
+          entry.status !== "cancelled",
       )
 
       if (existingEntry) {
         toast({
           title: "Patient Already in Triage Queue",
-          description: `${patient.firstName} ${patient.lastName} is already in the triage queue (Ticket: ${existingEntry.ticketNumber || 'N/A'}).`,
+          description: `${patient.firstName} ${patient.lastName} is already in the triage queue (Ticket: ${existingEntry.ticketNumber || "N/A"}).`,
           variant: "default",
         })
         return
       }
 
-      // Add patient to triage queue
       const payload = {
         patientId: patient.patientId,
         servicePoint: "triage",
@@ -150,7 +151,7 @@ export default function PatientsPage() {
       }
 
       await queueApi.create(payload)
-      
+
       toast({
         title: "✅ Patient Added to Triage Queue",
         description: `${patient.firstName} ${patient.lastName} has been successfully added to the triage queue.`,
@@ -166,6 +167,12 @@ export default function PatientsPage() {
     } finally {
       setAddingToTriage(null)
     }
+  }
+
+  const handleConfirmAddToTriage = async () => {
+    if (!patientPendingTriage) return
+    await executeAddToTriage(patientPendingTriage)
+    setPatientPendingTriage(null)
   }
 
   if (loading) {
@@ -242,10 +249,10 @@ export default function PatientsPage() {
                   <Button asChild size="sm" variant="outline" className="flex-1">
                     <Link href={`/patients/${patient.patientId}`}>View</Link>
                   </Button>
-                  <Button 
-                    size="sm" 
+                  <Button
+                    size="sm"
                     variant="default"
-                    onClick={() => handleAddToTriage(patient)}
+                    onClick={() => setPatientPendingTriage(patient)}
                     disabled={addingToTriage === patient.patientId}
                     title="Add to Triage Queue"
                   >
@@ -284,6 +291,19 @@ export default function PatientsPage() {
         open={isFormOpen}
         onOpenChange={setIsFormOpen}
         onSuccess={loadPatients}
+      />
+
+      <ConfirmAddToTriageDialog
+        open={!!patientPendingTriage}
+        onOpenChange={(open) => !open && setPatientPendingTriage(null)}
+        patientName={
+          patientPendingTriage
+            ? `${patientPendingTriage.firstName} ${patientPendingTriage.lastName}`
+            : ""
+        }
+        patientNumber={patientPendingTriage?.patientNumber}
+        onConfirm={handleConfirmAddToTriage}
+        loading={patientPendingTriage !== null && addingToTriage === patientPendingTriage?.patientId}
       />
 
       <AlertDialog open={!!deletingPatient} onOpenChange={(open) => !open && setDeletingPatient(null)}>

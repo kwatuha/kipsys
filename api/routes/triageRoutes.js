@@ -5,6 +5,35 @@ const pool = require('../config/db');
 const { resolveRegistrationFeeAmount } = require('../utils/registrationFee');
 
 /**
+ * Parse BP from explicit systolic/diastolic fields (preferred) or legacy "120/80" string.
+ */
+function parseBloodPressureFromBody(body) {
+    if (!body) return { systolicBP: null, diastolicBP: null };
+    const { bloodPressure, systolicBP: rawS, diastolicBP: rawD } = body;
+    const hasNum =
+        rawS !== undefined && rawS !== null && String(rawS).trim() !== '' &&
+        rawD !== undefined && rawD !== null && String(rawD).trim() !== '';
+    if (hasNum) {
+        const sys = parseInt(String(rawS).trim(), 10);
+        const dia = parseInt(String(rawD).trim(), 10);
+        return {
+            systolicBP: !isNaN(sys) ? sys : null,
+            diastolicBP: !isNaN(dia) ? dia : null,
+        };
+    }
+    if (bloodPressure && String(bloodPressure).includes('/')) {
+        const bpParts = String(bloodPressure).split('/');
+        const sys = parseInt(bpParts[0], 10);
+        const dia = parseInt(bpParts[1], 10);
+        return {
+            systolicBP: !isNaN(sys) ? sys : null,
+            diastolicBP: !isNaN(dia) ? dia : null,
+        };
+    }
+    return { systolicBP: null, diastolicBP: null };
+}
+
+/**
  * @route GET /api/triage
  * @description Get all triage records
  */
@@ -128,16 +157,7 @@ router.post('/', async (req, res) => {
         // In production, this should come from authenticated user session
         const triagedByUserId = triagedBy || req.user?.id || 1;
 
-        // Parse blood pressure
-        let systolicBP = null;
-        let diastolicBP = null;
-        if (bloodPressure && bloodPressure.includes('/')) {
-            const bpParts = bloodPressure.split('/');
-            const sys = parseInt(bpParts[0]);
-            const dia = parseInt(bpParts[1]);
-            systolicBP = !isNaN(sys) ? sys : null;
-            diastolicBP = !isNaN(dia) ? dia : null;
-        }
+        const { systolicBP, diastolicBP } = parseBloodPressureFromBody(req.body);
 
         // Map priority to triage category
         let triageCategory = 'green'; // Default to non-urgent
@@ -820,15 +840,21 @@ router.put('/:id', async (req, res) => {
             return res.status(404).json({ message: 'Triage record not found' });
         }
 
-        // Parse blood pressure if provided
-        let systolicBP = existing[0].systolicBP;
-        let diastolicBP = existing[0].diastolicBP;
-        if (bloodPressure && bloodPressure.includes('/')) {
-            const bpParts = bloodPressure.split('/');
-            const sys = parseInt(bpParts[0]);
-            const dia = parseInt(bpParts[1]);
-            systolicBP = !isNaN(sys) ? sys : null;
-            diastolicBP = !isNaN(dia) ? dia : null;
+        const [vitalRows] = await connection.query(
+            'SELECT systolicBP, diastolicBP FROM vital_signs WHERE triageId = ? LIMIT 1',
+            [id]
+        );
+        let systolicBP = vitalRows[0]?.systolicBP ?? null;
+        let diastolicBP = vitalRows[0]?.diastolicBP ?? null;
+
+        const hasBpInput =
+            bloodPressure !== undefined ||
+            req.body.systolicBP !== undefined ||
+            req.body.diastolicBP !== undefined;
+        if (hasBpInput) {
+            const parsed = parseBloodPressureFromBody(req.body);
+            systolicBP = parsed.systolicBP;
+            diastolicBP = parsed.diastolicBP;
         }
 
         // Build update query for triage_assessments
@@ -849,7 +875,7 @@ router.put('/:id', async (req, res) => {
         }
 
         // Update vital signs if provided
-        if (temperature !== undefined || bloodPressure !== undefined || heartRate !== undefined ||
+        if (temperature !== undefined || hasBpInput || heartRate !== undefined ||
             respiratoryRate !== undefined || oxygenSaturation !== undefined || painLevel !== undefined || weight !== undefined || height !== undefined) {
             const [vitalExists] = await connection.query(
                 'SELECT vitalSignId FROM vital_signs WHERE triageId = ?',
@@ -877,7 +903,7 @@ router.put('/:id', async (req, res) => {
                     vitalUpdates.push('temperature = ?');
                     vitalValues.push(safeParseFloat(temperature));
                 }
-                if (bloodPressure !== undefined) {
+                if (hasBpInput) {
                     vitalUpdates.push('systolicBP = ?, diastolicBP = ?');
                     vitalValues.push(systolicBP, diastolicBP);
                 }

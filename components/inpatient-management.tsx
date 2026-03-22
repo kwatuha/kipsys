@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useMemo } from "react"
 import { useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -24,6 +24,7 @@ import { TestTypeCombobox } from "@/components/test-type-combobox"
 import { ExamTypeCombobox } from "@/components/exam-type-combobox"
 import { DischargeSummary } from "@/components/discharge-summary"
 import { MedicationCombobox } from "@/components/medication-combobox"
+import { PatientVitals } from "@/components/patient-vitals"
 
 interface InpatientManagementProps {
   admissionId: string
@@ -112,6 +113,7 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
   const [savingVitals, setSavingVitals] = useState(false)
   const [vitalsSchedule, setVitalsSchedule] = useState<any>(null)
   const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false)
+  const [inpatientVitalsView, setInpatientVitalsView] = useState<"table" | "charts">("table")
 
   // Lab order states
   const [labOrderDialogOpen, setLabOrderDialogOpen] = useState(false)
@@ -1810,6 +1812,8 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
     }
   }
 
+  const chartVitals = useMemo(() => overview?.vitals ?? [], [overview])
+
   if (loading) {
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
@@ -2662,9 +2666,31 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
 
           {/* Vitals Tab */}
           <TabsContent value="vitals" className="space-y-4">
-            <div className="flex justify-between items-center">
-              <h3 className="text-lg font-semibold">Vital Signs</h3>
-              <div className="flex gap-2">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-lg font-semibold">Vital Signs</h3>
+                <div className="inline-flex rounded-md border bg-muted/40 p-0.5">
+                  <Button
+                    type="button"
+                    variant={inpatientVitalsView === "table" ? "secondary" : "ghost"}
+                    size="sm"
+                    className="h-8 px-3"
+                    onClick={() => setInpatientVitalsView("table")}
+                  >
+                    Table
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={inpatientVitalsView === "charts" ? "secondary" : "ghost"}
+                    size="sm"
+                    className="h-8 px-3"
+                    onClick={() => setInpatientVitalsView("charts")}
+                  >
+                    Charts
+                  </Button>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
                 <Button variant="outline" onClick={() => setScheduleDialogOpen(true)}>
                   <Clock className="mr-2 h-4 w-4" />Schedule
                 </Button>
@@ -2859,71 +2885,79 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
               </Card>
             )}
 
-            <Card>
-              <CardContent className="p-0">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Date/Time</TableHead>
-                      <TableHead>BP</TableHead>
-                      <TableHead>HR</TableHead>
-                      <TableHead>RR</TableHead>
-                      <TableHead>Temp</TableHead>
-                      <TableHead>SpO2</TableHead>
-                      <TableHead>Pain</TableHead>
-                      <TableHead>Weight</TableHead>
-                      <TableHead>Height</TableHead>
-                      <TableHead>Recorded By</TableHead>
-                      <TableHead className="w-[100px]">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {overview.vitals?.length > 0 ? (
-                      overview.vitals.map((vital: any) => (
-                        <TableRow key={vital.vitalSignId}>
-                          <TableCell>{format(new Date(vital.recordedDate), "PPp")}</TableCell>
-                          <TableCell>
-                            {vital.systolicBP && vital.diastolicBP ? `${vital.systolicBP}/${vital.diastolicBP}` : "N/A"}
-                          </TableCell>
-                          <TableCell>{vital.heartRate || "N/A"}</TableCell>
-                          <TableCell>{vital.respiratoryRate || "N/A"}</TableCell>
-                          <TableCell>{vital.temperature ? `${vital.temperature}°C` : "N/A"}</TableCell>
-                          <TableCell>{vital.oxygenSaturation ? `${vital.oxygenSaturation}%` : "N/A"}</TableCell>
-                          <TableCell>{vital.painScore !== null ? vital.painScore : "N/A"}</TableCell>
-                          <TableCell>{vital.weight ? `${vital.weight}kg` : "N/A"}</TableCell>
-                          <TableCell>{vital.height ? `${vital.height}cm` : "N/A"}</TableCell>
-                          <TableCell>{vital.recordedByFirstName} {vital.recordedByLastName}</TableCell>
-                          <TableCell>
-                            <div className="flex gap-1">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => handleEditVital(vital)}
-                              >
-                                <Pencil className="h-4 w-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => handleDeleteVital(vital)}
-                              >
-                                <Trash2 className="h-4 w-4 text-destructive" />
-                              </Button>
-                            </div>
+            {inpatientVitalsView === "charts" ? (
+              <PatientVitals
+                patientId={String(admission.patientId)}
+                vitals={chartVitals}
+                chartsOnly
+              />
+            ) : (
+              <Card>
+                <CardContent className="p-0">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Date/Time</TableHead>
+                        <TableHead>BP</TableHead>
+                        <TableHead>HR</TableHead>
+                        <TableHead>RR</TableHead>
+                        <TableHead>Temp</TableHead>
+                        <TableHead>SpO2</TableHead>
+                        <TableHead>Pain</TableHead>
+                        <TableHead>Weight</TableHead>
+                        <TableHead>Height</TableHead>
+                        <TableHead>Recorded By</TableHead>
+                        <TableHead className="w-[100px]">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {overview.vitals?.length > 0 ? (
+                        overview.vitals.map((vital: any) => (
+                          <TableRow key={vital.vitalSignId}>
+                            <TableCell>{format(new Date(vital.recordedDate), "PPp")}</TableCell>
+                            <TableCell>
+                              {vital.systolicBP && vital.diastolicBP ? `${vital.systolicBP}/${vital.diastolicBP}` : "N/A"}
+                            </TableCell>
+                            <TableCell>{vital.heartRate || "N/A"}</TableCell>
+                            <TableCell>{vital.respiratoryRate || "N/A"}</TableCell>
+                            <TableCell>{vital.temperature ? `${vital.temperature}°C` : "N/A"}</TableCell>
+                            <TableCell>{vital.oxygenSaturation ? `${vital.oxygenSaturation}%` : "N/A"}</TableCell>
+                            <TableCell>{vital.painScore !== null ? vital.painScore : "N/A"}</TableCell>
+                            <TableCell>{vital.weight ? `${vital.weight}kg` : "N/A"}</TableCell>
+                            <TableCell>{vital.height ? `${vital.height}cm` : "N/A"}</TableCell>
+                            <TableCell>{vital.recordedByFirstName} {vital.recordedByLastName}</TableCell>
+                            <TableCell>
+                              <div className="flex gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleEditVital(vital)}
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleDeleteVital(vital)}
+                                >
+                                  <Trash2 className="h-4 w-4 text-destructive" />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      ) : (
+                        <TableRow>
+                          <TableCell colSpan={11} className="text-center text-muted-foreground">
+                            No vital signs recorded yet
                           </TableCell>
                         </TableRow>
-                      ))
-                    ) : (
-                      <TableRow>
-                        <TableCell colSpan={11} className="text-center text-muted-foreground">
-                          No vital signs recorded yet
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
+                      )}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            )}
             <Dialog open={billAdjustmentDialogOpen} onOpenChange={setBillAdjustmentDialogOpen}>
               <DialogContent className="max-w-lg">
                 <DialogHeader>

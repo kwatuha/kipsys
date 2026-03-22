@@ -13,6 +13,7 @@ import { PatientProfileDialog } from "./patient-profile-dialog"
 import { hasPermission } from "@/lib/auth/permissions"
 import { queueApi } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
+import { ConfirmAddToTriageDialog } from "@/components/confirm-add-to-triage-dialog"
 
 // Sample patient data
 const patients = [
@@ -46,6 +47,8 @@ export function AllPatientsTable({ onAddToQueue }: AllPatientsTableProps) {
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc")
   const [selectedPatient, setSelectedPatient] = useState<string | null>(null)
   const [profileDialogOpen, setProfileDialogOpen] = useState(false)
+  const [triagePending, setTriagePending] = useState<{ id: string; name: string } | null>(null)
+  const [addingToTriage, setAddingToTriage] = useState(false)
 
   const itemsPerPage = 5
 
@@ -111,28 +114,28 @@ export function AllPatientsTable({ onAddToQueue }: AllPatientsTableProps) {
     }
   }
 
-  const handleAddToTriage = async (patientId: string, patientName: string) => {
+  const executeAddToTriage = async (patientId: string, patientName: string) => {
     try {
-      // Check if patient is already in triage queue with active status
+      setAddingToTriage(true)
       const triageQueues = await queueApi.getAll("triage", undefined, 1, 100, false)
-      const existingEntry = triageQueues.find((entry: any) => 
-        entry.patientId?.toString() === patientId.toString() &&
-        entry.status !== 'completed' &&
-        entry.status !== 'cancelled'
+      const existingEntry = triageQueues.find(
+        (entry: any) =>
+          entry.patientId?.toString() === patientId.toString() &&
+          entry.status !== "completed" &&
+          entry.status !== "cancelled",
       )
 
       if (existingEntry) {
         toast({
           title: "Patient Already in Triage Queue",
-          description: `${patientName} is already in the triage queue (Ticket: ${existingEntry.ticketNumber || 'N/A'}).`,
+          description: `${patientName} is already in the triage queue (Ticket: ${existingEntry.ticketNumber || "N/A"}).`,
           variant: "default",
         })
         return
       }
 
-      // Add patient to triage queue
       const payload = {
-        patientId: parseInt(patientId),
+        patientId: parseInt(patientId, 10),
         servicePoint: "triage",
         priority: "normal",
         status: "waiting",
@@ -140,7 +143,7 @@ export function AllPatientsTable({ onAddToQueue }: AllPatientsTableProps) {
       }
 
       await queueApi.create(payload)
-      
+
       toast({
         title: "✅ Patient Added to Triage Queue",
         description: `${patientName} has been successfully added to the triage queue.`,
@@ -153,7 +156,15 @@ export function AllPatientsTable({ onAddToQueue }: AllPatientsTableProps) {
         description: error.message || "Failed to add patient to triage queue. Please try again.",
         variant: "destructive",
       })
+    } finally {
+      setAddingToTriage(false)
     }
+  }
+
+  const handleConfirmAddToTriage = async () => {
+    if (!triagePending) return
+    await executeAddToTriage(triagePending.id, triagePending.name)
+    setTriagePending(null)
   }
 
   return (
@@ -262,7 +273,7 @@ export function AllPatientsTable({ onAddToQueue }: AllPatientsTableProps) {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => handleAddToTriage(patient.id, patient.name)}>
+                          <DropdownMenuItem onClick={() => setTriagePending({ id: patient.id, name: patient.name })}>
                             <Stethoscope className="mr-2 h-4 w-4" />
                             Add to Triage Queue
                           </DropdownMenuItem>
@@ -320,6 +331,15 @@ export function AllPatientsTable({ onAddToQueue }: AllPatientsTableProps) {
           </div>
         </div>
       )}
+
+      <ConfirmAddToTriageDialog
+        open={!!triagePending}
+        onOpenChange={(open) => !open && setTriagePending(null)}
+        patientName={triagePending?.name ?? ""}
+        patientNumber={triagePending?.id}
+        onConfirm={handleConfirmAddToTriage}
+        loading={addingToTriage}
+      />
 
       {/* Patient Profile Dialog */}
       {selectedPatient && (

@@ -535,7 +535,8 @@ router.get('/:id/vitals', async (req, res) => {
             }
         }
 
-        query += ` ORDER BY vs.recordedDate DESC LIMIT 10`;
+        // Enough rows for trend charts on patient detail (was 10)
+        query += ` ORDER BY vs.recordedDate DESC LIMIT 200`;
 
         const [rows] = await pool.execute(query, params);
         res.status(200).json(rows);

@@ -41,6 +41,7 @@ import { PatientQueueStatus } from "@/components/patient-queue-status"
 import { patientApi, insuranceApi, queueApi } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
 import Link from "next/link"
+import { ConfirmAddToTriageDialog } from "@/components/confirm-add-to-triage-dialog"
 
 export default function PatientProfilePage() {
   const { toast } = useToast()
@@ -51,6 +52,7 @@ export default function PatientProfilePage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [addingToTriage, setAddingToTriage] = useState(false)
+  const [confirmTriageOpen, setConfirmTriageOpen] = useState(false)
 
   useEffect(() => {
     loadPatient()
@@ -101,30 +103,29 @@ export default function PatientProfilePage() {
     return (first + last).toUpperCase()
   }
 
-  const handleAddToTriage = async () => {
+  const executeAddToTriage = async () => {
     if (!patient || !patient.patientId) return
 
     try {
       setAddingToTriage(true)
-      
-      // Check if patient is already in triage queue with active status
+
       const triageQueues = await queueApi.getAll("triage", undefined, 1, 100, false)
-      const existingEntry = triageQueues.find((entry: any) => 
-        entry.patientId?.toString() === patient.patientId.toString() &&
-        entry.status !== 'completed' &&
-        entry.status !== 'cancelled'
+      const existingEntry = triageQueues.find(
+        (entry: any) =>
+          entry.patientId?.toString() === patient.patientId.toString() &&
+          entry.status !== "completed" &&
+          entry.status !== "cancelled",
       )
 
       if (existingEntry) {
         toast({
           title: "Patient Already in Triage Queue",
-          description: `${patient.firstName} ${patient.lastName} is already in the triage queue (Ticket: ${existingEntry.ticketNumber || 'N/A'}).`,
+          description: `${patient.firstName} ${patient.lastName} is already in the triage queue (Ticket: ${existingEntry.ticketNumber || "N/A"}).`,
           variant: "default",
         })
         return
       }
 
-      // Add patient to triage queue
       const payload = {
         patientId: patient.patientId,
         servicePoint: "triage",
@@ -134,7 +135,7 @@ export default function PatientProfilePage() {
       }
 
       await queueApi.create(payload)
-      
+
       toast({
         title: "✅ Patient Added to Triage Queue",
         description: `${patient.firstName} ${patient.lastName} has been successfully added to the triage queue.`,
@@ -150,6 +151,11 @@ export default function PatientProfilePage() {
     } finally {
       setAddingToTriage(false)
     }
+  }
+
+  const handleConfirmAddToTriage = async () => {
+    await executeAddToTriage()
+    setConfirmTriageOpen(false)
   }
 
   if (loading) {
@@ -213,6 +219,15 @@ export default function PatientProfilePage() {
 
   return (
     <div className="flex flex-col gap-6">
+      <ConfirmAddToTriageDialog
+        open={confirmTriageOpen}
+        onOpenChange={setConfirmTriageOpen}
+        patientName={`${patient.firstName} ${patient.lastName}`}
+        patientNumber={patient.patientNumber}
+        onConfirm={handleConfirmAddToTriage}
+        loading={addingToTriage}
+      />
+
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Patient Profile</h1>
@@ -221,11 +236,11 @@ export default function PatientProfilePage() {
         <div className="flex gap-2">
           <Button 
             variant="default"
-            onClick={handleAddToTriage}
+            onClick={() => setConfirmTriageOpen(true)}
             disabled={addingToTriage}
           >
             <Stethoscope className="mr-2 h-4 w-4" />
-            {addingToTriage ? "Adding..." : "Add to Triage Queue"}
+            Add to Triage Queue
           </Button>
           <Button variant="outline" asChild>
             <Link href={`/patients/${patientId}/history`}>

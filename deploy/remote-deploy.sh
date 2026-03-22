@@ -3,7 +3,15 @@
 # ============================================
 # Kiplombe HMIS Remote Deployment Script (Final Fix)
 # ============================================
-
+#
+# Expected duration: Step 4 (Docker builds) usually dominates — often **15–45+ minutes**
+# on a modest VPS because API + frontend use `build --no-cache` (full reinstall + Next.js).
+# That is normal, not a hang. Upload (Step 2) depends on your link speed.
+#
+# Faster repeat deploys (same server, trust layer cache): set before running:
+#   DEPLOY_USE_DOCKER_CACHE=1 ./deploy/remote-deploy.sh ...
+# This removes `--no-cache` from API/frontend builds (faster, may miss stale layers).
+#
 set -e
 
 # --- Configuration ---
@@ -102,7 +110,7 @@ if tar -czf "$DEPLOY_ARCHIVE" \
     FILE_COUNT=$(tar -tzf "$DEPLOY_ARCHIVE" 2>/dev/null | wc -l)
     echo "   ✓ Archive contains $FILE_COUNT files"
 
-    # Check for critical files (including sidebar so it appears on deployed app)
+    # Check for critical files (single tar listing — avoid scanning the archive N times)
     echo "   🔍 Checking for critical files in archive..."
     CRITICAL_FILES=(
         "app/page.tsx"
@@ -118,9 +126,10 @@ if tar -czf "$DEPLOY_ARCHIVE" \
         "docker-compose.deploy.yml"
     )
 
+    TAR_LIST=$(tar -tzf "$DEPLOY_ARCHIVE" 2>/dev/null)
     MISSING_FILES=()
     for file in "${CRITICAL_FILES[@]}"; do
-        if tar -tzf "$DEPLOY_ARCHIVE" 2>/dev/null | grep -q "^${file}$"; then
+        if echo "$TAR_LIST" | grep -qFx "$file"; then
             echo "     ✓ $file"
         else
             echo "     ✗ $file NOT FOUND in archive"
@@ -272,8 +281,20 @@ REMOTE_EOF
 
 # --- Step 4: Build ---
 print_header "Step 4: Building and Starting Services"
-eval "$SSH_CMD" << 'BUILD_EOF'
-    set -e
+# DEPLOY_USE_DOCKER_CACHE=1 → omit --no-cache for much faster repeat deploys (optional)
+DEPLOY_USE_DOCKER_CACHE="${DEPLOY_USE_DOCKER_CACHE:-0}"
+if [ "$DEPLOY_USE_DOCKER_CACHE" = "1" ]; then
+  echo -e "${YELLOW}⚡ DEPLOY_USE_DOCKER_CACHE=1 — Docker will use layer cache (faster).${NC}"
+  DOCKER_BUILD_EXTRA=""
+else
+  echo -e "${BLUE}⏳ Step 4 often takes 15–45+ minutes: full API + Next.js builds with --no-cache.${NC}"
+  echo "   (Set DEPLOY_USE_DOCKER_CACHE=1 for faster rebuilds if appropriate.)"
+  DOCKER_BUILD_EXTRA="--no-cache"
+fi
+{
+  echo "set -e"
+  echo "export DOCKER_BUILD_EXTRA=$(printf '%q' "$DOCKER_BUILD_EXTRA")"
+  cat <<'BUILD_EOF'
     cd ~/kiplombe-hmis
 
     echo "🛑 Stopping containers..."
@@ -285,7 +306,11 @@ eval "$SSH_CMD" << 'BUILD_EOF'
     docker images --format "{{.Repository}}:{{.Tag}}" | grep -E "(kiplombe|api|frontend)" | xargs -r docker rmi -f 2>/dev/null || true
 
     echo "🏗️ Building API..."
-    docker compose -f docker-compose.deploy.yml build --no-cache --pull api
+    if [ -n "$DOCKER_BUILD_EXTRA" ]; then
+      docker compose -f docker-compose.deploy.yml build --no-cache --pull api
+    else
+      docker compose -f docker-compose.deploy.yml build --pull api
+    fi
 
     echo "🏗️ Building Frontend..."
     # Verify build context has files before building
@@ -298,8 +323,11 @@ eval "$SSH_CMD" << 'BUILD_EOF'
         exit 1
     fi
     echo "   ✓ Build context verified"
-    # We use --no-cache to force Docker to re-read the fresh files
-    docker compose -f docker-compose.deploy.yml build --no-cache frontend
+    if [ -n "$DOCKER_BUILD_EXTRA" ]; then
+      docker compose -f docker-compose.deploy.yml build --no-cache frontend
+    else
+      docker compose -f docker-compose.deploy.yml build frontend
+    fi
 
     echo "🚀 Starting containers..."
     docker compose -f docker-compose.deploy.yml up -d
@@ -321,6 +349,7 @@ eval "$SSH_CMD" << 'BUILD_EOF'
         echo "⚠️  MySQL took longer than expected, but continuing..."
     fi
 BUILD_EOF
+} | ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no "$SSH_USER@$SERVER_IP" bash -s
 
 # --- Step 5: Run Database Migrations ---
 print_header "Step 5: Running Database Migrations"

@@ -11,6 +11,7 @@ Server IP used in scripts defaults to **`41.89.173.8`**. Configure `deploy/deplo
 | **Dump + restore + telemedicine (local)** | `deploy/sync-remote-to-local.sh --full` or `--dump-only` then restore |
 | **Local dump → remote MySQL** | `deploy/upload-and-restore-remote.sh path/to/dump.sql.gz` |
 | **Telemedicine 40–43 on REMOTE only** | `deploy/run-telemedicine-migrations-remote.sh` |
+| **Migrations 43–48 on REMOTE** (lab + telemedicine 43, 44–46, 48) | `deploy/run-migrations-43-48-remote.sh` |
 
 ## A) Copy production data to your laptop (then migrate locally)
 
@@ -33,6 +34,17 @@ After you are happy with local data/schema:
 ```
 
 This uploads the gzip file and restores it inside the remote `kiplombe_mysql` container.
+
+## C1) Migrations 43–48 on REMOTE (awaiting-payment enums, role queue, radiology, lab enum, patient procedures outcome)
+
+There are **two** files prefixed `43_` (lab vs telemedicine); there is **no** `47_*.sql`. From your **dev machine**:
+
+```bash
+chmod +x deploy/run-migrations-43-48-remote.sh
+./deploy/run-migrations-43-48-remote.sh
+```
+
+Uses the same SSH key / server defaults as `run-telemedicine-migrations-remote.sh` (`SERVER_IP`, `SSH_USER`, `SSH_KEY_PATH`, server `~/kiplombe-hmis/.env` for `MYSQL_ROOT_PASSWORD`).
 
 ## C) Code is deployed on server — only run SQL migrations (telemedicine 40–43)
 

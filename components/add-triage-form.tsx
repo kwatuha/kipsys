@@ -15,9 +15,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form"
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form"
 import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { PatientCombobox } from "@/components/patient-combobox"
 import { triageApi, doctorsApi, patientApi } from "@/lib/api"
@@ -26,12 +25,14 @@ import { useAuth } from "@/lib/auth/auth-context"
 import { useCriticalNotifications } from "@/lib/critical-notifications-context"
 import { checkAndNotifyCriticalVitals } from "@/lib/critical-vitals-utils"
 
-const triageFormSchema = z.object({
+const triageFormSchema = z
+  .object({
   patientId: z.string({
     required_error: "Please select a patient.",
   }),
   temperature: z.string().optional().or(z.literal("")),
-  bloodPressure: z.string().optional().or(z.literal("")),
+  systolicBP: z.string().optional().or(z.literal("")),
+  diastolicBP: z.string().optional().or(z.literal("")),
   heartRate: z.string().optional().or(z.literal("")),
   respiratoryRate: z.string().optional().or(z.literal("")),
   oxygenSaturation: z.string().optional().or(z.literal("")),
@@ -42,30 +43,51 @@ const triageFormSchema = z.object({
     required_error: "Please select a priority level.",
   }),
   assignedToDoctorId: z.string({
-    required_error: "Please select a doctor or service point.",
+    required_error: "Please select a doctor.",
   }),
   assignedToDepartment: z.string().optional(),
-  servicePoint: z.string({
-    required_error: "Please select a service point.",
-  }),
-  notes: z.string().optional(),
+  /** Fixed until other post-triage paths exist; not shown in UI */
+  servicePoint: z.literal("consultation"),
 })
+  .superRefine((data, ctx) => {
+    const s = data.systolicBP?.trim() ?? ""
+    const d = data.diastolicBP?.trim() ?? ""
+    if (!s && !d) return
+    if (!s || !d) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Enter both systolic and diastolic BP, or leave both empty.",
+        path: ["diastolicBP"],
+      })
+      return
+    }
+    const sys = parseInt(s, 10)
+    const dia = parseInt(d, 10)
+    if (Number.isNaN(sys) || sys < 40 || sys > 300) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Systolic BP should be between 40 and 300 mmHg.",
+        path: ["systolicBP"],
+      })
+    }
+    if (Number.isNaN(dia) || dia < 20 || dia > 200) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Diastolic BP should be between 20 and 200 mmHg.",
+        path: ["diastolicBP"],
+      })
+    }
+  })
 
 type TriageFormValues = z.infer<typeof triageFormSchema>
 
 const TRIAGE_STORAGE_KEY_PREFIX = "triage_form_draft"
 
-const SERVICE_POINTS = [
-  { value: "consultation", label: "Consultation" },
-  { value: "laboratory", label: "Laboratory" },
-  { value: "radiology", label: "Radiology" },
-  { value: "pharmacy", label: "Pharmacy" },
-]
-
 const defaultValues: Partial<TriageFormValues> = {
   patientId: "",
   temperature: "",
-  bloodPressure: "",
+  systolicBP: "",
+  diastolicBP: "",
   heartRate: "",
   respiratoryRate: "",
   oxygenSaturation: "",
@@ -76,7 +98,6 @@ const defaultValues: Partial<TriageFormValues> = {
   assignedToDoctorId: "",
   assignedToDepartment: "",
   servicePoint: "consultation",
-  notes: "",
 }
 
 export function AddTriageForm({
@@ -110,7 +131,8 @@ export function AddTriageForm({
       // Ensure all values are explicitly set to empty strings, not undefined
       patientId: "",
       temperature: "",
-      bloodPressure: "",
+      systolicBP: "",
+      diastolicBP: "",
       heartRate: "",
       respiratoryRate: "",
       oxygenSaturation: "",
@@ -121,45 +143,34 @@ export function AddTriageForm({
       assignedToDoctorId: "",
       assignedToDepartment: "",
       servicePoint: "consultation",
-      notes: "",
     },
   })
 
-  // Watch vital signs to check for critical values
-  const watchedVitals = form.watch(['temperature', 'bloodPressure', 'heartRate', 'respiratoryRate', 'oxygenSaturation', 'patientId'])
+  const watchedPatientId = form.watch("patientId")
 
-  // Convert form values to vitals object for critical alert
-  const getVitalsFromForm = (): any => {
-    const temp = watchedVitals[0]
-    const bp = watchedVitals[1]
-    const hr = watchedVitals[2]
-    const rr = watchedVitals[3]
-    const spo2 = watchedVitals[4]
+  /** Build vitals for critical alerts from submitted form data */
+  const buildVitalsFromData = (data: TriageFormValues): Record<string, number> | null => {
+    const vitals: Record<string, number> = {}
 
-    const vitals: any = {}
-
-    if (temp && !isNaN(parseFloat(temp))) {
-      vitals.temperature = parseFloat(temp)
+    if (data.temperature?.trim() && !Number.isNaN(parseFloat(data.temperature))) {
+      vitals.temperature = parseFloat(data.temperature)
     }
-
-    if (bp) {
-      const bpMatch = bp.match(/(\d+)\s*\/\s*(\d+)/)
-      if (bpMatch) {
-        vitals.systolicBP = parseInt(bpMatch[1])
-        vitals.diastolicBP = parseInt(bpMatch[2])
+    if (data.systolicBP?.trim() && data.diastolicBP?.trim()) {
+      const sys = parseInt(data.systolicBP, 10)
+      const dia = parseInt(data.diastolicBP, 10)
+      if (!Number.isNaN(sys) && !Number.isNaN(dia)) {
+        vitals.systolicBP = sys
+        vitals.diastolicBP = dia
       }
     }
-
-    if (hr && !isNaN(parseFloat(hr))) {
-      vitals.heartRate = parseFloat(hr)
+    if (data.heartRate?.trim() && !Number.isNaN(parseFloat(data.heartRate))) {
+      vitals.heartRate = parseFloat(data.heartRate)
     }
-
-    if (rr && !isNaN(parseFloat(rr))) {
-      vitals.respiratoryRate = parseFloat(rr)
+    if (data.respiratoryRate?.trim() && !Number.isNaN(parseFloat(data.respiratoryRate))) {
+      vitals.respiratoryRate = parseFloat(data.respiratoryRate)
     }
-
-    if (spo2 && !isNaN(parseFloat(spo2))) {
-      vitals.oxygenSaturation = parseFloat(spo2)
+    if (data.oxygenSaturation?.trim() && !Number.isNaN(parseFloat(data.oxygenSaturation))) {
+      vitals.oxygenSaturation = parseFloat(data.oxygenSaturation)
     }
 
     return Object.keys(vitals).length > 0 ? vitals : null
@@ -181,9 +192,9 @@ export function AddTriageForm({
       if (restoringDraftRef.current) return
 
       const hasData = value.patientId ||
-                      value.temperature || value.bloodPressure || value.heartRate ||
+                      value.temperature || value.systolicBP || value.diastolicBP || value.heartRate ||
                       value.respiratoryRate || value.oxygenSaturation || value.painLevel || value.weight || value.height ||
-                      value.priority || value.assignedToDoctorId || value.notes
+                      value.priority || value.assignedToDoctorId
 
       // Only save drafts once a patient is selected (drafts are scoped per patient)
       const patientId = (value as any)?.patientId as string | undefined
@@ -205,13 +216,12 @@ export function AddTriageForm({
 
   // Load patient name when patientId changes
   useEffect(() => {
-    const patientId = watchedVitals[5]
-    if (patientId) {
-      loadPatientName(patientId)
+    if (watchedPatientId) {
+      loadPatientName(watchedPatientId)
     } else {
       setPatientName(undefined)
     }
-  }, [watchedVitals[5]])
+  }, [watchedPatientId])
 
   const loadPatientName = async (patientId: string) => {
     try {
@@ -277,13 +287,11 @@ export function AddTriageForm({
     if (open) {
       if (isEditing && triage) {
         // If editing, populate from triage data
-        const bloodPressure = triage.systolicBP && triage.diastolicBP
-          ? `${triage.systolicBP}/${triage.diastolicBP}`
-          : ""
         form.reset({
           patientId: triage.patientId?.toString() || "",
           temperature: triage.temperature?.toString() || "",
-          bloodPressure: bloodPressure,
+          systolicBP: triage.systolicBP != null ? String(triage.systolicBP) : "",
+          diastolicBP: triage.diastolicBP != null ? String(triage.diastolicBP) : "",
           heartRate: triage.heartRate?.toString() || "",
           respiratoryRate: triage.respiratoryRate?.toString() || "",
           oxygenSaturation: triage.oxygenSaturation?.toString() || "",
@@ -293,7 +301,9 @@ export function AddTriageForm({
           priority: triage.triageCategory === 'red' ? 'Emergency' :
                     triage.triageCategory === 'yellow' ? (triage.priorityLevel === 2 ? 'Urgent' : 'Semi-urgent') :
                     'Non-urgent',
-          notes: triage.notes || "",
+          assignedToDoctorId: triage.assignedToDoctorId != null ? String(triage.assignedToDoctorId) : "",
+          assignedToDepartment: triage.assignedToDepartment || "",
+          servicePoint: "consultation",
         })
       } else if (initialPatientId) {
         // New triage with initial patient ID (e.g., from queue)
@@ -301,9 +311,20 @@ export function AddTriageForm({
         prevPatientIdRef.current = initialPatientId
         const savedDraft = loadDraftFromStorage(initialPatientId)
         const normalizedDraft = savedDraft
-          ? {
+          ? (() => {
+              let sys = savedDraft.systolicBP ?? ""
+              let dia = savedDraft.diastolicBP ?? ""
+              if ((!sys || !dia) && savedDraft.bloodPressure) {
+                const m = String(savedDraft.bloodPressure).match(/(\d+)\s*\/\s*(\d+)/)
+                if (m) {
+                  sys = m[1]
+                  dia = m[2]
+                }
+              }
+              return {
               temperature: savedDraft.temperature ?? "",
-              bloodPressure: savedDraft.bloodPressure ?? "",
+              systolicBP: sys,
+              diastolicBP: dia,
               heartRate: savedDraft.heartRate ?? "",
               respiratoryRate: savedDraft.respiratoryRate ?? "",
               oxygenSaturation: savedDraft.oxygenSaturation ?? "",
@@ -313,9 +334,9 @@ export function AddTriageForm({
               priority: savedDraft.priority ?? "",
               assignedToDoctorId: savedDraft.assignedToDoctorId ?? "",
               assignedToDepartment: savedDraft.assignedToDepartment ?? "",
-              servicePoint: savedDraft.servicePoint ?? "consultation",
-              notes: savedDraft.notes ?? "",
-            }
+              servicePoint: "consultation",
+              }
+            })()
           : null
 
         form.reset({
@@ -362,9 +383,20 @@ export function AddTriageForm({
     restoringDraftRef.current = true
     const savedDraft = loadDraftFromStorage(patientId)
     const normalizedDraft = savedDraft
-      ? {
+      ? (() => {
+          let sys = savedDraft.systolicBP ?? ""
+          let dia = savedDraft.diastolicBP ?? ""
+          if ((!sys || !dia) && savedDraft.bloodPressure) {
+            const m = String(savedDraft.bloodPressure).match(/(\d+)\s*\/\s*(\d+)/)
+            if (m) {
+              sys = m[1]
+              dia = m[2]
+            }
+          }
+          return {
           temperature: savedDraft.temperature ?? "",
-          bloodPressure: savedDraft.bloodPressure ?? "",
+          systolicBP: sys,
+          diastolicBP: dia,
           heartRate: savedDraft.heartRate ?? "",
           respiratoryRate: savedDraft.respiratoryRate ?? "",
           oxygenSaturation: savedDraft.oxygenSaturation ?? "",
@@ -374,9 +406,9 @@ export function AddTriageForm({
           priority: savedDraft.priority ?? "",
           assignedToDoctorId: savedDraft.assignedToDoctorId ?? "",
           assignedToDepartment: savedDraft.assignedToDepartment ?? "",
-          servicePoint: savedDraft.servicePoint ?? "consultation",
-          notes: savedDraft.notes ?? "",
-        }
+          servicePoint: "consultation",
+          }
+        })()
       : null
 
     form.reset({
@@ -399,7 +431,12 @@ export function AddTriageForm({
         patientId: parseInt(data.patientId),
         chiefComplaint: "", // Removed from form, send empty string
         temperature: data.temperature || null,
-        bloodPressure: data.bloodPressure || null,
+        systolicBP: data.systolicBP?.trim() ? parseInt(data.systolicBP, 10) : null,
+        diastolicBP: data.diastolicBP?.trim() ? parseInt(data.diastolicBP, 10) : null,
+        bloodPressure:
+          data.systolicBP?.trim() && data.diastolicBP?.trim()
+            ? `${parseInt(data.systolicBP, 10)}/${parseInt(data.diastolicBP, 10)}`
+            : null,
         heartRate: data.heartRate || null,
         respiratoryRate: data.respiratoryRate || null,
         oxygenSaturation: data.oxygenSaturation || null,
@@ -409,8 +446,9 @@ export function AddTriageForm({
         priority: data.priority,
         assignedToDoctorId: data.assignedToDoctorId ? parseInt(data.assignedToDoctorId) : null,
         assignedToDepartment: data.assignedToDepartment || null,
-        servicePoint: data.servicePoint,
-        notes: data.notes || null,
+        servicePoint: "consultation",
+        // Notes field hidden; preserve existing on edit, none on create
+        notes: isEditing && triage ? (triage.notes ?? null) : null,
         triagedBy: user?.id ? parseInt(user.id) : 68, // Use current user ID or default to 68 (first doctor)
       }
 
@@ -429,7 +467,7 @@ export function AddTriageForm({
       }
 
       // Check for critical values AFTER saving
-      const vitals = getVitalsFromForm()
+      const vitals = buildVitalsFromData(data)
       if (vitals && data.patientId) {
         await checkAndNotifyCriticalVitals(
           vitals,
@@ -461,7 +499,7 @@ export function AddTriageForm({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto">
+      <DialogContent className="w-[calc(100vw-1.5rem)] max-w-5xl sm:max-w-5xl max-h-[92vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{isEditing ? "Edit Triage Assessment" : "New Triage Assessment"}</DialogTitle>
           <DialogDescription>
@@ -501,15 +539,15 @@ export function AddTriageForm({
               )}
             />
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-x-3 gap-y-3">
               <FormField
                 control={form.control}
                 name="temperature"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Temperature (°C)</FormLabel>
+                    <FormLabel className="text-xs sm:text-sm">Temp (°C)</FormLabel>
                     <FormControl>
-                      <Input placeholder="37.0" {...field} />
+                      <Input placeholder="37.0" className="h-9" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -517,28 +555,38 @@ export function AddTriageForm({
               />
               <FormField
                 control={form.control}
-                name="bloodPressure"
+                name="systolicBP"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Blood Pressure (mmHg)</FormLabel>
+                    <FormLabel className="text-xs sm:text-sm">BP systolic (mmHg)</FormLabel>
                     <FormControl>
-                      <Input placeholder="120/80" {...field} />
+                      <Input type="number" inputMode="numeric" min={40} max={300} placeholder="120" className="h-9" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
+              <FormField
+                control={form.control}
+                name="diastolicBP"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-xs sm:text-sm">BP diastolic (mmHg)</FormLabel>
+                    <FormControl>
+                      <Input type="number" inputMode="numeric" min={20} max={200} placeholder="80" className="h-9" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
               <FormField
                 control={form.control}
                 name="heartRate"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Heart Rate (bpm)</FormLabel>
+                    <FormLabel className="text-xs sm:text-sm">Heart rate (bpm)</FormLabel>
                     <FormControl>
-                      <Input placeholder="75" {...field} />
+                      <Input placeholder="75" className="h-9" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -549,25 +597,22 @@ export function AddTriageForm({
                 name="respiratoryRate"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Respiratory Rate (breaths/min)</FormLabel>
+                    <FormLabel className="text-xs sm:text-sm">Resp. rate (/min)</FormLabel>
                     <FormControl>
-                      <Input placeholder="16" {...field} />
+                      <Input placeholder="16" className="h-9" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
               <FormField
                 control={form.control}
                 name="oxygenSaturation"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Oxygen Saturation (%)</FormLabel>
+                    <FormLabel className="text-xs sm:text-sm">SpO₂ (%)</FormLabel>
                     <FormControl>
-                      <Input placeholder="98" {...field} />
+                      <Input placeholder="98" className="h-9" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -578,25 +623,22 @@ export function AddTriageForm({
                 name="painLevel"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Pain Level (0-10)</FormLabel>
+                    <FormLabel className="text-xs sm:text-sm">Pain (0–10)</FormLabel>
                     <FormControl>
-                      <Input placeholder="0" {...field} />
+                      <Input placeholder="0" className="h-9" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
               <FormField
                 control={form.control}
                 name="weight"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Weight (kg)</FormLabel>
+                    <FormLabel className="text-xs sm:text-sm">Weight (kg)</FormLabel>
                     <FormControl>
-                      <Input placeholder="70" {...field} />
+                      <Input placeholder="70" className="h-9" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -607,111 +649,72 @@ export function AddTriageForm({
                 name="height"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Height (cm)</FormLabel>
+                    <FormLabel className="text-xs sm:text-sm">Height (cm)</FormLabel>
                     <FormControl>
-                      <Input placeholder="170" {...field} />
+                      <Input placeholder="170" className="h-9" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
             </div>
+            <p className="text-xs text-muted-foreground -mt-1">
+              Leave BP fields empty if not measured. After triage, patients are routed to <span className="font-medium">consultation</span> by default.
+            </p>
 
-            <FormField
-              control={form.control}
-              name="priority"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Priority Level</FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value || undefined}>
-                    <FormControl>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select priority level" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      <SelectItem value="Emergency">Emergency</SelectItem>
-                      <SelectItem value="Urgent">Urgent</SelectItem>
-                      <SelectItem value="Semi-urgent">Semi-urgent</SelectItem>
-                      <SelectItem value="Non-urgent">Non-urgent</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <FormDescription>Based on the patient's condition and vital signs</FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="servicePoint"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Service Point *</FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value || "consultation"}>
-                    <FormControl>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select service point" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      {SERVICE_POINTS.map((sp) => (
-                        <SelectItem key={sp.value} value={sp.value}>
-                          {sp.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <FormDescription>Where the patient should be sent after triage</FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="assignedToDoctorId"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Assigned Doctor/Service *</FormLabel>
-                  <Select
-                    onValueChange={field.onChange}
-                    value={field.value || undefined}
-                    disabled={loadingDoctors}
-                  >
-                    <FormControl>
-                      <SelectTrigger>
-                        <SelectValue placeholder={loadingDoctors ? "Loading doctors..." : "Select doctor"} />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      {doctors.map((doctor) => (
-                        <SelectItem key={doctor.userId} value={doctor.userId.toString()}>
-                          {doctor.firstName} {doctor.lastName} {doctor.department ? `(${doctor.department})` : ''}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <FormDescription>Doctor or service the patient should see</FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="notes"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Additional Notes</FormLabel>
-                  <FormControl>
-                    <Textarea placeholder="Any additional observations or notes" {...field} />
-                  </FormControl>
-                  <FormDescription>Optional</FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <FormField
+                control={form.control}
+                name="priority"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Priority</FormLabel>
+                    <Select onValueChange={field.onChange} value={field.value || undefined}>
+                      <FormControl>
+                        <SelectTrigger className="h-9">
+                          <SelectValue placeholder="Select priority level" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="Emergency">Emergency</SelectItem>
+                        <SelectItem value="Urgent">Urgent</SelectItem>
+                        <SelectItem value="Semi-urgent">Semi-urgent</SelectItem>
+                        <SelectItem value="Non-urgent">Non-urgent</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="assignedToDoctorId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Assigned doctor *</FormLabel>
+                    <Select
+                      onValueChange={field.onChange}
+                      value={field.value || undefined}
+                      disabled={loadingDoctors}
+                    >
+                      <FormControl>
+                        <SelectTrigger className="h-9">
+                          <SelectValue placeholder={loadingDoctors ? "Loading doctors..." : "Select doctor"} />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {doctors.map((doctor) => (
+                          <SelectItem key={doctor.userId} value={doctor.userId.toString()}>
+                            {doctor.firstName} {doctor.lastName} {doctor.department ? `(${doctor.department})` : ""}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
 
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
