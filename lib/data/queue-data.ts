@@ -1,5 +1,6 @@
 export type ServicePointType =
   | "triage"
+  | "registration"
   | "consultation"
   | "pharmacy"
   | "laboratory"
@@ -114,6 +115,7 @@ export function getQueueEntryById(id: string): QueueEntry | undefined {
 export function getServicePointName(servicePoint: ServicePointType): string {
   const names: Record<ServicePointType, string> = {
     triage: "Triage",
+    registration: "Registration",
     consultation: "Consultation",
     pharmacy: "Pharmacy",
     laboratory: "Laboratory",

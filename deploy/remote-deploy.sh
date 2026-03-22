@@ -12,6 +12,9 @@
 #   DEPLOY_USE_DOCKER_CACHE=1 ./deploy/remote-deploy.sh ...
 # This removes `--no-cache` from API/frontend builds (faster, may miss stale layers).
 #
+# For day-to-day speed (rsync + cached Docker, no full tar wipe), prefer:
+#   ./deploy/remote-deploy-fast.sh
+#
 set -e
 
 # --- Configuration ---
@@ -330,7 +333,15 @@ fi
     fi
 
     echo "🚀 Starting containers..."
+    echo "   (compose may show \"Waiting\" until healthchecks pass — frontend can take 10–15+ min)"
     docker compose -f docker-compose.deploy.yml up -d
+
+    echo ""
+    echo "================================================================"
+    echo "  KIPLOMBE DEPLOY: docker compose up -d finished successfully."
+    echo "  All services passed startup/health gates that compose waited for."
+    echo "================================================================"
+    docker compose -f docker-compose.deploy.yml ps 2>/dev/null || true
 
     echo "⏳ Waiting for MySQL to be ready..."
     MAX_WAIT=60
@@ -517,6 +528,12 @@ eval "$SSH_CMD" << VERIFY_EOF
 VERIFY_EOF
 
 print_header "🚀 Deployment Complete!"
+echo ""
+echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${GREEN}  ✓ Kiplombe HMIS — REMOTE DEPLOY COMPLETED SUCCESSFULLY${NC}"
+echo -e "${GREEN}  ✓ All scripted steps finished (verify /login in browser if needed).${NC}"
+echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo ""
 echo -e "${GREEN}✅ All deployment steps completed successfully!${NC}"
 echo ""
 echo -e "${YELLOW}📝 Next steps:${NC}"

@@ -4,13 +4,13 @@ import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { CalendarIcon, ChevronLeft, ChevronRight, Search, Plus, Edit, Trash2, MoreHorizontal, Loader2, Eye, Video } from "lucide-react"
+import { CalendarIcon, ChevronLeft, ChevronRight, Search, Plus, Edit, Trash2, MoreHorizontal, Loader2, Eye, ListPlus } from "lucide-react"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { AddAppointmentForm } from "@/components/add-appointment-form"
-import { appointmentsApi, telemedicineApi } from "@/lib/api"
+import { appointmentsApi, queueApi } from "@/lib/api"
 import { toast } from "@/components/ui/use-toast"
 import {
   AlertDialog,
@@ -33,13 +33,10 @@ import {
 } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
-import { useAuth } from "@/lib/auth/auth-context"
-import { useTelemedicineFloating } from "@/lib/telemedicine-floating-context"
+import { AddToQueueDialog, type QueueServicePointChoice, queueTypeLabel } from "@/components/add-to-queue-dialog"
 
 export default function AppointmentsPage() {
   const router = useRouter()
-  const { user } = useAuth()
-  const { openSession: openTelemedicineFloating } = useTelemedicineFloating()
   const [addAppointmentOpen, setAddAppointmentOpen] = useState(false)
   const [editingAppointment, setEditingAppointment] = useState<any>(null)
   const [deletingAppointment, setDeletingAppointment] = useState<any>(null)
@@ -52,7 +49,8 @@ export default function AppointmentsPage() {
   const [searchQuery, setSearchQuery] = useState("")
   const [statusFilter, setStatusFilter] = useState<string | null>(null)
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split("T")[0])
-  const [telemedicineStartingId, setTelemedicineStartingId] = useState<number | null>(null)
+  const [addToQueueAppointment, setAddToQueueAppointment] = useState<any>(null)
+  const [addToQueueLoading, setAddToQueueLoading] = useState(false)
 
   // Load appointments from API
   useEffect(() => {
@@ -139,8 +137,14 @@ export default function AppointmentsPage() {
     }
   }
 
-  const handleStartTelemedicine = async (appointment: any) => {
-    if (!appointment.patientId) {
+  const patientNameFromAppointment = (a: any) =>
+    a?.patientFirstName && a?.patientLastName
+      ? `${a.patientFirstName} ${a.patientLastName}`
+      : "Unknown Patient"
+
+  const handleConfirmAddToQueue = async (servicePoint: QueueServicePointChoice) => {
+    const apt = addToQueueAppointment
+    if (!apt?.patientId) {
       toast({
         title: "Missing patient",
         description: "Patient ID is not available for this appointment.",
@@ -148,47 +152,45 @@ export default function AppointmentsPage() {
       })
       return
     }
-    // Same idea as inpatient: use appointment's doctor, or fall back to signed-in user (clinician starting the visit)
-    const actorId = (user as { id?: string; userId?: string })?.userId ?? (user as { id?: string })?.id
-    const fromAppointment =
-      appointment.doctorId != null && appointment.doctorId !== "" ? Number(appointment.doctorId) : NaN
-    const fromUser = actorId != null && actorId !== "" ? Number(actorId) : NaN
-    const doctorId = Number.isFinite(fromAppointment) ? fromAppointment : fromUser
-
-    if (!Number.isFinite(doctorId)) {
-      toast({
-        title: "Missing doctor",
-        description: "Assign a doctor to this appointment, or sign in as the clinician who will run the telemedicine visit.",
-        variant: "destructive",
-      })
-      return
-    }
-    if (telemedicineStartingId != null) return
-    setTelemedicineStartingId(appointment.appointmentId)
     try {
-      const created = await telemedicineApi.createSession({
-        originType: "appointment",
-        appointmentId: Number(appointment.appointmentId),
-        patientId: Number(appointment.patientId),
-        doctorId,
-        notes: `Telemedicine from appointment #${appointment.appointmentId}`,
-      })
-      if (created?.sessionId) {
-        openTelemedicineFloating(created.sessionId)
+      setAddToQueueLoading(true)
+      const queues = await queueApi.getAll(servicePoint, undefined, 1, 100, false)
+      const existingEntry = queues.find(
+        (entry: any) =>
+          entry.patientId?.toString() === String(apt.patientId) &&
+          entry.status !== "completed" &&
+          entry.status !== "cancelled",
+      )
+      const label = queueTypeLabel(servicePoint)
+      const name = patientNameFromAppointment(apt)
+      if (existingEntry) {
         toast({
-          title: "Telemedicine session ready",
-          description: "Use the floating panel — minimize it to browse charts or notes.",
+          title: `Patient Already in ${label} Queue`,
+          description: `${name} is already in the ${label.toLowerCase()} queue (Ticket: ${existingEntry.ticketNumber || "N/A"}).`,
         })
+        return
       }
-    } catch (error: any) {
-      console.error("Telemedicine create failed:", error)
+      await queueApi.create({
+        patientId: apt.patientId,
+        servicePoint,
+        priority: "normal",
+        status: "waiting",
+        notes: `Appointment #${apt.appointmentId} — added from Appointments`,
+      })
       toast({
-        title: "Telemedicine failed",
-        description: error?.message || "Could not create telemedicine session",
+        title: `Patient added to ${label} queue`,
+        description: `${name} has been added to the ${label.toLowerCase()} queue.`,
+      })
+    } catch (error: any) {
+      console.error("Add to queue failed:", error)
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to add patient to queue.",
         variant: "destructive",
       })
     } finally {
-      setTelemedicineStartingId(null)
+      setAddToQueueLoading(false)
+      setAddToQueueAppointment(null)
     }
   }
 
@@ -388,18 +390,9 @@ export default function AppointmentsPage() {
                                 <Eye className="mr-2 h-4 w-4" />
                                 View Records
                               </DropdownMenuItem>
-                              <DropdownMenuItem
-                                disabled={telemedicineStartingId === appointment.appointmentId}
-                                onSelect={() => {
-                                  setTimeout(() => void handleStartTelemedicine(appointment), 0)
-                                }}
-                              >
-                                {telemedicineStartingId === appointment.appointmentId ? (
-                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                ) : (
-                                  <Video className="mr-2 h-4 w-4" />
-                                )}
-                                Start Telemedicine
+                              <DropdownMenuItem onClick={() => setAddToQueueAppointment(appointment)}>
+                                <ListPlus className="mr-2 h-4 w-4" />
+                                Add to Queue
                               </DropdownMenuItem>
                               <DropdownMenuItem
                                 onClick={() => setDeletingAppointment(appointment)}
@@ -495,18 +488,9 @@ export default function AppointmentsPage() {
                                 <Eye className="mr-2 h-4 w-4" />
                                 View Records
                               </DropdownMenuItem>
-                              <DropdownMenuItem
-                                disabled={telemedicineStartingId === appointment.appointmentId}
-                                onSelect={() => {
-                                  setTimeout(() => void handleStartTelemedicine(appointment), 0)
-                                }}
-                              >
-                                {telemedicineStartingId === appointment.appointmentId ? (
-                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                ) : (
-                                  <Video className="mr-2 h-4 w-4" />
-                                )}
-                                Start Telemedicine
+                              <DropdownMenuItem onClick={() => setAddToQueueAppointment(appointment)}>
+                                <ListPlus className="mr-2 h-4 w-4" />
+                                Add to Queue
                               </DropdownMenuItem>
                               <DropdownMenuItem
                                 onClick={() => setDeletingAppointment(appointment)}
@@ -602,18 +586,9 @@ export default function AppointmentsPage() {
                                 <Eye className="mr-2 h-4 w-4" />
                                 View Records
                               </DropdownMenuItem>
-                              <DropdownMenuItem
-                                disabled={telemedicineStartingId === appointment.appointmentId}
-                                onSelect={() => {
-                                  setTimeout(() => void handleStartTelemedicine(appointment), 0)
-                                }}
-                              >
-                                {telemedicineStartingId === appointment.appointmentId ? (
-                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                ) : (
-                                  <Video className="mr-2 h-4 w-4" />
-                                )}
-                                Start Telemedicine
+                              <DropdownMenuItem onClick={() => setAddToQueueAppointment(appointment)}>
+                                <ListPlus className="mr-2 h-4 w-4" />
+                                Add to Queue
                               </DropdownMenuItem>
                               <DropdownMenuItem
                                 onClick={() => setDeletingAppointment(appointment)}
@@ -709,18 +684,9 @@ export default function AppointmentsPage() {
                                 <Eye className="mr-2 h-4 w-4" />
                                 View Records
                               </DropdownMenuItem>
-                              <DropdownMenuItem
-                                disabled={telemedicineStartingId === appointment.appointmentId}
-                                onSelect={() => {
-                                  setTimeout(() => void handleStartTelemedicine(appointment), 0)
-                                }}
-                              >
-                                {telemedicineStartingId === appointment.appointmentId ? (
-                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                ) : (
-                                  <Video className="mr-2 h-4 w-4" />
-                                )}
-                                Start Telemedicine
+                              <DropdownMenuItem onClick={() => setAddToQueueAppointment(appointment)}>
+                                <ListPlus className="mr-2 h-4 w-4" />
+                                Add to Queue
                               </DropdownMenuItem>
                               <DropdownMenuItem
                                 onClick={() => setDeletingAppointment(appointment)}
@@ -816,18 +782,9 @@ export default function AppointmentsPage() {
                                 <Eye className="mr-2 h-4 w-4" />
                                 View Records
                               </DropdownMenuItem>
-                              <DropdownMenuItem
-                                disabled={telemedicineStartingId === appointment.appointmentId}
-                                onSelect={() => {
-                                  setTimeout(() => void handleStartTelemedicine(appointment), 0)
-                                }}
-                              >
-                                {telemedicineStartingId === appointment.appointmentId ? (
-                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                ) : (
-                                  <Video className="mr-2 h-4 w-4" />
-                                )}
-                                Start Telemedicine
+                              <DropdownMenuItem onClick={() => setAddToQueueAppointment(appointment)}>
+                                <ListPlus className="mr-2 h-4 w-4" />
+                                Add to Queue
                               </DropdownMenuItem>
                               <DropdownMenuItem
                                 onClick={() => setDeletingAppointment(appointment)}
@@ -880,6 +837,17 @@ export default function AppointmentsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <AddToQueueDialog
+        open={!!addToQueueAppointment}
+        onOpenChange={(open) => {
+          if (!open && !addToQueueLoading) setAddToQueueAppointment(null)
+        }}
+        patientName={addToQueueAppointment ? patientNameFromAppointment(addToQueueAppointment) : ""}
+        patientNumber={addToQueueAppointment?.patientNumber}
+        onConfirm={handleConfirmAddToQueue}
+        loading={addToQueueLoading}
+      />
 
       <Dialog open={!!changingStatus} onOpenChange={(open) => {
         if (!open) {

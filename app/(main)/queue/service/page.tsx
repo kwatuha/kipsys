@@ -1,5 +1,6 @@
 "use client"
 
+import { useMemo } from "react"
 import { useSearchParams } from "next/navigation"
 import { CallPatientPanel } from "@/components/call-patient-panel"
 import { QueueDisplay } from "@/components/queue-display"
@@ -19,21 +20,23 @@ export default function ServicePointDashboard() {
   const userId = user?.id ? String(user.id) : undefined
   const { menuAccess, loading: menuLoading } = useRoleMenuAccess(userId)
 
-  // Get service point from URL query params, user's role config, or default
-  const urlServicePoint = searchParams.get('servicePoint')
-  const roleServicePoint = (user?.landingConfig as any)?.servicePoint || null
-  const defaultServicePoint = urlServicePoint || roleServicePoint || "triage"
+  // Preferred tab: URL ?servicePoint= → role landing → first allowed queue
+  const urlServicePoint = searchParams.get("servicePoint")
+  const roleServicePoint =
+    (user?.landingConfig as { servicePoint?: string } | null)?.servicePoint ?? null
 
   // In a real app, this would be determined by the logged-in user's role
   const staffName = "Dr. James Ndiwa"
 
-  // All available service points
+  // All available service points (aligned with queue UI / role filters)
   const allServicePoints: ServicePoint[] = [
     "triage",
+    "registration",
     "consultation",
     "laboratory",
     "radiology",
     "pharmacy",
+    "billing",
     "cashier",
     "telemedicine",
     "procedure",
@@ -44,11 +47,18 @@ export default function ServicePointDashboard() {
     ? allServicePoints // Show all while loading or if no access data
     : filterQueueServicePoints(allServicePoints, menuAccess)
 
-  // If a specific service point is requested, show only that one (if allowed)
-  // Otherwise, show all allowed service points
-  const servicePoints: ServicePoint[] = defaultServicePoint && defaultServicePoint !== "all" && allowedServicePoints.includes(defaultServicePoint as ServicePoint)
-    ? [defaultServicePoint as ServicePoint]
-    : allowedServicePoints
+  const allowedKey = allowedServicePoints.join(",")
+  const defaultTab = useMemo(() => {
+    const candidates = [urlServicePoint, roleServicePoint].filter(Boolean) as string[]
+    for (const c of candidates) {
+      if (allowedServicePoints.includes(c as ServicePoint)) {
+        return c as ServicePoint
+      }
+    }
+    return (allowedServicePoints[0] ?? "triage") as ServicePoint
+  }, [urlServicePoint, roleServicePoint, allowedKey])
+
+  const servicePoints = allowedServicePoints
 
   return (
     <div className="flex flex-col gap-6">
@@ -57,7 +67,12 @@ export default function ServicePointDashboard() {
         <p className="text-muted-foreground">Manage patient queue and service delivery</p>
       </div>
 
-      <Tabs defaultValue={defaultServicePoint || "triage"} className="w-full">
+      {servicePoints.length === 0 ? (
+        <p className="text-muted-foreground">
+          No queue service points are configured for your role. Ask an administrator to assign queue service points in the role menu.
+        </p>
+      ) : (
+      <Tabs key={defaultTab} defaultValue={defaultTab} className="w-full">
         <div className="relative mb-6">
           <ScrollArea className="w-full whitespace-nowrap">
             <TabsList className="inline-flex h-auto w-full justify-start rounded-none border-b bg-transparent p-0">
@@ -82,12 +97,13 @@ export default function ServicePointDashboard() {
                 <CallPatientPanel servicePoint={point} staffName={staffName} counterNumber={1} />
               </div>
               <div className="lg:col-span-2">
-                <QueueDisplay initialServicePoint={point} restrictToSingleServicePoint={servicePoints.length === 1} />
+                <QueueDisplay initialServicePoint={point} restrictToSingleServicePoint />
               </div>
             </div>
           </TabsContent>
         ))}
       </Tabs>
+      )}
     </div>
   )
 }

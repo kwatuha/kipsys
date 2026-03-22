@@ -1,7 +1,6 @@
 # Production Deployment Configuration for Kiplombe HMIS
 # Designed to run alongside existing applications on the server
-
-version: '3.8'
+# (Compose spec v2+ — no top-level `version` key; avoids obsolete-version warnings)
 
 services:
   # MySQL Database (optional - can use existing MySQL)

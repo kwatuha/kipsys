@@ -511,12 +511,23 @@ function QueueContent({
     const rowKey = entry.queueId ?? entry.id
     setTelemedicineStartingQueueId(rowKey)
     try {
-      const created = await telemedicineApi.createSession({
-        originType: "standalone",
-        patientId: Number(patientId),
-        doctorId,
-        notes: `Telemedicine from queue (ticket ${entry.ticketNumber || rowKey || "—"})`,
-      })
+      const qid = Number(entry.queueId ?? entry.id)
+      const useQueueOrigin = Number.isFinite(qid) && qid > 0
+      const created = await telemedicineApi.createSession(
+        useQueueOrigin
+          ? {
+              originType: "queue",
+              queueEntryId: qid,
+              doctorId,
+              notes: `Telemedicine from queue (ticket ${entry.ticketNumber || rowKey || "—"})`,
+            }
+          : {
+              originType: "standalone",
+              patientId: Number(patientId),
+              doctorId,
+              notes: `Telemedicine from queue (ticket ${entry.ticketNumber || rowKey || "—"})`,
+            },
+      )
       if (created?.sessionId) {
         openTelemedicineFloating(created.sessionId)
         toast({

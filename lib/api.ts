@@ -971,11 +971,17 @@ export const telemedicineApi = {
   updateMyDefaults: (data: { defaultZoomJoinUrl?: string | null; defaultZoomPassword?: string | null }) =>
     apiRequest<any>('/api/telemedicine/my-defaults', { method: 'PUT', body: data }),
 
-  /** Paginated list: doctors see own sessions; admins see all */
-  listSessions: (params?: { page?: number; limit?: number }) => {
+  /**
+   * Paginated list. Default: doctors see own sessions; admins see all.
+   * `scope: 'facility'` — nurses/doctors/admins see facility-wide list (for boards / handoff).
+   * `statusGroup: 'active' | 'ended'` — filter by session lifecycle.
+   */
+  listSessions: (params?: { page?: number; limit?: number; scope?: 'facility'; statusGroup?: 'active' | 'ended' }) => {
     const q = new URLSearchParams();
     if (params?.page != null) q.set('page', String(params.page));
     if (params?.limit != null) q.set('limit', String(params.limit));
+    if (params?.scope) q.set('scope', params.scope);
+    if (params?.statusGroup) q.set('statusGroup', params.statusGroup);
     const qs = q.toString();
     return apiRequest<{ sessions: any[]; page: number; limit: number; total: number }>(
       `/api/telemedicine/sessions${qs ? `?${qs}` : ''}`

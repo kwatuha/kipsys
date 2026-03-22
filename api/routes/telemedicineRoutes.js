@@ -64,6 +64,32 @@ function requireDoctorOrAdminRole(roleName) {
   return rn === 'admin' || rn === 'doctor' || rn.includes('admin');
 }
 
+/** Staff who may see facility-wide telemedicine lists and join links for active visits (e.g. nurses). */
+function mayViewFacilityTelemedicineBoard(roleName) {
+  if (!roleName) return false;
+  const rn = roleName.toLowerCase();
+  return (
+    rn.includes('admin') ||
+    rn.includes('nurse') ||
+    rn.includes('doctor') ||
+    rn.includes('midwife') ||
+    rn.includes('clinical')
+  );
+}
+
+function mayObserverJoinTelemedicine(roleName) {
+  if (!roleName) return false;
+  const rn = roleName.toLowerCase();
+  return (
+    rn.includes('nurse') ||
+    rn.includes('midwife') ||
+    rn.includes('clinical officer') ||
+    rn.includes('clinician') ||
+    rn.includes('doctor') ||
+    rn.includes('admin')
+  );
+}
+
 /** Pass `connection` when inside a transaction so audit rows commit with the session insert. */
 async function addAudit(sessionId, eventType, actorUserId, details, executor = pool) {
   await executor.execute(
@@ -203,7 +229,8 @@ router.post('/sessions', async (req, res) => {
     originType,
     appointmentId,
     admissionId,
-    patientId,
+    queueEntryId,
+    patientId: bodyPatientId,
     doctorId,
     notes,
     zoomJoinUrl,
@@ -211,17 +238,60 @@ router.post('/sessions', async (req, res) => {
   } = req.body || {};
 
   // Validate before acquiring a pool connection (avoids tying up connections on bad requests)
-  if (!originType || !['appointment', 'inpatient', 'standalone'].includes(originType)) {
-    return res.status(400).json({ error: 'originType must be appointment, inpatient, or standalone' });
+  if (!originType || !['appointment', 'inpatient', 'standalone', 'queue'].includes(originType)) {
+    return res.status(400).json({ error: 'originType must be appointment, inpatient, standalone, or queue' });
   }
-  if (!patientId || !doctorId) {
-    return res.status(400).json({ error: 'patientId and doctorId are required' });
+  if (!doctorId) {
+    return res.status(400).json({ error: 'doctorId is required' });
+  }
+  if (originType !== 'queue' && !bodyPatientId) {
+    return res.status(400).json({ error: 'patientId is required' });
   }
   if (originType === 'appointment' && !appointmentId) {
     return res.status(400).json({ error: 'appointmentId is required when originType=appointment' });
   }
   if (originType === 'inpatient' && !admissionId) {
     return res.status(400).json({ error: 'admissionId is required when originType=inpatient' });
+  }
+
+  let patientId = bodyPatientId;
+  let resolvedQueueEntryId = null;
+
+  if (originType === 'queue') {
+    const qid = queueEntryId != null && String(queueEntryId).trim() !== '' ? parseInt(queueEntryId, 10) : NaN;
+    if (!Number.isFinite(qid)) {
+      return res.status(400).json({ error: 'queueEntryId is required when originType=queue' });
+    }
+    try {
+      const [qrows] = await pool.execute(
+        `SELECT queueId, patientId, servicePoint, status, ticketNumber
+         FROM queue_entries WHERE queueId = ?`,
+        [qid]
+      );
+      if (!qrows || qrows.length === 0) {
+        return res.status(404).json({ error: 'Queue entry not found' });
+      }
+      const q = qrows[0];
+      if (String(q.servicePoint) !== 'telemedicine') {
+        return res.status(400).json({
+          error:
+            'This queue entry is not for telemedicine. Add the patient to the Telemedicine queue first, then use this queue ID.',
+        });
+      }
+      if (q.status === 'completed' || q.status === 'cancelled') {
+        return res.status(400).json({ error: 'This queue entry is no longer active (completed or cancelled).' });
+      }
+      patientId = q.patientId;
+      resolvedQueueEntryId = qid;
+    } catch (qErr) {
+      if (qErr.code === 'ER_BAD_FIELD_ERROR') {
+        return res.status(503).json({
+          error: 'Database migration required: run api/database/migrations/43_telemedicine_queue_origin.sql',
+        });
+      }
+      console.error('Telemedicine queue lookup error:', qErr);
+      return res.status(500).json({ error: qErr.message || 'Could not load queue entry' });
+    }
   }
 
   const userId = getUserId(req);
@@ -258,14 +328,15 @@ router.post('/sessions', async (req, res) => {
 
     const [result] = await connection.execute(
       `INSERT INTO telemedicine_sessions
-       (sessionUuid, originType, appointmentId, admissionId, provider, roomName, roomUrl, zoomJoinUrl, zoomPassword,
+       (sessionUuid, originType, appointmentId, admissionId, queueEntryId, provider, roomName, roomUrl, zoomJoinUrl, zoomPassword,
         patientId, doctorId, status, recordingPolicyEnabled, notes, createdBy)
-       VALUES (?, ?, ?, ?, 'zoom_manual', NULL, NULL, ?, ?, ?, ?, 'created', 0, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, 'zoom_manual', NULL, NULL, ?, ?, ?, ?, 'created', 0, ?, ?)`,
       [
         sessionUuid,
         originType,
         appointmentId || null,
         admissionId || null,
+        resolvedQueueEntryId,
         zUrl,
         zPass,
         patientId,
@@ -301,6 +372,11 @@ router.post('/sessions', async (req, res) => {
       return res.status(503).json({
         error: 'Database is busy. Please try again in a few seconds.',
         code: 'POOL_ACQUIRE_TIMEOUT',
+      });
+    }
+    if (err.code === 'ER_BAD_FIELD_ERROR' && String(err.sqlMessage || err.message || '').includes('queueEntryId')) {
+      return res.status(503).json({
+        error: 'Database migration required: run api/database/migrations/43_telemedicine_queue_origin.sql',
       });
     }
     console.error('Telemedicine session create error:', err);
@@ -384,12 +460,23 @@ router.get('/sessions', async (req, res) => {
     const roleName = await getRoleNameByUserId(userId);
     const rn = (roleName || '').toLowerCase();
     const isAdmin = rn === 'admin' || rn.includes('admin');
+    const scopeFacility = String(req.query.scope || '') === 'facility';
 
     let where = '1=1';
     const params = [];
-    if (!isAdmin) {
+    if (scopeFacility && mayViewFacilityTelemedicineBoard(roleName)) {
+      // Facility board: nurses, doctors, admins see all sessions (paginated)
+      where = '1=1';
+    } else if (!isAdmin) {
       where = 'ts.doctorId = ?';
       params.push(userId);
+    }
+
+    const statusGroup = String(req.query.statusGroup || '').toLowerCase();
+    if (statusGroup === 'active') {
+      where += ` AND ts.status <> 'ended'`;
+    } else if (statusGroup === 'ended') {
+      where += ` AND ts.status = 'ended'`;
     }
 
     const [countRows] = await pool.execute(
@@ -407,6 +494,7 @@ router.get('/sessions', async (req, res) => {
               ts.doctorId,
               ts.appointmentId,
               ts.admissionId,
+              ts.queueEntryId,
               ts.zoomJoinUrl,
               ts.createdAt,
               ts.updatedAt,
@@ -458,7 +546,9 @@ router.get('/sessions/:sessionId', async (req, res) => {
 
     const roleName = await getRoleNameByUserId(userId);
     const rn = (roleName || '').toLowerCase();
-    if (userId && (rn === 'admin' || rn.includes('admin') || Number(s.doctorId) === Number(userId))) {
+    const isDoctorOwner = userId && Number(s.doctorId) === Number(userId);
+    const isAdminUser = rn === 'admin' || rn.includes('admin');
+    if (userId && (isAdminUser || isDoctorOwner || mayObserverJoinTelemedicine(roleName))) {
       return res.status(200).json(s);
     }
 
@@ -724,13 +814,11 @@ router.get('/sessions/:sessionId/join-url', async (req, res) => {
     const { sessionId } = req.params;
 
     const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
     const roleName = await getRoleNameByUserId(userId);
-    if (!requireDoctorOrAdminRole(roleName)) {
-      return res.status(403).json({ error: 'Forbidden' });
-    }
 
     const [rows] = await pool.execute(
-      `SELECT ts.zoomJoinUrl, ts.zoomPassword, ts.doctorId, ts.provider
+      `SELECT ts.zoomJoinUrl, ts.zoomPassword, ts.doctorId, ts.provider, ts.status
        FROM telemedicine_sessions ts
        WHERE ts.sessionId = ?`,
       [sessionId]
@@ -738,7 +826,19 @@ router.get('/sessions/:sessionId/join-url', async (req, res) => {
     if (rows.length === 0) return res.status(404).json({ error: 'Session not found' });
 
     const s = rows[0];
-    if (Number(s.doctorId) !== Number(userId) && !((roleName || '').toLowerCase().includes('admin'))) {
+    const rn = (roleName || '').toLowerCase();
+    const isDoctorOwner = Number(s.doctorId) === Number(userId);
+    const isAdminUser = rn === 'admin' || rn.includes('admin');
+    const isObserver =
+      !isDoctorOwner &&
+      !isAdminUser &&
+      mayObserverJoinTelemedicine(roleName);
+
+    if (isObserver) {
+      if (s.status === 'ended') {
+        return res.status(400).json({ error: 'Session has ended; join link is no longer distributed.' });
+      }
+    } else if (!isDoctorOwner && !isAdminUser) {
       return res.status(403).json({ error: 'Forbidden' });
     }
 

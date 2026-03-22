@@ -41,6 +41,8 @@ const QUEUE_SERVICE_POINTS = [
   { value: "pharmacy", label: "Pharmacy" },
   { value: "billing", label: "Billing" },
   { value: "cashier", label: "Cashier" },
+  { value: "telemedicine", label: "Telemedicine" },
+  { value: "procedure", label: "Procedure" },
 ]
 
 // Common page tabs configuration

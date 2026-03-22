@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useMemo } from "react"
 import { useRouter } from "next/navigation"
+import Link from "next/link"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -1920,9 +1921,11 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
 
             <Card className="border-primary/20 bg-muted/30">
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm">Telemedicine (Zoom)</CardTitle>
+                <CardTitle className="text-sm">Telemedicine (Zoom) — inpatient</CardTitle>
                 <CardDescription>
-                  Start a remote visit: HMIS records consent and audit. Create the meeting in your Zoom app, then paste the join link on the next screen.
+                  Starts a session linked to this admission (ward / remote review). For outpatients who were added to the{" "}
+                  <strong>telemedicine queue</strong>, use <strong>Telemedicine → Create session</strong> and choose <strong>From queue</strong>{" "}
+                  instead. HMIS records consent and audit; paste your Zoom join link on the next screen if needed.
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -1936,13 +1939,17 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
                     void handleStartTelemedicine()
                   }}
                   disabled={startingTelemedicine}
-                  title="Start a remote doctor review (telemedicine)"
+                  title="Start a remote doctor review linked to this admission"
                 >
                   <Activity className="mr-2 h-4 w-4" />
                   {startingTelemedicine ? "Starting…" : "Start Telemedicine"}
                 </Button>
                 <p className="text-xs text-muted-foreground mt-2">
-                  Also available under the <strong>Reviews</strong> tab next to &quot;Add Review&quot;.
+                  Also under <strong>Reviews</strong> next to &quot;Add Review&quot;. Queue-based outpatients:{" "}
+                  <Link href="/telemedicine/create" className="text-primary underline-offset-2 hover:underline">
+                    Create session (from queue)
+                  </Link>
+                  .
                 </p>
               </CardContent>
             </Card>
