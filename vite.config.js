@@ -34,6 +34,7 @@ export default defineConfig({
     },
   },
   optimizeDeps: {
+    exclude: ['@zoom/meetingsdk'],         // ← don't pre-bundle Zoom (it's UMD)
     include: [
       'react',
       'react-dom',
@@ -53,6 +54,10 @@ export default defineConfig({
     cssCodeSplit: true,
     sourcemap: false,
     minify: 'esbuild',
+    commonjsOptions: {                     // ← tell Rollup to handle Zoom's CJS/UMD
+      include: [/@zoom\/meetingsdk/, /node_modules/],
+      transformMixedEsModules: true,
+    },
     rollupOptions: {
       output: {
         manualChunks: {
@@ -69,4 +74,3 @@ export default defineConfig({
     assetsInlineLimit: 4096
   }
 });
-

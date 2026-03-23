@@ -6,6 +6,7 @@ const __dirname = path.dirname(__filename);
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  transpilePackages: ['@zoom/meetingsdk'],
   eslint: {
     ignoreDuringBuilds: true,
   },
@@ -35,6 +36,26 @@ const nextConfig = {
   productionBrowserSourceMaps: false,
   // Keep your DOCKER_BUILD logic
   output: process.env.DOCKER_BUILD === 'true' ? 'standalone' : undefined,
+
+  /**
+   * Optional: Cross-Origin isolation improves Zoom gallery view / virtual backgrounds (SharedArrayBuffer).
+   * Set ENABLE_ZOOM_COEP_HEADERS=true when building — may affect other embeds/CDN assets site-wide.
+   * Also configure the same headers on your reverse proxy in production.
+   */
+  async headers() {
+    if (process.env.ENABLE_ZOOM_COEP_HEADERS === 'true') {
+      return [
+        {
+          source: '/:path*',
+          headers: [
+            { key: 'Cross-Origin-Embedder-Policy', value: 'require-corp' },
+            { key: 'Cross-Origin-Opener-Policy', value: 'same-origin' },
+          ],
+        },
+      ]
+    }
+    return []
+  },
 
   experimental: {
     optimizePackageImports: [

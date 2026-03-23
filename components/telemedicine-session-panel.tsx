@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
+import dynamic from "next/dynamic"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -17,6 +18,11 @@ import {
   meetingLinkFieldLabel,
   openMeetingButtonLabel,
 } from "@/lib/telemedicine-providers"
+
+const ZoomEmbeddedMeeting = dynamic(
+  () => import("@/components/zoom-embedded-meeting").then((m) => m.ZoomEmbeddedMeeting),
+  { ssr: false, loading: () => <p className="text-xs text-muted-foreground py-2">Loading video module…</p> }
+)
 
 function calculateAgeYears(dob: string | null | undefined) {
   if (!dob) return null
@@ -94,9 +100,29 @@ export function TelemedicineSessionPanel({
   /** Floating: last Zoom URL we opened (popup/tab) — for reopen + short notice */
   const [floatingZoomOpenUrl, setFloatingZoomOpenUrl] = useState<string | null>(null)
 
+  /** Zoom Meeting SDK embed (optional — requires API env + standard /j/######## URL) */
+  const [showEmbeddedZoom, setShowEmbeddedZoom] = useState(false)
+  const [sdkEmbedConfigured, setSdkEmbedConfigured] = useState<boolean | null>(null)
+
   useEffect(() => {
     setFloatingZoomOpenUrl(null)
+    setShowEmbeddedZoom(false)
   }, [sessionId])
+
+  useEffect(() => {
+    let cancelled = false
+    telemedicineApi
+      .getZoomMeetingSdkStatus()
+      .then((r) => {
+        if (!cancelled) setSdkEmbedConfigured(!!r.configured)
+      })
+      .catch(() => {
+        if (!cancelled) setSdkEmbedConfigured(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     if (!sessionId) return
@@ -553,6 +579,38 @@ export function TelemedicineSessionPanel({
               End session
             </Button>
           </div>
+
+          {isZoomProvider(videoProviderId) && sdkEmbedConfigured && hasLink && (
+            <div className={`space-y-2 rounded-lg border border-dashed border-primary/25 bg-muted/20 ${isFloating ? "p-2" : "p-3"}`}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className={`font-semibold ${isFloating ? "text-xs" : "text-sm"}`}>Embedded video (same window)</span>
+                <Button
+                  type="button"
+                  variant={showEmbeddedZoom ? "secondary" : "default"}
+                  size="sm"
+                  className={isFloating ? "h-8 text-xs" : undefined}
+                  onClick={() => setShowEmbeddedZoom((v) => !v)}
+                >
+                  {showEmbeddedZoom ? "Hide embedded video" : "Show video in panel"}
+                </Button>
+              </div>
+              <p className={`text-muted-foreground ${isFloating ? "text-[10px] leading-snug" : "text-xs"}`}>
+                Zoom Meeting SDK Component View — video renders in the box below. Use a join URL with{" "}
+                <code className="rounded bg-background px-0.5">/j/</code> + meeting number. Optional: set{" "}
+                <code className="rounded bg-background px-0.5">ENABLE_ZOOM_COEP_HEADERS=true</code> at build time for better gallery
+                performance (see Next config).
+              </p>
+              {showEmbeddedZoom && <ZoomEmbeddedMeeting sessionId={sessionId} compact={isFloating} />}
+            </div>
+          )}
+
+          {isZoomProvider(videoProviderId) && sdkEmbedConfigured === false && hasLink && (
+            <p className={`text-muted-foreground ${isFloating ? "text-[10px]" : "text-xs"}`}>
+              Embedded video: add <code className="rounded bg-muted px-0.5">ZOOM_MEETING_SDK_KEY</code> and{" "}
+              <code className="rounded bg-muted px-0.5">ZOOM_MEETING_SDK_SECRET</code> to the API server (Zoom Marketplace → Meeting SDK
+              app) to show Zoom inside HMIS. You can still use the button above to open Zoom in a new window.
+            </p>
+          )}
 
           {isFloating && floatingZoomOpenUrl && (
             <div className="space-y-2 rounded-lg border bg-muted/30 p-3">

@@ -90,6 +90,66 @@ function mayObserverJoinTelemedicine(roleName) {
   );
 }
 
+/**
+ * Parse numeric Zoom meeting id from a join URL (Meeting SDK needs /j/###########).
+ * Vanity URLs without a numeric path may not work.
+ */
+function extractZoomMeetingNumberFromUrl(url) {
+  if (!url || typeof url !== 'string') return null;
+  const s = url.trim();
+  const j = s.match(/\/j\/(\d{9,15})/i);
+  if (j) return j[1];
+  const wc = s.match(/\/wc\/(\d{9,15})/i);
+  if (wc) return wc[1];
+  const m = s.match(/\/meetings\/(\d{9,15})/i);
+  if (m) return m[1];
+  return null;
+}
+
+function parseZoomPwdFromJoinUrl(url) {
+  try {
+    const u = new URL(url.startsWith('http') ? url : `https://${url}`);
+    return u.searchParams.get('pwd') || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Meeting SDK JWT (HMAC-SHA256) — same claims as Zoom auth sample (see meetingsdk-auth-endpoint-sample). */
+function generateZoomMeetingSdkJwt(sdkKey, sdkSecret, meetingNumber, role) {
+  const iat = Math.floor(Date.now() / 1000);
+  const exp = iat + 60 * 60 * 2;
+  const payload = {
+    appKey: sdkKey,
+    sdkKey: sdkKey,
+    mn: String(meetingNumber),
+    role: Number(role),
+    iat,
+    exp,
+    tokenExp: exp,
+  };
+  return jwt.sign(payload, sdkSecret, { algorithm: 'HS256' });
+}
+
+/**
+ * Credentials for Meeting SDK JWT signing.
+ * Zoom’s UI often shows **Client ID** + **Client Secret** (same values used in JWT `appKey` / `sdkKey` + HMAC secret).
+ * Official sample `.env` uses `ZOOM_MEETING_SDK_SECRET` or `CLIENT_SECRET` — we accept common aliases.
+ * @see https://developers.zoom.us/docs/meeting-sdk/get-credentials/
+ */
+function getZoomMeetingSdkCredentialsFromEnv() {
+  const sdkKey =
+    process.env.ZOOM_MEETING_SDK_KEY ||
+    process.env.ZOOM_CLIENT_ID ||
+    process.env.ZOOM_MEETING_SDK_CLIENT_ID ||
+    '';
+  const sdkSecret =
+    process.env.ZOOM_MEETING_SDK_SECRET ||
+    process.env.ZOOM_CLIENT_SECRET ||
+    '';
+  return { sdkKey, sdkSecret };
+}
+
 /** Pass `connection` when inside a transaction so audit rows commit with the session insert. */
 async function addAudit(sessionId, eventType, actorUserId, details, executor = pool) {
   await executor.execute(
@@ -951,6 +1011,104 @@ router.get('/sessions/:sessionId/recording/download', async (req, res) => {
   return res.status(501).json({
     error: 'Cloud recording is not integrated in Zoom link mode. Record locally in Zoom if your policy allows.',
   });
+});
+
+/**
+ * Whether Zoom Meeting SDK env vars are set (for embedded video in HMIS).
+ * Requires a logged-in user so unauthenticated clients cannot probe deployment config.
+ */
+router.get('/zoom-meeting-sdk-status', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const { sdkKey, sdkSecret } = getZoomMeetingSdkCredentialsFromEnv();
+    return res.status(200).json({ configured: !!(sdkKey && sdkSecret) });
+  } catch (err) {
+    console.error('zoom-meeting-sdk-status error:', err);
+    return res.status(500).json({ error: err.message || 'Internal error' });
+  }
+});
+
+/**
+ * Returns a short-lived JWT signature for Zoom Meeting SDK (Component View) join.
+ * Set credentials from a Zoom Marketplace "Meeting SDK" app (Client ID + Client Secret, or ZOOM_MEETING_SDK_* aliases).
+ */
+router.post('/sessions/:sessionId/zoom-sdk-signature', async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const rawRole = req.body?.role;
+    const role = rawRole != null && rawRole !== '' ? Number(rawRole) : 1;
+    if (role !== 0 && role !== 1) {
+      return res.status(400).json({ error: 'role must be 0 (participant) or 1 (host)' });
+    }
+
+    const { sdkKey, sdkSecret } = getZoomMeetingSdkCredentialsFromEnv();
+    if (!sdkKey || !sdkSecret) {
+      return res.status(503).json({
+        error:
+          'Meeting SDK is not configured. Set ZOOM_CLIENT_ID + ZOOM_CLIENT_SECRET (or ZOOM_MEETING_SDK_KEY + ZOOM_MEETING_SDK_SECRET) on the API server.',
+        configured: false,
+      });
+    }
+
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const roleName = await getRoleNameByUserId(userId);
+
+    const [rows] = await pool.execute(
+      `SELECT ts.zoomJoinUrl, ts.zoomPassword, ts.doctorId, ts.provider, ts.status
+       FROM telemedicine_sessions ts
+       WHERE ts.sessionId = ?`,
+      [sessionId]
+    );
+    if (rows.length === 0) return res.status(404).json({ error: 'Session not found' });
+
+    const s = rows[0];
+    const rn = (roleName || '').toLowerCase();
+    const isDoctorOwner = Number(s.doctorId) === Number(userId);
+    const isAdminUser = rn === 'admin' || rn.includes('admin');
+    const isObserver =
+      !isDoctorOwner &&
+      !isAdminUser &&
+      mayObserverJoinTelemedicine(roleName);
+
+    if (isObserver) {
+      if (s.status === 'ended') {
+        return res.status(400).json({ error: 'Session has ended; join link is no longer distributed.' });
+      }
+    } else if (!isDoctorOwner && !isAdminUser) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    if (!s.zoomJoinUrl) {
+      return res.status(400).json({ error: 'No Zoom join URL saved yet. Paste the meeting link on the session page.' });
+    }
+
+    const meetingNumber = extractZoomMeetingNumberFromUrl(s.zoomJoinUrl);
+    if (!meetingNumber) {
+      return res.status(400).json({
+        error:
+          'Could not read a meeting number from the Zoom link. Use a standard URL like https://zoom.us/j/12345678901 (or your region’s us02web.zoom.us/j/…).',
+      });
+    }
+
+    const pwdFromUrl = parseZoomPwdFromJoinUrl(s.zoomJoinUrl);
+    const password =
+      s.zoomPassword != null && String(s.zoomPassword).trim() !== ''
+        ? String(s.zoomPassword).trim()
+        : pwdFromUrl || '';
+
+    const signature = generateZoomMeetingSdkJwt(sdkKey, sdkSecret, meetingNumber, role);
+
+    return res.status(200).json({
+      signature,
+      meetingNumber: String(meetingNumber),
+      password,
+    });
+  } catch (err) {
+    console.error('zoom-sdk-signature error:', err);
+    return res.status(500).json({ error: err.message || 'Internal error' });
+  }
 });
 
 /** Doctor join: returns stored Zoom URL (no token — user opens normal Zoom client). */

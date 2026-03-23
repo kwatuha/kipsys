@@ -25,5 +25,8 @@ else
     echo "✅ Dependencies installed successfully!"
 fi
 
+# Zoom embedded UI CSS (after node_modules exists — named volume may be empty on first run)
+node scripts/copy-zoom-sdk-css.mjs || true
+
 echo "🎯 Starting Next.js dev server on port 3000..."
 exec "$@"

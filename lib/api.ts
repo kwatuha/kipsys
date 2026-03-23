@@ -963,7 +963,7 @@ export const appointmentsApi = {
     apiRequest<any>(`/api/appointments/${id}`, { method: 'DELETE' }),
 };
 
-// Telemedicine API (Zoom link mode: paste join URL from your Zoom app; no Zoom API keys)
+// Telemedicine API (Zoom link mode + optional Meeting SDK embed via server-signed JWT)
 export const telemedicineApi = {
   /** Per-user defaults (PMI link, passcode); copied into new sessions when no URL is sent */
   getMyDefaults: () => apiRequest<any>('/api/telemedicine/my-defaults'),
@@ -1027,6 +1027,17 @@ export const telemedicineApi = {
     apiRequest<any>(`/api/telemedicine/sessions/${sessionId}/join-url?${new URLSearchParams({
       participant: 'doctor',
     })}`),
+
+  /** True when API has ZOOM_MEETING_SDK_KEY + ZOOM_MEETING_SDK_SECRET (embedded Component View). */
+  getZoomMeetingSdkStatus: () =>
+    apiRequest<{ configured: boolean }>('/api/telemedicine/zoom-meeting-sdk-status'),
+
+  /** Server-generated Meeting SDK JWT for ZoomMtgEmbedded.join — never sign in the browser. */
+  getZoomSdkSignature: (sessionId: string, body?: { role?: 0 | 1 }) =>
+    apiRequest<{ signature: string; meetingNumber: string; password: string }>(
+      `/api/telemedicine/sessions/${sessionId}/zoom-sdk-signature`,
+      { method: 'POST', body: body ?? {} }
+    ),
 };
 
 // Workflow API

@@ -31,6 +31,13 @@ yarn-error.log*
 **/.env.*
 api/.env
 api/.env.*
+# Allow committed templates (must come after .env* rules)
+!.env.example
+!**/.env.example
+!api/.env.example
+
+# Generated from @zoom/meetingsdk (see scripts/copy-zoom-sdk-css.mjs)
+public/vendor/zoom-meetingsdk.css
 
 # sample data SQL files (may contain sensitive test data)
 /api/database/sample_data/*.sql

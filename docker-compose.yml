@@ -35,6 +35,9 @@ services:
     depends_on:
       mysql_db:
         condition: service_healthy
+    # Load secrets and optional vars from project root .env (copy from .env.example). Create .env before compose up.
+    env_file:
+      - .env
     environment:
       NODE_ENV: development
       DB_HOST: mysql_db
