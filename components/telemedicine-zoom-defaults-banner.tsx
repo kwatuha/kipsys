@@ -2,6 +2,7 @@
 
 import Link from "next/link"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { TelemedicineHelpLink } from "@/components/telemedicine-help-link"
 import { AlertCircle } from "lucide-react"
 
 type Props = {
@@ -25,21 +26,15 @@ export function TelemedicineZoomDefaultsRequiredBanner({
     <Alert className="border-amber-500/40 bg-amber-50/80 text-amber-950 dark:bg-amber-950/30 dark:text-amber-50 dark:border-amber-600/50">
       <AlertCircle className="h-4 w-4" />
       <AlertTitle>Meeting defaults required to start a new visit</AlertTitle>
-      <AlertDescription className="text-sm space-y-2 mt-1">
-        <p>
-          Save a <strong>default join URL</strong> (and optional passcode) under{" "}
+      <AlertDescription className="text-sm mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span>
+          Save a join URL under{" "}
           <Link href="/telemedicine/settings" className="underline font-medium">
-            Telemedicine → My Zoom defaults
+            My Zoom defaults
           </Link>{" "}
-          before using <strong>{startActionLabel}</strong>. Passcode from your defaults will fill the optional fields when Zoom is selected.
-        </p>
-        <p>
-          To participate in a visit someone else started, use <strong>Join meeting</strong> or <strong>Join in HMIS</strong> on the{" "}
-          <Link href="/telemedicine/create" className="underline font-medium">
-            Active video visits
-          </Link>{" "}
-          board — no saved defaults needed to join.
-        </p>
+          before <strong>{startActionLabel}</strong>.
+        </span>
+        <TelemedicineHelpLink />
       </AlertDescription>
     </Alert>
   )

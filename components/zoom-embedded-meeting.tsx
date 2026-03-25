@@ -6,9 +6,11 @@ import * as ReactDOMNS from "react-dom"
 import { telemedicineApi } from "@/lib/api"
 import { useAuth } from "@/lib/auth/auth-context"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { TelemedicineHelpLink } from "@/components/telemedicine-help-link"
+import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Loader2 } from "lucide-react"
+import { Loader2, Maximize2, Minimize2 } from "lucide-react"
 
 export type ZoomEmbeddedMeetingProps = {
   sessionId: string
@@ -28,6 +30,8 @@ type ZoomEmbeddedClient = {
   init: (args: Record<string, unknown>) => Promise<unknown>
   join: (args: Record<string, unknown>) => Promise<unknown>
   leaveMeeting?: () => unknown
+  /** SDK — resize video area after join when the container grows/shrinks. */
+  updateVideoOptions?: (videoOptions: Record<string, unknown>) => void
   /** SDK 2.1.1+ — browser capability check; use before `init`. */
   checkSystemRequirements?: () => ZoomMediaCompatibility
 }
@@ -96,9 +100,25 @@ function debugDetectedZoomGlobals(): string {
   return details.join(", ") || "none"
 }
 
+/** Avoid `in` on non-objects (throws "right-hand side of 'in' should be an object"). */
+function hasReasonProperty(value: unknown): value is { reason: unknown } {
+  return value != null && typeof value === "object" && Object.prototype.hasOwnProperty.call(value, "reason")
+}
+
 function stringifySdkError(err: unknown): string {
-  if (err instanceof Error) return err.message
-  if (typeof err === "string") return err
+  if (err instanceof Error) {
+    const m = err.message
+    if (m.includes("RECONNECTING_MEETING")) {
+      return `${m} — Often caused by the embed tearing down while Zoom is still connecting (e.g. React dev Strict Mode remounts, or effect re-running). Try a production build or see docs.`
+    }
+    return m
+  }
+  if (typeof err === "string") {
+    if (err.includes("RECONNECTING_MEETING")) {
+      return `${err} — Often caused by the embed tearing down while Zoom is still connecting (e.g. React dev Strict Mode remounts).`
+    }
+    return err
+  }
   if (err && typeof err === "object") {
     const rec = err as Record<string, unknown>
     const direct =
@@ -130,6 +150,98 @@ async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise
   }
 }
 
+/** First load can pull wasm/media from Zoom CDN; join promise may stay pending until then. */
+const ZOOM_INIT_TIMEOUT_MS = 45000
+const ZOOM_JOIN_TIMEOUT_MS = 120000
+
+/**
+ * `client.join()` returns a Promise, but some SDK builds also fire `success`/`error` callbacks and
+ * the promise may not settle until long after the UI is in the meeting — causing false timeouts.
+ * We resolve when either path completes.
+ */
+function joinEmbeddedMeeting(client: ZoomEmbeddedClient, joinArgs: Record<string, unknown>): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const once = (action: "resolve" | "reject", value: unknown) => {
+      if (settled) return
+      settled = true
+      if (action === "resolve") resolve(value)
+      else reject(value)
+    }
+
+    const augmented: Record<string, unknown> = {
+      ...joinArgs,
+      success: () => {
+        once("resolve", "")
+      },
+      error: (err: unknown) => {
+        once("reject", err ?? new Error("Zoom join error callback"))
+      },
+    }
+
+    try {
+      const out = client.join(augmented)
+      if (out != null && typeof (out as Promise<unknown>).then === "function") {
+        ;(out as Promise<unknown>)
+          .then((r) => once("resolve", r))
+          .catch((e) => once("reject", e))
+      }
+    } catch (e) {
+      once("reject", e)
+    }
+  })
+}
+
+/** Read container size for Zoom `viewSizes` (SDK draws to this box). */
+function measureZoomContainer(el: HTMLElement, compact: boolean): { width: number; height: number } {
+  const r = el.getBoundingClientRect()
+  let w = Math.floor(r.width) || el.clientWidth
+  let h = Math.floor(r.height) || el.clientHeight
+  if (w < 100) w = typeof window !== "undefined" ? Math.min(1280, Math.floor(window.innerWidth - 48)) : 480
+  if (h < 120) {
+    h = compact
+      ? Math.min(640, Math.floor((typeof window !== "undefined" ? window.innerHeight : 800) * 0.5))
+      : Math.min(720, Math.floor((typeof window !== "undefined" ? window.innerHeight : 800) * 0.65))
+  }
+  w = Math.max(320, Math.min(w, 1920))
+  h = Math.max(240, Math.min(h, 1080))
+  return { width: w, height: h }
+}
+
+/** Reserve vertical space so Zoom’s bottom toolbar (join audio / mic / leave) is not clipped inside the root. */
+const ZOOM_EMBED_TOOLBAR_RESERVE_PX = 88
+
+function viewSizesForSdk(el: HTMLElement, compact: boolean): { width: number; height: number } {
+  const m = measureZoomContainer(el, compact)
+  return {
+    width: m.width,
+    height: Math.max(220, m.height - ZOOM_EMBED_TOOLBAR_RESERVE_PX),
+  }
+}
+
+async function waitForNonZeroSize(el: HTMLElement, maxAttempts = 12): Promise<void> {
+  for (let i = 0; i < maxAttempts; i++) {
+    const r = el.getBoundingClientRect()
+    if (r.width >= 100 && r.height >= 120) return
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+  }
+}
+
+/** SDK resolves with "" on success, or an ExecutedFailure object (type + reason). */
+function assertJoinSucceeded(joinResult: unknown): void {
+  if (joinResult === "" || joinResult === undefined || joinResult === null) return
+  if (typeof joinResult === "string") return
+  if (joinResult != null && typeof joinResult === "object") {
+    const o = joinResult as Record<string, unknown>
+    if (Object.prototype.hasOwnProperty.call(o, "type") && Object.prototype.hasOwnProperty.call(o, "reason")) {
+      throw new Error(String(o.reason ?? "Join failed"))
+    }
+    if (hasReasonProperty(joinResult)) {
+      throw new Error(String(joinResult.reason ?? "Join failed"))
+    }
+  }
+}
+
 /**
  * Zoom Meeting SDK — Component View (embedded in a div via zoomAppRoot).
  * Requires API env ZOOM_MEETING_SDK_KEY + ZOOM_MEETING_SDK_SECRET and a standard /j/######## join URL.
@@ -148,6 +260,24 @@ export function ZoomEmbeddedMeeting({ sessionId, compact, className }: ZoomEmbed
 
   const userName = user?.name?.trim() || "Clinician"
   const userEmail = user?.email?.trim() || ""
+
+  /** Join uses latest name/email without re-running the embed when auth hydrates (avoids reconnect loops). */
+  const userNameRef = useRef(userName)
+  const userEmailRef = useRef(userEmail)
+  userNameRef.current = userName
+  userEmailRef.current = userEmail
+
+  const compactRef = useRef(!!compact)
+  compactRef.current = !!compact
+
+  /** Taller embed area + `updateVideoOptions` — does not re-run SDK init (see toggle below). */
+  const [expandedVideo, setExpandedVideo] = useState(false)
+
+  /**
+   * Invalidates in-flight init/join when the effect cleans up (React Strict Mode dev double-mount,
+   * session/role change, etc.) so we don't leave Zoom reconnecting after destroyClient().
+   */
+  const embedGenerationRef = useRef(0)
 
   /** Served from public/vendor (copied by scripts/copy-zoom-sdk-css.mjs — avoids bundler resolving node_modules CSS). */
   useEffect(() => {
@@ -302,7 +432,10 @@ export function ZoomEmbeddedMeeting({ sessionId, compact, className }: ZoomEmbed
     const el = rootRef.current
     if (!el || !sdkRuntimeReady) return
 
+    /** Monotonic id for this effect run; cleanup bumps ref so async work can detect teardown. */
+    const myGeneration = ++embedGenerationRef.current
     let cancelled = false
+    const stale = () => cancelled || embedGenerationRef.current !== myGeneration
 
     const run = async () => {
       setPhase("loading")
@@ -326,10 +459,16 @@ export function ZoomEmbeddedMeeting({ sessionId, compact, className }: ZoomEmbed
           /* ignore */
         }
 
+        if (stale()) return
+
         const data = await telemedicineApi.getZoomSdkSignature(sessionId, {
           role: Number(sdkRole) as 0 | 1,
         })
-        if (cancelled) return
+        if (stale()) return
+
+        if (!data?.signature || data.meetingNumber == null || String(data.meetingNumber).trim() === "") {
+          throw new Error("Invalid Zoom SDK signature response from server (missing signature or meeting number).")
+        }
 
         const client = zoomEmbedded.createClient()
         clientRef.current = client
@@ -337,52 +476,65 @@ export function ZoomEmbeddedMeeting({ sessionId, compact, className }: ZoomEmbed
         if (typeof client.checkSystemRequirements === "function") {
           try {
             const compat = client.checkSystemRequirements()
-            setMediaCompat(compat ?? null)
+            if (!stale()) setMediaCompat(compat ?? null)
           } catch {
-            setMediaCompat(null)
+            if (!stale()) setMediaCompat(null)
           }
         }
 
-        const w = compact ? 400 : Math.min(720, typeof window !== "undefined" ? window.innerWidth - 80 : 640)
-        const h = compact ? 240 : 400
+        if (stale()) return
+
+        await waitForNonZeroSize(el)
+        if (stale()) return
+
+        const { width: viewW, height: viewH } = viewSizesForSdk(el, compactRef.current)
 
         await withTimeout(
           client.init({
-          zoomAppRoot: el,
-          language: "en-US",
-          patchJsMedia: true,
-          customize: {
-            video: {
-              isResizable: true,
-              viewSizes: {
-                default: { width: w, height: h },
+            zoomAppRoot: el,
+            language: "en-US",
+            patchJsMedia: true,
+            /** Match installed @zoom/meetingsdk version — helps SDK load av/wasm assets consistently. */
+            assetPath: "https://source.zoom.us/5.1.4/lib/av",
+            /**
+             * Size the component view; height leaves room for the bottom toolbar inside the root.
+             * `updateVideoOptions` + ResizeObserver keep this in sync after resize / “Larger video”.
+             */
+            customize: {
+              video: {
+                isResizable: true,
+                defaultViewType: "speaker",
+                viewSizes: {
+                  default: { width: viewW, height: viewH },
+                  ribbon: { width: viewW, height: viewH },
+                },
               },
             },
-          },
           }),
-          20000,
+          ZOOM_INIT_TIMEOUT_MS,
           "Zoom SDK init"
         )
-        if (cancelled) return
+        if (stale()) return
+
+        const joinPayload: Record<string, unknown> = {
+          ...(data.sdkKey ? { sdkKey: String(data.sdkKey) } : {}),
+          signature: String(data.signature),
+          meetingNumber: String(data.meetingNumber),
+          password: data.password != null ? String(data.password) : "",
+          userName: userNameRef.current,
+          userEmail: userEmailRef.current || undefined,
+        }
 
         const joinResult = await withTimeout(
-          client.join({
-          signature: data.signature,
-          meetingNumber: data.meetingNumber,
-          password: data.password ?? "",
-          userName,
-          userEmail: userEmail || undefined,
-          }),
-          30000,
+          joinEmbeddedMeeting(client, joinPayload),
+          ZOOM_JOIN_TIMEOUT_MS,
           "Zoom SDK join"
         )
-        if (cancelled) return
-        if (joinResult && typeof joinResult === "object" && "reason" in joinResult) {
-          throw new Error(String((joinResult as { reason?: string }).reason || "Join failed"))
-        }
-        setPhase("ready")
+        if (stale()) return
+        assertJoinSucceeded(joinResult)
+        if (!stale()) setPhase("ready")
       } catch (e: unknown) {
-        if (cancelled) return
+        if (stale()) return
         const msg = stringifySdkError(e)
         setErrorMessage(msg)
         setPhase("error")
@@ -393,6 +545,8 @@ export function ZoomEmbeddedMeeting({ sessionId, compact, className }: ZoomEmbed
 
     return () => {
       cancelled = true
+      /** Invalidate this generation so any in-flight await aborts before touching Zoom again. */
+      embedGenerationRef.current += 1
       try {
         clientRef.current?.leaveMeeting?.()
       } catch {
@@ -405,7 +559,44 @@ export function ZoomEmbeddedMeeting({ sessionId, compact, className }: ZoomEmbed
         /* ignore */
       }
     }
-  }, [sessionId, sdkRole, userName, userEmail, compact, sdkRuntimeReady])
+  }, [sessionId, sdkRole, sdkRuntimeReady])
+
+  /** After join, keep SDK video size aligned with our container (toggle “Larger video”, panel resize, etc.). */
+  useEffect(() => {
+    if (phase !== "ready") return
+    const el = rootRef.current
+    const client = clientRef.current
+    if (!el || typeof client?.updateVideoOptions !== "function") return
+
+    const apply = () => {
+      const { width, height } = viewSizesForSdk(el, compactRef.current)
+      try {
+        client.updateVideoOptions({
+          isResizable: true,
+          defaultViewType: "speaker",
+          viewSizes: {
+            default: { width, height },
+            ribbon: { width, height },
+          },
+        })
+      } catch {
+        /* ignore */
+      }
+    }
+
+    apply()
+    const ro = new ResizeObserver(() => apply())
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [phase, expandedVideo, compact])
+
+  const zoomRootFrameClass = compact
+    ? expandedVideo
+      ? "min-h-[300px] h-[min(78vh,780px)] w-full"
+      : "min-h-[280px] h-[min(58vh,600px)] w-full"
+    : expandedVideo
+      ? "min-h-[480px] h-[min(85vh,900px)] w-full"
+      : "min-h-[420px] h-[min(70vh,820px)] w-full"
 
   return (
     <div className={className}>
@@ -422,9 +613,31 @@ export function ZoomEmbeddedMeeting({ sessionId, compact, className }: ZoomEmbed
             </SelectContent>
           </Select>
         </div>
-        <p className="text-[11px] text-muted-foreground max-w-md">
-          Changing role reloads the embed. If join fails, try participant, or confirm your Zoom Marketplace Meeting SDK app is
-          published and the join URL uses <code className="rounded bg-muted px-0.5">/j/</code> + numbers.
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1.5 text-xs"
+            title="Taller video area (same meeting; uses ResizeObserver to resize the SDK view)"
+            onClick={() => setExpandedVideo((v) => !v)}
+          >
+            {expandedVideo ? (
+              <>
+                <Minimize2 className="h-3.5 w-3.5" />
+                Smaller video area
+              </>
+            ) : (
+              <>
+                <Maximize2 className="h-3.5 w-3.5" />
+                Larger video area
+              </>
+            )}
+          </Button>
+        </div>
+        <p className="text-[11px] text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span>Role change reloads the embed.</span>
+          <TelemedicineHelpLink />
         </p>
       </div>
 
@@ -444,32 +657,15 @@ export function ZoomEmbeddedMeeting({ sessionId, compact, className }: ZoomEmbed
 
       <div
         ref={rootRef}
-        className={`zoom-meeting-sdk-root w-full overflow-hidden rounded-md border bg-black/5 ${compact ? "min-h-[260px]" : "min-h-[420px]"}`}
+        className={`zoom-meeting-sdk-root overflow-x-hidden overflow-y-visible rounded-md border bg-black/5 ${zoomRootFrameClass}`}
       />
 
       {phase === "ready" && (
         <div className="mt-2 space-y-2">
-          <Alert className="border-primary/30 bg-primary/5">
-            <AlertTitle className="text-sm">Audio &amp; video in the toolbar</AlertTitle>
-            <AlertDescription className="text-xs space-y-1.5">
-              <p>
-                The meeting is connected; mic and camera stay <strong>off</strong> until you turn them on in Zoom&apos;s own UI.
-              </p>
-              <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
-                <li>
-                  Click <strong>Join audio</strong> (headset icon) and choose <strong>Computer audio</strong> — then allow the
-                  microphone if the browser asks.
-                </li>
-                <li>
-                  Click <strong>Start video</strong> (camera) and allow the camera if prompted.
-                </li>
-              </ol>
-              <p className="text-muted-foreground">
-                Use <strong>HTTPS</strong> or <strong>localhost</strong> so the browser can grant media permissions. If controls
-                stay disabled, check the site&apos;s mic/camera permissions in the browser address bar.
-              </p>
-            </AlertDescription>
-          </Alert>
+          <p className="text-[11px] text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span>Use Zoom&apos;s toolbar for audio, video, and leave.</span>
+            <TelemedicineHelpLink />
+          </p>
           {mediaCompat && (mediaCompat.audio === false || mediaCompat.video === false) && (
             <Alert variant="destructive">
               <AlertTitle className="text-sm">Browser reports limited media support</AlertTitle>
@@ -479,10 +675,6 @@ export function ZoomEmbeddedMeeting({ sessionId, compact, className }: ZoomEmbed
               </AlertDescription>
             </Alert>
           )}
-          <p className="text-[11px] text-muted-foreground">
-            Leave from the Zoom toolbar when finished. For gallery view and virtual backgrounds, your site may need Cross-Origin
-            isolation headers (see deployment notes).
-          </p>
         </div>
       )}
     </div>

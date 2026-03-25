@@ -773,7 +773,10 @@ export function InpatientManagement({ admissionId, open, onOpenChange, onAdmissi
         return
       }
 
-      openTelemedicineFloating(created.sessionId)
+      openTelemedicineFloating(created.sessionId, {
+        patientId: overview.admission.patientId,
+        patientDisplayName: `${overview.admission.firstName || ""} ${overview.admission.lastName || ""}`.trim() || undefined,
+      })
       // Close admission dialog — if we don't, the full-screen modal stays above the floating panel
       onOpenChange(false)
       toast(

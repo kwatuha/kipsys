@@ -4,26 +4,14 @@ import { useState, useEffect, useCallback } from "react"
 import Link from "next/link"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { useToast } from "@/hooks/use-toast"
 import { queueApi, telemedicineApi } from "@/lib/api"
 import { useAuth } from "@/lib/auth/auth-context"
 import { useTelemedicineFloating } from "@/lib/telemedicine-floating-context"
-import {
-  Loader2,
-  ListOrdered,
-  Stethoscope,
-  UserRound,
-  RefreshCw,
-  Video,
-  ChevronDown,
-} from "lucide-react"
+import { Loader2, ListOrdered, RefreshCw, Video } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
-import { Textarea } from "@/components/ui/textarea"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { TelemedicineProviderSelect } from "@/components/telemedicine-provider-select"
 import {
   TelemedicineOptionalMeetingLinkFields,
@@ -34,6 +22,7 @@ import { getTelemedicineProviderLabel } from "@/lib/telemedicine-providers"
 import { telemedicineCreateToast } from "@/lib/telemedicine-create-result"
 import { TelemedicineFacilityActiveVisits } from "@/components/telemedicine-facility-active-visits"
 import { TelemedicineMeetingLinkActions } from "@/components/telemedicine-meeting-link-actions"
+import { TelemedicineHelpLink } from "@/components/telemedicine-help-link"
 import { TelemedicineZoomDefaultsRequiredBanner } from "@/components/telemedicine-zoom-defaults-banner"
 import { useTelemedicineZoomDefaults } from "@/lib/hooks/use-telemedicine-zoom-defaults"
 
@@ -82,23 +71,9 @@ export default function TelemedicineCreatePage() {
   const [sessionsPage, setSessionsPage] = useState(1)
   const [sessionsLoading, setSessionsLoading] = useState(false)
 
-  /** Manual / inpatient / standalone */
-  const [manualOpen, setManualOpen] = useState(false)
-  const [manualKind, setManualKind] = useState<"inpatient" | "standalone">("standalone")
-  const [admissionId, setAdmissionId] = useState("")
-  const [patientId, setPatientId] = useState("")
-  const [doctorId, setDoctorId] = useState("")
-  const [notes, setNotes] = useState("")
-  const [creatingManual, setCreatingManual] = useState(false)
   const [videoProvider, setVideoProvider] = useState<TelemedicineVideoProviderId>("zoom_manual")
   const [optionalMeetingUrl, setOptionalMeetingUrl] = useState("")
   const [optionalMeetingPasscode, setOptionalMeetingPasscode] = useState("")
-
-  useEffect(() => {
-    const uid = user?.id
-    if (uid && !doctorId) setDoctorId(String(uid))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id])
 
   const loadQueue = useCallback(async () => {
     try {
@@ -205,7 +180,11 @@ export default function TelemedicineCreatePage() {
             },
       )
       if (created?.sessionId) {
-        openTelemedicineFloating(created.sessionId)
+        const patientDisplayName =
+          entry.patientFirstName && entry.patientLastName
+            ? `${entry.patientFirstName} ${entry.patientLastName}`.trim()
+            : undefined
+        openTelemedicineFloating(created.sessionId, { patientId: pid, patientDisplayName })
         toast(
           telemedicineCreateToast(created, {
             title: "Telemedicine session started",
@@ -227,75 +206,6 @@ export default function TelemedicineCreatePage() {
     }
   }
 
-  const handleManualCreate = async () => {
-    if (!canStartNewTelemedicineVisit) {
-      toast({
-        title: "Meeting defaults required",
-        description: "Save Telemedicine → My Zoom defaults before starting a new visit, or join an active visit from the board.",
-        variant: "destructive",
-      })
-      return
-    }
-    if (!doctorId) {
-      toast({ title: "Doctor required", description: "Enter the clinician (user) ID.", variant: "destructive" })
-      return
-    }
-    try {
-      setCreatingManual(true)
-      if (manualKind === "inpatient") {
-        if (!admissionId.trim()) {
-          toast({ title: "Admission required", variant: "destructive" })
-          return
-        }
-        if (!patientId.trim()) {
-          toast({ title: "Patient required", variant: "destructive" })
-          return
-        }
-        const created = await telemedicineApi.createSession({
-          originType: "inpatient",
-          patientId: Number(patientId),
-          doctorId: Number(doctorId),
-          admissionId: Number(admissionId.trim()),
-          videoProvider,
-          notes: notes?.trim() || null,
-          ...telemedicineOptionalLinkBody(optionalMeetingUrl, optionalMeetingPasscode),
-        })
-        openTelemedicineFloating(created.sessionId)
-        toast(
-          telemedicineCreateToast(created, {
-            title: "Session created",
-            description: `Session #${created.sessionId}`,
-          }),
-        )
-      } else {
-        if (!patientId.trim()) {
-          toast({ title: "Patient required", variant: "destructive" })
-          return
-        }
-        const created = await telemedicineApi.createSession({
-          originType: "standalone",
-          patientId: Number(patientId),
-          doctorId: Number(doctorId),
-          videoProvider,
-          notes: notes?.trim() || null,
-          ...telemedicineOptionalLinkBody(optionalMeetingUrl, optionalMeetingPasscode),
-        })
-        openTelemedicineFloating(created.sessionId)
-        toast(
-          telemedicineCreateToast(created, {
-            title: "Session created",
-            description: `Session #${created.sessionId}`,
-          }),
-        )
-      }
-      void loadSessions()
-    } catch (err: any) {
-      toast({ title: "Failed", description: err?.message || "Could not create session", variant: "destructive" })
-    } finally {
-      setCreatingManual(false)
-    }
-  }
-
   const totalSessionPages = Math.max(1, Math.ceil(sessionsTotal / SESSION_PAGE_SIZE))
 
   return (
@@ -306,9 +216,9 @@ export default function TelemedicineCreatePage() {
             <Video className="h-7 w-7" />
             Telemedicine sessions
           </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Start visits from the live <strong>telemedicine queue</strong>, track <strong>active and ended</strong> sessions, and copy the Zoom link
-            for nurses or other staff to join.
+          <p className="text-sm text-muted-foreground mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span>Queue, active visits, and session board.</span>
+            <TelemedicineHelpLink />
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -326,14 +236,11 @@ export default function TelemedicineCreatePage() {
       <Card className="border-dashed">
         <CardHeader className="py-3">
           <CardTitle className="text-base">Video platform for new sessions</CardTitle>
-          <CardDescription>
-            <strong>Starting a new visit</strong> requires saved{" "}
-            <Link href="/telemedicine/settings" className="underline">
-              My Zoom defaults
-            </Link>{" "}
-            (join URL + optional passcode). Optional fields below prefill from those defaults when Zoom is selected. Only{" "}
-            <strong>one active session per patient</strong> — others join via the board. To join someone else&apos;s visit, use{" "}
-            <strong>Join meeting</strong> / <strong>Join in HMIS</strong> — no defaults needed.
+          <CardDescription className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span>
+              Defaults required to <strong>start</strong> a new visit — see settings. Optional link fields prefill when Zoom is selected.
+            </span>
+            <TelemedicineHelpLink />
           </CardDescription>
         </CardHeader>
         <CardContent className="pt-0 max-w-md space-y-4">
@@ -367,9 +274,9 @@ export default function TelemedicineCreatePage() {
             <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
               <div>
                 <CardTitle className="text-lg">Patients waiting (telemedicine)</CardTitle>
-                <CardDescription>
-                  Same list as the Telemedicine tab on Queue Management. <strong>Start telemedicine</strong> is available only after My Zoom defaults
-                  are saved; otherwise use the Active video visits board to join.
+                <CardDescription className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span>Same queue as Queue Management → Telemedicine.</span>
+                  <TelemedicineHelpLink />
                 </CardDescription>
               </div>
               <Button type="button" variant="outline" size="sm" onClick={() => void loadQueue()} disabled={queueLoading}>
@@ -465,9 +372,9 @@ export default function TelemedicineCreatePage() {
           <Card>
             <CardHeader>
               <CardTitle className="text-lg">Session board</CardTitle>
-              <CardDescription>
-                Facility-wide list: filter <strong>Active</strong> (not ended) or <strong>Ended</strong>. Each row shows the stored meeting link and{" "}
-                <strong>Join meeting</strong> / <strong>Join in HMIS</strong> so nurses and other providers join the same call — not a new session.
+              <CardDescription className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span>Filter active / ended / all. Join actions use the same HMIS session.</span>
+                <TelemedicineHelpLink />
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -532,7 +439,7 @@ export default function TelemedicineCreatePage() {
                           <TableHead>Platform</TableHead>
                           <TableHead>Origin</TableHead>
                           <TableHead>Status</TableHead>
-                          <TableHead className="min-w-[220px]">Meeting link &amp; join</TableHead>
+                          <TableHead className="min-w-[220px]">Join &amp; copy</TableHead>
                           <TableHead className="text-right w-[120px]">Page</TableHead>
                         </TableRow>
                       </TableHeader>
@@ -570,6 +477,7 @@ export default function TelemedicineCreatePage() {
                                 sessionId={s.sessionId}
                                 zoomJoinUrl={s.zoomJoinUrl}
                                 provider={s.provider}
+                                hideMeetingLinkField
                               />
                             </TableCell>
                             <TableCell className="text-right align-top">
@@ -614,76 +522,6 @@ export default function TelemedicineCreatePage() {
           </Card>
         </TabsContent>
       </Tabs>
-
-      <Collapsible open={manualOpen} onOpenChange={setManualOpen}>
-        <Card>
-          <CollapsibleTrigger asChild>
-            <Button variant="ghost" className="w-full justify-between p-6 h-auto">
-              <div className="text-left">
-                <p className="font-medium">Other ways to start</p>
-                <p className="text-sm text-muted-foreground font-normal">Inpatient (admission) or standalone visit without a queue row</p>
-              </div>
-              <ChevronDown className={`h-5 w-5 shrink-0 transition-transform ${manualOpen ? "rotate-180" : ""}`} />
-            </Button>
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <CardContent className="space-y-4 pt-0 border-t">
-              <div className="flex flex-wrap gap-2 pt-4">
-                <Button
-                  type="button"
-                  variant={manualKind === "standalone" ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setManualKind("standalone")}
-                  className="gap-2"
-                >
-                  <UserRound className="h-4 w-4" />
-                  Standalone
-                </Button>
-                <Button
-                  type="button"
-                  variant={manualKind === "inpatient" ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setManualKind("inpatient")}
-                  className="gap-2"
-                >
-                  <Stethoscope className="h-4 w-4" />
-                  Inpatient
-                </Button>
-              </div>
-              {manualKind === "inpatient" && (
-                <div className="space-y-1">
-                  <Label>Admission ID</Label>
-                  <Input value={admissionId} onChange={(e) => setAdmissionId(e.target.value)} placeholder="e.g. 3" />
-                </div>
-              )}
-              <div className="space-y-1">
-                <Label>Patient ID</Label>
-                <Input value={patientId} onChange={(e) => setPatientId(e.target.value)} placeholder="e.g. 1" />
-              </div>
-              <div className="space-y-1">
-                <Label>Doctor (user) ID</Label>
-                <Input value={doctorId} onChange={(e) => setDoctorId(e.target.value)} />
-              </div>
-              <div className="space-y-1">
-                <Label>Notes (optional)</Label>
-                <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} />
-              </div>
-              <Button
-                type="button"
-                onClick={() => void handleManualCreate()}
-                disabled={creatingManual || zoomDefaultsLoading || !canStartNewTelemedicineVisit}
-                title={
-                  !canStartNewTelemedicineVisit && !zoomDefaultsLoading
-                    ? "Save Telemedicine → My Zoom defaults before starting a new visit"
-                    : undefined
-                }
-              >
-                {creatingManual ? "Creating…" : "Create session"}
-              </Button>
-            </CardContent>
-          </CollapsibleContent>
-        </Card>
-      </Collapsible>
     </div>
   )
 }

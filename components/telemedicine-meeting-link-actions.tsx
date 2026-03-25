@@ -15,6 +15,8 @@ type Props = {
   compact?: boolean
   /** Hide "Join in HMIS" (e.g. on static marketing page) */
   hideOpenInPanel?: boolean
+  /** Hide the read-only URL field — use Copy link / Join only (link still used for actions). */
+  hideMeetingLinkField?: boolean
 }
 
 /**
@@ -26,6 +28,7 @@ export function TelemedicineMeetingLinkActions({
   provider,
   compact,
   hideOpenInPanel,
+  hideMeetingLinkField,
 }: Props) {
   const { toast } = useToast()
   const { openSession } = useTelemedicineFloating()
@@ -82,15 +85,17 @@ export function TelemedicineMeetingLinkActions({
 
   return (
     <div className={compact ? "space-y-1.5" : "space-y-2"}>
-      <div className="space-y-1">
-        <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Meeting link</label>
-        <Input
-          readOnly
-          value={url}
-          className={`font-mono text-xs ${compact ? "h-8 py-1" : ""} bg-muted/50`}
-          onClick={(e) => (e.target as HTMLInputElement).select()}
-        />
-      </div>
+      {!hideMeetingLinkField && (
+        <div className="space-y-1">
+          <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Meeting link</label>
+          <Input
+            readOnly
+            value={url}
+            className={`font-mono text-xs ${compact ? "h-8 py-1" : ""} bg-muted/50`}
+            onClick={(e) => (e.target as HTMLInputElement).select()}
+          />
+        </div>
+      )}
       <div className={`flex flex-wrap gap-1.5 ${compact ? "" : "gap-2"}`}>
         <Button
           type="button"

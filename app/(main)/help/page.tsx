@@ -1,5 +1,7 @@
 "use client"
 
+import { Suspense } from "react"
+import { useSearchParams } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
@@ -19,11 +21,15 @@ import {
   CheckCircle2,
   Clock,
   UserCheck,
-  Stethoscope
+  Stethoscope,
+  Video,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 
-export default function HelpPage() {
+function HelpPageContent() {
+  const searchParams = useSearchParams()
+  const initialTab = searchParams.get("tab") === "telemedicine" ? "telemedicine" : "workflows"
+
   return (
     <div className="flex flex-col gap-6">
       <div>
@@ -33,13 +39,96 @@ export default function HelpPage() {
         </p>
       </div>
 
-      <Tabs defaultValue="workflows" className="w-full">
-        <TabsList className="grid w-full grid-cols-4">
+      <Tabs defaultValue={initialTab} className="w-full">
+        <TabsList className="flex w-full flex-wrap gap-1 h-auto min-h-10 justify-start sm:grid sm:grid-cols-5">
           <TabsTrigger value="workflows">Workflows</TabsTrigger>
           <TabsTrigger value="modules">Modules</TabsTrigger>
+          <TabsTrigger value="telemedicine" className="gap-1.5">
+            <Video className="h-3.5 w-3.5" />
+            Telemedicine
+          </TabsTrigger>
           <TabsTrigger value="quick-start">Quick Start</TabsTrigger>
           <TabsTrigger value="faq">FAQ</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="telemedicine" className="space-y-6 mt-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Video className="h-5 w-5" />
+                Telemedicine &amp; video visits
+              </CardTitle>
+              <CardDescription>
+                Meeting links and consent are stored in HMIS. HMIS does not call Zoom or other vendor APIs to create meetings—it only stores
+                what you paste or copy from <strong>My Zoom defaults</strong>, plus audit and consent.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6 text-sm leading-relaxed">
+              <section className="space-y-2">
+                <h3 className="font-semibold text-base text-foreground">One session per patient</h3>
+                <p className="text-muted-foreground">
+                  There is <strong>one active HMIS telemedicine session per patient</strong>. Everyone joins that same session. The meeting URL
+                  appears on the facility board after it is saved—for <strong>Zoom</strong> that may happen automatically from{" "}
+                  <strong>My Zoom defaults</strong> (or an optional link when starting); otherwise the clinician pastes the link in the visit
+                  panel first. Use <strong>Join meeting</strong> to open the link in the browser, or <strong>Join in HMIS</strong> for the session
+                  panel (consent, documentation, optional embedded video).
+                </p>
+              </section>
+
+              <section className="space-y-2">
+                <h3 className="font-semibold text-base text-foreground">Hub &amp; session board</h3>
+                <p className="text-muted-foreground">
+                  <strong>Telemedicine</strong> lists recent facility sessions. <strong>Telemedicine sessions</strong> (create page) has the
+                  live queue, the <strong>Active video visits</strong> board, and a filterable session board with Join actions so nurses and
+                  other staff use the <strong>same</strong> call—not a new room.
+                </p>
+              </section>
+
+              <section className="space-y-2">
+                <h3 className="font-semibold text-base text-foreground">Starting vs joining</h3>
+                <p className="text-muted-foreground">
+                  <strong>Starting a new visit</strong> requires saved <strong>My Zoom defaults</strong> (join URL + optional passcode) when
+                  your workflow uses that. <strong>Joining</strong> a visit someone else started uses <strong>Join meeting</strong> /{" "}
+                  <strong>Join in HMIS</strong> on the board—no defaults needed.
+                </p>
+              </section>
+
+              <section className="space-y-2">
+                <h3 className="font-semibold text-base text-foreground">Session panel (visit)</h3>
+                <ul className="list-disc pl-5 space-y-1 text-muted-foreground">
+                  <li>Paste or save the platform join link and optional passcode; apply saved Zoom defaults when available.</li>
+                  <li>Record patient consent (and guardian consent when the patient is under 18) before starting the teleconsultation.</li>
+                  <li>
+                    <strong>Embedded video</strong> (if enabled by your server): Zoom Meeting SDK in the page. Use a standard join URL with{" "}
+                    <code className="rounded bg-muted px-1">/j/</code> and the meeting number. Optional: <code className="rounded bg-muted px-1">ENABLE_ZOOM_COEP_HEADERS=true</code> at build for better gallery/virtual background performance.
+                  </li>
+                  <li>
+                    If embedding is not configured, add Meeting SDK credentials on the API server—or open Zoom in a new window / popup (many
+                    providers block iframes).
+                  </li>
+                </ul>
+              </section>
+
+              <section className="space-y-2">
+                <h3 className="font-semibold text-base text-foreground">Embedded Zoom controls</h3>
+                <p className="text-muted-foreground">
+                  Choose SDK role (host vs participant) if join fails. Use <strong>Larger video area</strong> / <strong>Smaller video area</strong>{" "}
+                  to resize the box. After joining, mic and camera start off — use <strong>Join audio</strong> (headset) with{" "}
+                  <strong>Computer audio</strong>, then <strong>Start video</strong>, and allow browser prompts. Prefer <strong>HTTPS</strong> or{" "}
+                  <strong>localhost</strong> for media; if controls stay disabled, check site permissions (lock icon in the address bar).
+                </p>
+              </section>
+
+              <section className="space-y-2">
+                <h3 className="font-semibold text-base text-foreground">My Zoom defaults (settings)</h3>
+                <p className="text-muted-foreground">
+                  Save your usual Zoom join link (e.g. Personal Meeting link). New sessions can copy these automatically; you can still change
+                  per visit. Stored for clinical use—use a link you are allowed to share for patient care.
+                </p>
+              </section>
+            </CardContent>
+          </Card>
+        </TabsContent>
 
         <TabsContent value="workflows" className="space-y-6 mt-6">
           <Card>
@@ -773,3 +862,10 @@ export default function HelpPage() {
   )
 }
 
+export default function HelpPage() {
+  return (
+    <Suspense fallback={<div className="flex flex-col gap-6 p-8 text-muted-foreground">Loading help…</div>}>
+      <HelpPageContent />
+    </Suspense>
+  )
+}

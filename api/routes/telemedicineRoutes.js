@@ -988,6 +988,30 @@ router.post('/sessions/:sessionId/end', async (req, res) => {
   try {
     const { sessionId } = req.params;
     const actorUserId = getUserId(req);
+    if (!actorUserId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const [rows] = await pool.execute(
+      `SELECT doctorId, status FROM telemedicine_sessions WHERE sessionId = ?`,
+      [sessionId]
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+    const row = rows[0];
+    if (String(row.status) === 'ended') {
+      return res.status(400).json({ error: 'Session already ended' });
+    }
+
+    const roleName = await getRoleNameByUserId(actorUserId);
+    const isOwner = Number(row.doctorId) === Number(actorUserId);
+    const rn = (roleName || '').toLowerCase();
+    const isAdmin = rn === 'admin' || rn.includes('admin');
+    const canFacility = mayViewFacilityTelemedicineBoard(roleName);
+    if (!isAdmin && !isOwner && !canFacility) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
 
     await pool.execute(
       `UPDATE telemedicine_sessions
@@ -998,7 +1022,7 @@ router.post('/sessions/:sessionId/end', async (req, res) => {
     await pool.execute(
       `INSERT INTO telemedicine_session_audit (sessionId, eventType, actorUserId, details)
        VALUES (?, 'call_ended', ?, NULL)`,
-      [sessionId, actorUserId || null]
+      [sessionId, actorUserId]
     );
     return res.status(200).json({ ok: true });
   } catch (err) {
@@ -1104,6 +1128,8 @@ router.post('/sessions/:sessionId/zoom-sdk-signature', async (req, res) => {
       signature,
       meetingNumber: String(meetingNumber),
       password,
+      /** Public Meeting SDK client id — some SDK builds expect this on join alongside signature. */
+      sdkKey,
     });
   } catch (err) {
     console.error('zoom-sdk-signature error:', err);

@@ -151,7 +151,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               }
               
               setUser({
-                id: payload.user.id?.toString() || '',
+                id:
+                  payload.user.id?.toString() ||
+                  payload.user.userId?.toString() ||
+                  '',
                 username: payload.user.username,
                 role: payload.user.roleName?.toLowerCase() || payload.user.role?.toLowerCase() || 'registration',
                 name: `${payload.user.firstName || ''} ${payload.user.lastName || ''}`.trim(),

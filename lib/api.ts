@@ -1034,7 +1034,7 @@ export const telemedicineApi = {
 
   /** Server-generated Meeting SDK JWT for ZoomMtgEmbedded.join — never sign in the browser. */
   getZoomSdkSignature: (sessionId: string, body?: { role?: 0 | 1 }) =>
-    apiRequest<{ signature: string; meetingNumber: string; password: string }>(
+    apiRequest<{ signature: string; meetingNumber: string; password: string; sdkKey?: string }>(
       `/api/telemedicine/sessions/${sessionId}/zoom-sdk-signature`,
       { method: 'POST', body: body ?? {} }
     ),

@@ -419,7 +419,11 @@ export default function QueueManagement() {
             },
       )
       if (created?.sessionId) {
-        openTelemedicineFloating(created.sessionId)
+        const patientDisplayName =
+          queue.patientFirstName && queue.patientLastName
+            ? `${queue.patientFirstName} ${queue.patientLastName}`.trim()
+            : undefined
+        openTelemedicineFloating(created.sessionId, { patientId, patientDisplayName })
         toast(
           telemedicineCreateToast(created, {
             title: "Telemedicine session ready",

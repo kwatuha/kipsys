@@ -49,6 +49,10 @@ services:
     depends_on:
       mysql_db:
         condition: service_healthy
+    # Same as dev docker-compose.yml: load secrets (JWT, Zoom Meeting SDK, etc.) from project .env on the server.
+    # Without this, ZOOM_CLIENT_ID / ZOOM_CLIENT_SECRET never reach the API container and embedded Zoom stays hidden.
+    env_file:
+      - .env
     environment:
       NODE_ENV: production
       DB_HOST: ${DB_HOST:-mysql_db}

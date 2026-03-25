@@ -9,11 +9,21 @@ import {
   type ReactNode,
 } from "react"
 
+/** Optional patient hint when opening the floating panel (filled from session GET if omitted). */
+export type TelemedicineOpenOptions = {
+  patientId?: string | number
+  patientDisplayName?: string
+}
+
 export type TelemedicineFloatingContextValue = {
   /** Active session shown in the floating panel (null = hidden) */
   sessionId: string | null
   minimized: boolean
-  openSession: (sessionId: string | number) => void
+  /** Patient for encounter/history beside video (from opener or session load) */
+  patientId: string | null
+  patientDisplayName: string | null
+  openSession: (sessionId: string | number, options?: TelemedicineOpenOptions) => void
+  setFloatingPatientMeta: (meta: { patientId?: string | null; patientDisplayName?: string | null }) => void
   closePanel: () => void
   setMinimized: (value: boolean) => void
   toggleMinimize: () => void
@@ -24,15 +34,36 @@ const TelemedicineFloatingContext = createContext<TelemedicineFloatingContextVal
 export function TelemedicineFloatingProvider({ children }: { children: ReactNode }) {
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [minimized, setMinimized] = useState(false)
+  const [patientId, setPatientId] = useState<string | null>(null)
+  const [patientDisplayName, setPatientDisplayName] = useState<string | null>(null)
 
-  const openSession = useCallback((id: string | number) => {
+  const openSession = useCallback((id: string | number, options?: TelemedicineOpenOptions) => {
     setSessionId(String(id))
     setMinimized(false)
+    if (options?.patientId != null && String(options.patientId).trim() !== "") {
+      setPatientId(String(options.patientId))
+    } else {
+      setPatientId(null)
+    }
+    const label = options?.patientDisplayName?.trim()
+    setPatientDisplayName(label || null)
+  }, [])
+
+  const setFloatingPatientMeta = useCallback((meta: { patientId?: string | null; patientDisplayName?: string | null }) => {
+    if (meta.patientId !== undefined) {
+      setPatientId(meta.patientId != null && String(meta.patientId).trim() !== "" ? String(meta.patientId) : null)
+    }
+    if (meta.patientDisplayName !== undefined) {
+      const t = meta.patientDisplayName?.trim()
+      setPatientDisplayName(t || null)
+    }
   }, [])
 
   const closePanel = useCallback(() => {
     setSessionId(null)
     setMinimized(false)
+    setPatientId(null)
+    setPatientDisplayName(null)
   }, [])
 
   const toggleMinimize = useCallback(() => {
@@ -43,12 +74,24 @@ export function TelemedicineFloatingProvider({ children }: { children: ReactNode
     () => ({
       sessionId,
       minimized,
+      patientId,
+      patientDisplayName,
       openSession,
+      setFloatingPatientMeta,
       closePanel,
       setMinimized,
       toggleMinimize,
     }),
-    [sessionId, minimized, openSession, closePanel, toggleMinimize]
+    [
+      sessionId,
+      minimized,
+      patientId,
+      patientDisplayName,
+      openSession,
+      setFloatingPatientMeta,
+      closePanel,
+      toggleMinimize,
+    ]
   )
 
   return (

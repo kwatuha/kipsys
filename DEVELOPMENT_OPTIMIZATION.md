@@ -1,86 +1,39 @@
-# Development Performance Optimization
+# Development performance (Next.js)
 
-## Problem
-When running Next.js in development mode (`next dev`), pages are compiled on-demand when you first access them. This can be slow, especially for complex routes.
+## On-demand compilation in `next dev`
 
-## Solution: Pre-compile Everything (Recommended)
+`next dev` (with or without `--turbo`) **compiles each route when you first open it**. That “Compiling…” delay is expected.
 
-**Use the pre-compiled dev command to build everything first, then start the dev server:**
+Running **`next build` before `next dev`** does **not** reliably skip future dev compiles — the dev bundler still does its own work. Old scripts named `dev:precompiled` were **misleading** and were removed.
+
+## If you want everything built before you browse
+
+Use a **production** server locally (no per-route dev compile):
 
 ```bash
-npm run dev:precompiled
+npm run preview
 ```
 
-This command will:
-1. **Build all pages and routes** (compiles everything upfront)
-2. **Start dev server with Turbo mode** (uses pre-compiled pages)
-3. **Enable hot reload** (still works for code changes)
+This runs **`next build`** then **`next start`**. All routes are pre-built; navigation is fast. **Trade-off:** no hot reload — change code → run `preview` again (or use `dev` while editing).
 
-### How It Works
+See **`docs/LOCAL_NEXT_DEV.md`** for details, ports (`preview:3003`), and how this relates to Telemedicine / Zoom testing.
 
-When you run `npm run dev:precompiled`:
-- First, it runs `next build` which compiles all pages, routes, and components
-- Then, it starts `next dev` which uses the cached compiled pages from the build
-- When you access a route, it's already compiled - **no waiting!**
-- Hot reload still works for code changes (only changed files recompile)
-
-### Alternative Commands
+## Daily coding
 
 ```bash
-# Pre-compile everything then start dev (RECOMMENDED)
-npm run dev:precompiled
-
-# Regular dev mode (compiles on-demand, slower first access)
-npm run dev
-
-# Production build for local testing (fastest, but no hot reload)
-npm run build:prod
-```
-
-## Configuration Optimizations
-
-The `next.config.mjs` has been optimized with:
-
-1. **Extended Page Cache**: Pages stay in memory for 25 minutes (instead of 5)
-2. **Larger Buffer**: Keeps 50 pages in buffer (instead of 10)
-3. **Turbo Mode**: Enabled by default for faster compilation
-4. **Package Optimization**: Optimized imports for large libraries
-
-## Performance Tips
-
-1. **First Build**: The initial `next build` takes a few minutes but only needs to run once
-2. **Cache Persists**: Next.js caches compiled pages in `.next` folder - don't delete it
-3. **Incremental**: After first build, only changed files recompile
-4. **Turbo Mode**: Uses Rust-based compiler for faster builds
-
-## When to Rebuild
-
-You only need to rebuild when:
-- Adding new routes/pages
-- Changing `next.config.mjs`
-- Major dependency updates
-- Clearing `.next` folder
-
-Otherwise, the cached build is reused and only changed files recompile.
-
-## Workflow Recommendation
-
-**For daily development:**
-```bash
-# Start your day - pre-compile everything
-npm run dev:precompiled
-
-# During the day - just use regular dev (uses cache)
 npm run dev
 ```
 
-**For quick testing:**
-```bash
-# If you just need to test something quickly
-npm run dev
-```
+Uses Turbopack (`--turbo`). After you’ve opened a page once, revisiting it is usually quick.
 
-The pre-compiled approach gives you the best of both worlds:
-- ✅ Fast route access (everything pre-compiled)
-- ✅ Hot reload (code changes still work)
-- ✅ Development features (error overlays, etc.)
+## `next.config.mjs` tweaks already in the repo
+
+- **`onDemandEntries`**: keeps more pages in memory longer in dev
+- **`experimental.optimizePackageImports`**: tree-shakes large icon/UI packages
+- **Turbopack** via the `dev` script
+
+## When a full `next build` helps
+
+- Before **`npm run preview`** or **`npm run build:prod`**
+- After changing **`next.config.mjs`**, env, or major dependencies
+- CI / Docker images

@@ -6,9 +6,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { useToast } from "@/hooks/use-toast"
 import { telemedicineApi } from "@/lib/api"
+import { TelemedicineHelpLink } from "@/components/telemedicine-help-link"
 import { ArrowLeft, Loader2 } from "lucide-react"
 
 export default function TelemedicineSettingsPage() {
@@ -77,18 +77,12 @@ export default function TelemedicineSettingsPage() {
       <Card>
         <CardHeader>
           <CardTitle>My Zoom defaults</CardTitle>
-          <CardDescription>
-            Save your usual <strong>Zoom join link</strong> (e.g. Personal Meeting ID link from the Zoom app). Each new telemedicine session will copy
-            these into the patient record automatically—you can still change them per visit on the session page.
+          <CardDescription className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span>Default join URL for new sessions (editable per visit).</span>
+            <TelemedicineHelpLink />
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <Alert>
-            <AlertTitle>Privacy</AlertTitle>
-            <AlertDescription>
-              Stored in your hospital database for clinical use. Use a meeting link you are allowed to share for patient care.
-            </AlertDescription>
-          </Alert>
 
           {loading ? (
             <div className="flex items-center gap-2 text-muted-foreground">

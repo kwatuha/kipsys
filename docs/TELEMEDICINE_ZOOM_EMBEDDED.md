@@ -44,7 +44,8 @@ ZOOM_MEETING_SDK_SECRET=your_client_secret_here
 
 | How you run the API | File to edit |
 |---------------------|--------------|
-| **Docker Compose** (`docker compose up`) | Project root **`.env`** (copy from **`.env.example`**). The `api` service uses `env_file: .env` so variables are injected into the container. |
+| **Docker Compose (dev)** (`docker compose up`) | Project root **`.env`**. The `api` service uses `env_file: .env`. |
+| **Docker Compose (production deploy)** (`docker compose -f docker-compose.deploy.yml …`) | Same: **`docker-compose.deploy.yml`** now includes **`env_file: .env`** on the **`api`** service. Put `ZOOM_CLIENT_ID` / `ZOOM_CLIENT_SECRET` (or `ZOOM_MEETING_SDK_*`) in **`~/kiplombe-hmis/.env` on the server**, then **`docker compose … up -d`** (or re-run **`remote-deploy-fast.sh`**) so the API container picks them up. If you skip this, the UI will never show **Show video in panel** because `/api/telemedicine/zoom-meeting-sdk-status` returns `configured: false`. |
 | **Local Node** (`nodemon` / `node app.js` from `api/`) | **`api/.env`** (copy from **`api/.env.example`**). `dotenv` loads from the `api` working directory. |
 
 The API signs a short-lived JWT (`HMAC-SHA256`) and returns it to the browser. **Never** generate this signature in frontend code.
@@ -112,10 +113,47 @@ If the meeting **embeds successfully** (you see the Zoom UI and your name) but *
 
 This is normal Zoom UX, not necessarily a failed embed.
 
-## 8. Frontend: `npm install` and CSS resolution
+## 8. `RECONNECTING_MEETING` or constant reconnect (especially local dev)
+
+If the meeting **briefly embeds** then **reconnects in a loop** and ends with **`RECONNECTING_MEETING`** or a similar error:
+
+1. **React Strict Mode** — Next.js sets `reactStrictMode: true` in `next.config.mjs`. In development, React **mounts → unmounts → remounts** components once to surface side-effect bugs. That **cleans up** the Zoom embed (`leaveMeeting` / `destroyClient`) while the SDK is still connecting, which can trigger reconnect storms. **Production builds** (`npm run build` / Docker) do not double-mount the same way.
+2. **Effect re-runs** — The embed only re-inits when **`sessionId`**, **`sdkRole`**, or **`sdkRuntimeReady`** change. User name/email are read from refs so **auth hydration** does not restart the meeting.
+3. **If you still need to debug** — Temporarily set `reactStrictMode: false` in `next.config.mjs` while testing Zoom locally (revert afterward).
+
+The `ZoomEmbeddedMeeting` component uses a **generation guard** so async `init`/`join` from a **previous** effect run is ignored after teardown.
+
+## 9. `Zoom SDK join timed out`
+
+The embed waits up to **~2 minutes** for `join` (first load may download wasm/media from Zoom CDNs). If you still see a timeout:
+
+1. **Network / firewall** — Allow browser access to `*.zoom.us` / `source.zoom.us` (including `wss://` WebSockets). Corporate proxies often block these.
+2. **Slow link** — Retry; the Meeting SDK pulls several assets on first join.
+3. **Callbacks** — The client uses Zoom’s `success` / `error` join callbacks **and** the returned promise so joins aren’t marked failed when only one path completes.
+
+## 10. Frontend: `npm install` and CSS resolution
 
 - **Yes — install dependencies** where Next.js runs: at the **project root** (same folder as `package.json`), run `npm install` so `@zoom/meetingsdk` exists under `node_modules/`.
 - **Docker (frontend service):** Ensure the image or entrypoint runs `npm install` (or your volume includes `node_modules`). If `node_modules` is empty inside the container, the Zoom package (and the CSS file) will be missing.
 - **`Module not found … zoom-meetingsdk.css` / dev overlay `BuildError`:** Zoom’s CSS is **copied** to `public/vendor/zoom-meetingsdk.css` by `npm run copy-zoom-css` (also **`postinstall`**, **`predev`**, **`docker-entrypoint-frontend.sh`** after install, and before **`npm run build`**). The script only uses paths under `node_modules/…` (no `require.resolve`), so it won’t crash if deps aren’t ready yet in Docker — run **`npm install`** in the container / wait for the entrypoint to finish, then the copy will succeed on the next start or when you hit **Show video in panel** (predev runs again).
 - **`Cannot find module '@zoom/meetingsdk/embedded'` / `Can't resolve ...embedded.js`:** We no longer import embedded code through the bundler. The app loads `/vendor/zoomus-websdk-embedded.umd.min.js` at runtime (copied by `scripts/copy-zoom-sdk-css.mjs`) and uses `window.ZoomMtgEmbedded`. If this fails, run `npm run copy-zoom-css`, confirm the file exists under `public/vendor/`, and restart the dev server.
 - **`ReactCurrentOwner ... __SECRET_INTERNALS... is undefined` while loading runtime:** this is typically a React 19 vs Zoom UMD runtime mismatch. HMIS now loads Zoom’s bundled React 18 vendor scripts (`/vendor/zoom-react18.min.js`, `/vendor/zoom-react-dom18.min.js`) before the embedded runtime.
+
+## 11. Embedded video looks small in the panel (empty space beside it)
+
+The Meeting SDK **Component View** draws into a fixed-size box. HMIS sets **`viewSizes`** from the container, defaults to **speaker** view (larger main tile), and syncs on resize.
+
+- Use **Larger video area** / **Smaller video area** above the embed to grow the box (calls `updateVideoOptions` via `ResizeObserver`; no re-join).
+- The floating panel width was increased (`telemedicine-floating-panel.tsx`); use **Open full page** (external link) if you need the whole screen.
+
+## 12. “Compiling” on every page; header errors while video still says “joining”
+
+In **`next dev`**, routes compile **on first visit** — there is no full pre-compile. That can make the shell (header, layout) and API calls finish at different times than the Zoom embed (which loads scripts asynchronously and may show **joining** for a long time). That’s usually **not** one single app bug.
+
+To test embedded Zoom without per-route dev compilation, run a **production** server locally:
+
+```bash
+npm run preview
+```
+
+See **`docs/LOCAL_NEXT_DEV.md`** for ports, trade-offs, and when to use `dev` vs `preview`.

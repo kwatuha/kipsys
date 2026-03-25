@@ -5,11 +5,13 @@ import dynamic from "next/dynamic"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { useToast } from "@/hooks/use-toast"
 import { telemedicineApi } from "@/lib/api"
 import {
@@ -18,6 +20,10 @@ import {
   meetingLinkFieldLabel,
   openMeetingButtonLabel,
 } from "@/lib/telemedicine-providers"
+import { TelemedicineHelpLink } from "@/components/telemedicine-help-link"
+import { ChevronDown } from "lucide-react"
+import { cn } from "@/lib/utils"
+import { useTelemedicineFloating } from "@/lib/telemedicine-floating-context"
 
 const ZoomEmbeddedMeeting = dynamic(
   () => import("@/components/zoom-embedded-meeting").then((m) => m.ZoomEmbeddedMeeting),
@@ -81,6 +87,7 @@ export function TelemedicineSessionPanel({
 }: TelemedicineSessionPanelProps) {
   const router = useRouter()
   const { toast } = useToast()
+  const { setFloatingPatientMeta } = useTelemedicineFloating()
   const isFloating = variant === "floating"
 
   const [loading, setLoading] = useState(true)
@@ -101,13 +108,37 @@ export function TelemedicineSessionPanel({
   const [floatingZoomOpenUrl, setFloatingZoomOpenUrl] = useState<string | null>(null)
 
   /** Zoom Meeting SDK embed (optional — requires API env + standard /j/######## URL) */
-  const [showEmbeddedZoom, setShowEmbeddedZoom] = useState(false)
+  const [showEmbeddedZoom, setShowEmbeddedZoom] = useState(variant === "floating")
   const [sdkEmbedConfigured, setSdkEmbedConfigured] = useState<boolean | null>(null)
+  /** Floating: meeting link / consent block collapsed by default to maximize video area */
+  const [meetingDetailsOpen, setMeetingDetailsOpen] = useState(variant !== "floating")
+  /** Consent checkboxes (nested inside meeting details) collapsed by default */
+  const [consentSectionOpen, setConsentSectionOpen] = useState(false)
 
   useEffect(() => {
     setFloatingZoomOpenUrl(null)
-    setShowEmbeddedZoom(false)
-  }, [sessionId])
+    setShowEmbeddedZoom(variant === "floating")
+    setMeetingDetailsOpen(variant !== "floating")
+    setConsentSectionOpen(false)
+  }, [sessionId, variant])
+
+  useEffect(() => {
+    if (!session) return
+    const st = session.status
+    if (st === "waiting_for_consent" || st === "created") {
+      if (isFloating) setMeetingDetailsOpen(true)
+      setConsentSectionOpen(true)
+    }
+  }, [isFloating, session?.status, sessionId])
+
+  useEffect(() => {
+    if (!isFloating || !session?.patientId) return
+    const name = [session.patientFirstName, session.patientLastName].filter(Boolean).join(" ").trim()
+    setFloatingPatientMeta({
+      patientId: String(session.patientId),
+      patientDisplayName: name || null,
+    })
+  }, [isFloating, session?.patientId, session?.patientFirstName, session?.patientLastName, setFloatingPatientMeta])
 
   useEffect(() => {
     let cancelled = false
@@ -262,6 +293,8 @@ export function TelemedicineSessionPanel({
 
       const refreshed = await telemedicineApi.getSession(sessionId)
       setSession(refreshed)
+      setConsentSectionOpen(false)
+      if (isFloating) setMeetingDetailsOpen(false)
     } catch (err: any) {
       console.error(err)
       toast({
@@ -372,10 +405,14 @@ export function TelemedicineSessionPanel({
 
   const handleEndSession = async () => {
     try {
+      setShowEmbeddedZoom(false)
       await telemedicineApi.endSession(sessionId)
       const refreshed = await telemedicineApi.getSession(sessionId)
       setSession(refreshed)
-      toast({ title: "Session ended", description: "Teleconsultation marked as ended." })
+      toast({
+        title: "Session ended",
+        description: "Teleconsultation is closed. Video has been hidden; you can close this panel when ready.",
+      })
     } catch (err: any) {
       toast({ title: "Error", description: err?.message || "Could not end session", variant: "destructive" })
     }
@@ -411,163 +448,135 @@ export function TelemedicineSessionPanel({
 
   const wrapperClass = isFloating ? "space-y-3 text-sm" : "max-w-3xl mx-auto space-y-4"
 
-  return (
-    <div className={wrapperClass}>
-      <Card className={isFloating ? "border-0 shadow-none" : undefined}>
-        <CardHeader className={isFloating ? "py-3 px-0" : undefined}>
-          <CardTitle className={isFloating ? "text-base" : undefined}>
-            Video visit ({getTelemedicineProviderLabel(videoProviderId)})
-          </CardTitle>
-          <CardDescription className={isFloating ? "text-xs" : undefined}>
-            Patient: {session.patientFirstName} {session.patientLastName} • Status: {session.status}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className={`space-y-4 ${isFloating ? "px-0 pb-0" : ""}`}>
-          {!isFloating && (
-            <Alert>
-              <AlertTitle>How it works</AlertTitle>
-              <AlertDescription>
-                {isZoomProvider(videoProviderId) ? (
-                  <>
-                    For <strong>Zoom</strong>, new sessions can use your{" "}
-                    <Link href="/telemedicine/settings" className="underline font-medium">
-                      saved Zoom defaults
-                    </Link>{" "}
-                    when available. HMIS does not call vendor APIs—only stores the join link, optional passcode, consent, and audit.
-                  </>
-                ) : (
-                  <>
-                    Paste the <strong>{getTelemedicineProviderLabel(videoProviderId)}</strong> join link below. HMIS stores the link, optional
-                    passcode, consent, and audit. Vendor APIs are not integrated yet.
-                  </>
-                )}
-              </AlertDescription>
-            </Alert>
-          )}
-          {isFloating && (
-            <p className="text-xs text-muted-foreground">
-              Minimize this panel to browse charts or notes.
-              {isZoomProvider(videoProviderId) && (
-                <>
-                  {" "}
-                  <Link href="/telemedicine/settings" className="underline">
-                    Zoom defaults
-                  </Link>
-                </>
-              )}
-            </p>
-          )}
-
-          <div className={`space-y-3 rounded-lg border p-4 ${isFloating ? "p-3" : ""}`}>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <Label className={`font-semibold ${isFloating ? "text-sm" : "text-base"}`}>
-                {meetingLinkFieldLabel(videoProviderId)}
-              </Label>
-              <div className="flex flex-wrap gap-2">
-                {!isFloating && isZoomProvider(videoProviderId) && (
-                  <Button type="button" variant="secondary" size="sm" asChild>
-                    <Link href="/telemedicine/settings">My Zoom defaults</Link>
-                  </Button>
-                )}
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={handleApplyMyDefaults}
-                  disabled={loadingDefaults || !isZoomProvider(videoProviderId)}
-                  title={!isZoomProvider(videoProviderId) ? "Saved defaults apply to Zoom sessions only" : undefined}
-                >
-                  {loadingDefaults ? "Applying…" : "Apply my saved link"}
-                </Button>
-              </div>
-            </div>
-            <Input
-              placeholder={
-                isZoomProvider(videoProviderId)
-                  ? "https://zoom.us/j/… or https://us02web.zoom.us/j/…"
-                  : "https://… (paste the join link from your video app)"
-              }
-              value={zoomJoinUrl}
-              onChange={(e) => setZoomJoinUrl(e.target.value)}
-              className={isFloating ? "text-sm" : undefined}
-            />
-            <div className="space-y-1">
-              <Label className={isFloating ? "text-xs" : undefined}>Passcode (optional)</Label>
-              <Input
-                type="text"
-                autoComplete="off"
-                placeholder="If the meeting has a passcode, store it here for staff reference"
-                value={zoomPassword}
-                onChange={(e) => setZoomPassword(e.target.value)}
-                className={isFloating ? "text-sm" : undefined}
-              />
-            </div>
-            <Button type="button" variant="secondary" size={isFloating ? "sm" : "default"} onClick={handleSaveZoomLink} disabled={savingLink}>
-              {savingLink ? "Saving…" : "Save link"}
-            </Button>
-          </div>
-
-          <Alert className={isFloating ? "py-2" : undefined}>
-            <AlertTitle className={isFloating ? "text-sm" : undefined}>Minors</AlertTitle>
-            <AlertDescription className={isFloating ? "text-xs" : undefined}>
-              If the patient is under 18, capture guardian consent below before starting the teleconsultation.
-            </AlertDescription>
-          </Alert>
-
-          <div className="space-y-2">
-            <div className="flex items-start gap-3">
-              <Checkbox checked={patientConsentGranted} onCheckedChange={(v) => setPatientConsentGranted(!!v)} />
-              <div>
-                <Label className="font-semibold">Patient consent</Label>
-                <div className="text-sm text-muted-foreground">Consent for this teleconsultation and documentation in the medical record.</div>
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            {guardianConsentRequired ? (
-              <>
-                <div className="flex items-start gap-3">
-                  <Checkbox checked={guardianConsentGranted} onCheckedChange={(v) => setGuardianConsentGranted(!!v)} />
-                  <div>
-                    <Label className="font-semibold">Guardian consent (required)</Label>
-                    <div className="text-sm text-muted-foreground">Required because patient age is under 18.</div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2">
-                  <div className="space-y-1">
-                    <Label>Guardian name</Label>
-                    <Input value={guardianName} onChange={(e) => setGuardianName(e.target.value)} className={isFloating ? "text-sm h-8" : undefined} />
-                  </div>
-                  <div className="space-y-1">
-                    <Label>Guardian phone (optional)</Label>
-                    <Input value={guardianPhone} onChange={(e) => setGuardianPhone(e.target.value)} className={isFloating ? "text-sm h-8" : undefined} />
-                  </div>
-                  <div className="space-y-1 md:col-span-2">
-                    <Label>Relationship</Label>
-                    <Input
-                      value={guardianRelationship}
-                      onChange={(e) => setGuardianRelationship(e.target.value)}
-                      className={isFloating ? "text-sm h-8" : undefined}
-                    />
-                  </div>
-                </div>
-              </>
-            ) : (
-              <Alert variant="default" className={isFloating ? "py-2" : undefined}>
-                <AlertTitle className={isFloating ? "text-sm" : undefined}>No guardian consent needed</AlertTitle>
-                <AlertDescription className={isFloating ? "text-xs" : undefined}>Patient age is 18 or above.</AlertDescription>
-              </Alert>
-            )}
-          </div>
-
+  const meetingDetailsInner = (
+    <>
+      <div className={`space-y-3 rounded-lg border ${isFloating ? "p-3" : "p-4"}`}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <Label className={`font-semibold ${isFloating ? "text-sm" : "text-base"}`}>
+            {meetingLinkFieldLabel(videoProviderId)}
+          </Label>
           <div className="flex flex-wrap gap-2">
-            <Button size={isFloating ? "sm" : "default"} disabled={!canRecordConsent} onClick={handleRecordConsentAndStart}>
-              Record consent &amp; start session
-            </Button>
+            {!isFloating && isZoomProvider(videoProviderId) && (
+              <Button type="button" variant="secondary" size="sm" asChild>
+                <Link href="/telemedicine/settings">My Zoom defaults</Link>
+              </Button>
+            )}
             <Button
-              size={isFloating ? "sm" : "default"}
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleApplyMyDefaults}
+              disabled={loadingDefaults || !isZoomProvider(videoProviderId)}
+              title={!isZoomProvider(videoProviderId) ? "Saved defaults apply to Zoom sessions only" : undefined}
+            >
+              {loadingDefaults ? "Applying…" : "Apply my saved link"}
+            </Button>
+          </div>
+        </div>
+        <Input
+          placeholder={
+            isZoomProvider(videoProviderId)
+              ? "https://zoom.us/j/… or https://us02web.zoom.us/j/…"
+              : "https://… (paste the join link from your video app)"
+          }
+          value={zoomJoinUrl}
+          onChange={(e) => setZoomJoinUrl(e.target.value)}
+          className={isFloating ? "text-sm" : undefined}
+        />
+        <div className="space-y-1">
+          <Label className={isFloating ? "text-xs" : undefined}>Passcode (optional)</Label>
+          <Input
+            type="text"
+            autoComplete="off"
+            placeholder="If the meeting has a passcode, store it here for staff reference"
+            value={zoomPassword}
+            onChange={(e) => setZoomPassword(e.target.value)}
+            className={isFloating ? "text-sm" : undefined}
+          />
+        </div>
+        <Button type="button" variant="secondary" size={isFloating ? "sm" : "default"} onClick={handleSaveZoomLink} disabled={savingLink}>
+          {savingLink ? "Saving…" : "Save link"}
+        </Button>
+      </div>
+
+      <Collapsible open={consentSectionOpen} onOpenChange={setConsentSectionOpen}>
+        <CollapsibleTrigger asChild>
+          <Button
+            type="button"
+            variant="outline"
+            className={cn(
+              "flex h-8 w-full items-center justify-between font-normal text-sm",
+              consentSectionOpen && "rounded-b-none border-b-0"
+            )}
+          >
+            <span>Patient &amp; guardian consent</span>
+            <ChevronDown
+              className={cn("h-4 w-4 shrink-0 transition-transform duration-200", consentSectionOpen && "rotate-180")}
+            />
+          </Button>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="data-[state=closed]:animate-none">
+          <div className="space-y-4 rounded-b-md border border-t-0 p-3">
+            <p className={`text-muted-foreground ${isFloating ? "text-[10px]" : "text-xs"}`}>
+              Under 18: guardian consent required below. <TelemedicineHelpLink />
+            </p>
+
+            <div className="space-y-2">
+              <div className="flex items-start gap-3">
+                <Checkbox checked={patientConsentGranted} onCheckedChange={(v) => setPatientConsentGranted(!!v)} />
+                <div>
+                  <Label className="font-semibold">Patient consent</Label>
+                  <div className="text-sm text-muted-foreground">Consent for this teleconsultation and documentation in the medical record.</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              {guardianConsentRequired ? (
+                <>
+                  <div className="flex items-start gap-3">
+                    <Checkbox checked={guardianConsentGranted} onCheckedChange={(v) => setGuardianConsentGranted(!!v)} />
+                    <div>
+                      <Label className="font-semibold">Guardian consent (required)</Label>
+                      <div className="text-sm text-muted-foreground">Required because patient age is under 18.</div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3 pt-2 md:grid-cols-2">
+                    <div className="space-y-1">
+                      <Label>Guardian name</Label>
+                      <Input value={guardianName} onChange={(e) => setGuardianName(e.target.value)} className={isFloating ? "h-8 text-sm" : undefined} />
+                    </div>
+                    <div className="space-y-1">
+                      <Label>Guardian phone (optional)</Label>
+                      <Input value={guardianPhone} onChange={(e) => setGuardianPhone(e.target.value)} className={isFloating ? "h-8 text-sm" : undefined} />
+                    </div>
+                    <div className="space-y-1 md:col-span-2">
+                      <Label>Relationship</Label>
+                      <Input
+                        value={guardianRelationship}
+                        onChange={(e) => setGuardianRelationship(e.target.value)}
+                        className={isFloating ? "h-8 text-sm" : undefined}
+                      />
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <p className={`text-muted-foreground ${isFloating ? "text-[10px]" : "text-xs"}`}>Adult patient — no guardian consent.</p>
+              )}
+            </div>
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
+
+      <div className="flex flex-wrap gap-2">
+        <Button size={isFloating ? "sm" : "default"} disabled={!canRecordConsent} onClick={handleRecordConsentAndStart}>
+          Record consent &amp; start session
+        </Button>
+        {!isFloating && (
+          <>
+            <Button
+              size="default"
               variant="outline"
               onClick={handleOpenZoom}
               disabled={!hasLink}
@@ -575,82 +584,196 @@ export function TelemedicineSessionPanel({
             >
               {openMeetingButtonLabel(videoProviderId)}
             </Button>
-            <Button size={isFloating ? "sm" : "default"} variant="outline" onClick={handleEndSession} disabled={session.status === "ended"}>
+            <Button size="default" variant="outline" onClick={handleEndSession} disabled={session.status === "ended"}>
               End session
             </Button>
-          </div>
+          </>
+        )}
+      </div>
+    </>
+  )
 
-          {isZoomProvider(videoProviderId) && sdkEmbedConfigured && hasLink && (
-            <div className={`space-y-2 rounded-lg border border-dashed border-primary/25 bg-muted/20 ${isFloating ? "p-2" : "p-3"}`}>
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className={`font-semibold ${isFloating ? "text-xs" : "text-sm"}`}>Embedded video (same window)</span>
-                <Button
-                  type="button"
-                  variant={showEmbeddedZoom ? "secondary" : "default"}
-                  size="sm"
-                  className={isFloating ? "h-8 text-xs" : undefined}
-                  onClick={() => setShowEmbeddedZoom((v) => !v)}
-                >
-                  {showEmbeddedZoom ? "Hide embedded video" : "Show video in panel"}
-                </Button>
-              </div>
-              <p className={`text-muted-foreground ${isFloating ? "text-[10px] leading-snug" : "text-xs"}`}>
-                Zoom Meeting SDK Component View — video renders in the box below. Use a join URL with{" "}
-                <code className="rounded bg-background px-0.5">/j/</code> + meeting number. Optional: set{" "}
-                <code className="rounded bg-background px-0.5">ENABLE_ZOOM_COEP_HEADERS=true</code> at build time for better gallery
-                performance (see Next config).
-              </p>
-              {showEmbeddedZoom && <ZoomEmbeddedMeeting sessionId={sessionId} compact={isFloating} />}
-            </div>
+  return (
+    <div className={wrapperClass}>
+      <Card className={isFloating ? "border-0 shadow-none" : undefined}>
+        <CardHeader className={isFloating ? "px-0 py-2 pb-1" : undefined}>
+          {isFloating ? (
+            <CardTitle className="text-sm font-medium">Video visit</CardTitle>
+          ) : (
+            <>
+              <CardTitle>Video visit ({getTelemedicineProviderLabel(videoProviderId)})</CardTitle>
+              <CardDescription>
+                Patient: {session.patientFirstName} {session.patientLastName} • Status: {session.status}
+              </CardDescription>
+            </>
           )}
+        </CardHeader>
+        <CardContent className={`space-y-4 ${isFloating ? "px-0 pb-0" : ""}`}>
+          {isFloating ? (
+            <>
+              {session.status === "ended" && (
+                <Alert className="border-amber-200 bg-amber-50 py-2 dark:border-amber-900 dark:bg-amber-950/40">
+                  <AlertTitle className="text-sm">Session ended</AlertTitle>
+                  <AlertDescription className="text-xs">
+                    This teleconsultation is closed and in-page video has been stopped. You can close the panel when you are done.
+                  </AlertDescription>
+                </Alert>
+              )}
 
-          {isZoomProvider(videoProviderId) && sdkEmbedConfigured === false && hasLink && (
-            <p className={`text-muted-foreground ${isFloating ? "text-[10px]" : "text-xs"}`}>
-              Embedded video: add <code className="rounded bg-muted px-0.5">ZOOM_MEETING_SDK_KEY</code> and{" "}
-              <code className="rounded bg-muted px-0.5">ZOOM_MEETING_SDK_SECRET</code> to the API server (Zoom Marketplace → Meeting SDK
-              app) to show Zoom inside HMIS. You can still use the button above to open Zoom in a new window.
-            </p>
-          )}
-
-          {isFloating && floatingZoomOpenUrl && (
-            <div className="space-y-2 rounded-lg border bg-muted/30 p-3">
-              <p className="text-xs text-muted-foreground leading-snug">
-                Many providers block embedding. The meeting opens in a{" "}
-                <strong>separate window</strong> so you can keep this panel open.
-              </p>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  className="h-8 text-xs"
-                  onClick={() => {
-                    const w = openZoomMeetingPopup(floatingZoomOpenUrl, sessionId)
-                    if (!w) {
-                      toast({
-                        title: "Popup blocked",
-                        description: "Allow popups for this site, or use “Open in new tab” below.",
-                        variant: "destructive",
-                      })
-                    }
-                  }}
-                >
-                  Open meeting window
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-8 text-xs"
-                  onClick={() => window.open(floatingZoomOpenUrl, "_blank", "noopener,noreferrer")}
-                >
-                  Open in new tab
-                </Button>
-                <Button type="button" variant="ghost" size="sm" className="h-8 text-xs" onClick={() => setFloatingZoomOpenUrl(null)}>
-                  Dismiss
-                </Button>
+              <div className="flex flex-col gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="min-w-0 flex-1 truncate text-xs">
+                    <span className="font-medium">
+                      {session.patientFirstName} {session.patientLastName}
+                    </span>
+                    <Badge variant="outline" className="ml-2 align-middle text-[10px] font-normal">
+                      {session.status}
+                    </Badge>
+                  </div>
+                  <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
+                    {hasLink && session.status !== "ended" && (
+                      <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={handleOpenZoom}>
+                        Open in browser
+                      </Button>
+                    )}
+                    {isZoomProvider(videoProviderId) && sdkEmbedConfigured && hasLink && session.status !== "ended" && (
+                      <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => setShowEmbeddedZoom((v) => !v)}>
+                        {showEmbeddedZoom ? "Hide video" : "Show video"}
+                      </Button>
+                    )}
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      className="h-8 text-xs"
+                      onClick={handleEndSession}
+                      disabled={session.status === "ended"}
+                    >
+                      End session
+                    </Button>
+                  </div>
+                </div>
+                <div className="flex flex-wrap justify-end gap-x-2 text-[10px] text-muted-foreground">
+                  {isZoomProvider(videoProviderId) && (
+                    <Link href="/telemedicine/settings" className="underline">
+                      Zoom defaults
+                    </Link>
+                  )}
+                  <TelemedicineHelpLink />
+                </div>
               </div>
-            </div>
+
+              {isZoomProvider(videoProviderId) && sdkEmbedConfigured && hasLink && showEmbeddedZoom && session.status !== "ended" && (
+                <div className="min-h-[200px]">
+                  <ZoomEmbeddedMeeting sessionId={sessionId} compact />
+                </div>
+              )}
+
+              <Collapsible open={meetingDetailsOpen} onOpenChange={setMeetingDetailsOpen}>
+                <CollapsibleTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className={cn(
+                      "flex h-9 w-full items-center justify-between font-normal text-sm",
+                      meetingDetailsOpen && "rounded-b-none border-b-0"
+                    )}
+                  >
+                    <span>Meeting link &amp; consent</span>
+                    <ChevronDown
+                      className={cn("h-4 w-4 shrink-0 transition-transform duration-200", meetingDetailsOpen && "rotate-180")}
+                    />
+                  </Button>
+                </CollapsibleTrigger>
+                <CollapsibleContent className="data-[state=closed]:animate-none">
+                  <div className="space-y-4 rounded-b-md border border-t-0 p-3">{meetingDetailsInner}</div>
+                </CollapsibleContent>
+              </Collapsible>
+
+              {isZoomProvider(videoProviderId) && sdkEmbedConfigured === false && hasLink && (
+                <p className="flex flex-wrap items-center gap-x-2 text-[10px] text-muted-foreground">
+                  <span>In-page video needs API Meeting SDK credentials.</span>
+                  <TelemedicineHelpLink />
+                </p>
+              )}
+
+              {floatingZoomOpenUrl && (
+                <div className="space-y-2 rounded-lg border bg-muted/30 p-3">
+                  <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground leading-snug">
+                    <span>Meeting may open in a separate window.</span>
+                    <TelemedicineHelpLink />
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className="h-8 text-xs"
+                      onClick={() => {
+                        const w = openZoomMeetingPopup(floatingZoomOpenUrl, sessionId)
+                        if (!w) {
+                          toast({
+                            title: "Popup blocked",
+                            description: "Allow popups for this site, or use “Open in new tab” below.",
+                            variant: "destructive",
+                          })
+                        }
+                      }}
+                    >
+                      Open meeting window
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8 text-xs"
+                      onClick={() => window.open(floatingZoomOpenUrl, "_blank", "noopener,noreferrer")}
+                    >
+                      Open in new tab
+                    </Button>
+                    <Button type="button" variant="ghost" size="sm" className="h-8 text-xs" onClick={() => setFloatingZoomOpenUrl(null)}>
+                      Dismiss
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <div className="flex justify-end">
+                <TelemedicineHelpLink />
+              </div>
+              {meetingDetailsInner}
+
+              {isZoomProvider(videoProviderId) && sdkEmbedConfigured && hasLink && (
+                <div className="space-y-2 rounded-lg border border-dashed border-primary/25 bg-muted/20 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-sm font-semibold">Meeting video</span>
+                    <Button
+                      type="button"
+                      variant={showEmbeddedZoom ? "secondary" : "default"}
+                      size="sm"
+                      onClick={() => setShowEmbeddedZoom((v) => !v)}
+                    >
+                      {showEmbeddedZoom ? "Hide video" : "Show video in page"}
+                    </Button>
+                  </div>
+                  <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                    <span>
+                      In-page Zoom (SDK). Standard <code className="rounded bg-background px-0.5">/j/</code> join URLs.
+                    </span>
+                    <TelemedicineHelpLink />
+                  </p>
+                  {showEmbeddedZoom && <ZoomEmbeddedMeeting sessionId={sessionId} compact={false} />}
+                </div>
+              )}
+
+              {isZoomProvider(videoProviderId) && sdkEmbedConfigured === false && hasLink && (
+                <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                  <span>In-page video needs API Meeting SDK credentials.</span>
+                  <TelemedicineHelpLink />
+                </p>
+              )}
+            </>
           )}
         </CardContent>
       </Card>

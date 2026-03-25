@@ -3,6 +3,7 @@
 import { useState, useMemo, Suspense, useEffect, useCallback, useRef, startTransition } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
 import { MoreHorizontal, FileText, PlayCircle, Stethoscope, Pill, Scan, ClipboardList, Video, ChevronDown } from "lucide-react"
@@ -556,7 +557,11 @@ function QueueContent({
             },
       )
       if (created?.sessionId) {
-        openTelemedicineFloating(created.sessionId)
+        const patientDisplayName =
+          entry.patientFirstName && entry.patientLastName
+            ? `${entry.patientFirstName} ${entry.patientLastName}`.trim()
+            : undefined
+        openTelemedicineFloating(created.sessionId, { patientId, patientDisplayName })
         toast(
           telemedicineCreateToast(created, {
             title: "Telemedicine session ready",
