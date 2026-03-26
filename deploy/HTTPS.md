@@ -1,84 +1,67 @@
-# HTTPS with Docker nginx + Let’s Encrypt
+# HTTPS for production (Docker nginx)
 
-Your app is served by **`kiplombe_nginx`** (Docker), not by `apt install nginx`. The **`python3-certbot-nginx`** plugin only edits **host** nginx configs — use **`certbot certonly --webroot`** instead, with the webroot path shared with the container.
+The app is served by **`kiplombe_nginx`**. Two options:
 
-## 1. Avoid port 80 conflict
+1. **Self-signed** — works with **IP only** (e.g. `41.89.173.8`). Browsers show a **warning** until you proceed or trust the cert.
+2. **Let’s Encrypt** — needs a **DNS hostname** (not a bare IP). Use when you have a domain.
 
-If the **system** nginx service is enabled, it can fight Docker for port 80:
+---
 
-```bash
-sudo systemctl disable --now nginx
-```
+## A) Self-signed (no website / no domain yet)
 
-(You can keep the `certbot` and `python3-certbot-nginx` packages; only the **nginx** service needs to stay off while Docker owns `:80`.)
-
-## 2. DNS
-
-Point your **hostname** (e.g. `hmis.example.org`) **A record** to `41.89.173.8`. Let’s Encrypt does not issue normal certs for bare IPs.
-
-## 3. Webroot on disk
-
-From the repo directory on the server (adjust path):
+On the **server**, from the repo (e.g. `~/kiplombe-hmis`):
 
 ```bash
-mkdir -p deploy/certbot/www
+# Ensure stack is up (nginx must mount deploy/ssl)
+docker compose -f docker-compose.deploy.yml up -d
+
+bash deploy/setup-https-selfsigned.sh
+# Or pass your public IP explicitly:
+bash deploy/setup-https-selfsigned.sh 41.89.173.8
 ```
 
-This repo mounts `deploy/certbot/www` → `/var/www/certbot` in `docker-compose.deploy.yml` so ACME challenges are served by **container** nginx.
-
-Redeploy / recreate nginx so the volume is mounted:
+Optional — redirect `http://41.89.173.8/...` to HTTPS (same IP in the cert):
 
 ```bash
-docker compose -f docker-compose.deploy.yml up -d nginx
+bash deploy/setup-https-selfsigned.sh 41.89.173.8 --redirect
 ```
 
-## 4. Issue the certificate
+Then set in **`~/kiplombe-hmis/.env`** (use your IP):
+
+```env
+FRONTEND_URL=https://41.89.173.8
+NEXT_PUBLIC_BASE_URL=https://41.89.173.8
+```
+
+Restart API + frontend:
 
 ```bash
-sudo certbot certonly --webroot \
-  -w /full/path/to/kiplombehmis/deploy/certbot/www \
-  -d your.hostname.org \
-  --email you@example.org \
-  --agree-tos --non-interactive
+docker compose -f docker-compose.deploy.yml up -d api frontend
 ```
 
-Replace paths and domain. Certbot writes into `/etc/letsencrypt/live/your.hostname.org/`.
+**Browser:** open `https://41.89.173.8` → “Advanced” / “Proceed” (or import `deploy/ssl/fullchain.pem` into your OS trust store).  
+**Zoom / media:** same **secure context** rules as HTTPS — better than plain HTTP on a LAN IP.
 
-## 5. Enable TLS in Docker nginx
+Certs live in **`deploy/ssl/`** (gitignored). Regenerate anytime by running the script again.
 
-1. **Mount** Let’s Encrypt into the nginx container (read-only) — see `docker-compose.deploy.yml` comments for `certificates:` volume.
-2. **Edit** `deploy/nginx.conf`:
-   - Set `server_name your.hostname.org;` on the `:80` server (instead of `_`).
-   - Add a second `server { listen 443 ssl http2; ... }` block with:
-     - `ssl_certificate /etc/letsencrypt/live/your.hostname.org/fullchain.pem;`
-     - `ssl_certificate_key /etc/letsencrypt/live/your.hostname.org/privkey.pem;`
-   - (Optional) On `:80`, redirect to HTTPS: `return 301 https://$host$request_uri;` for locations **except** `/.well-known/acme-challenge/` (keep the ACME `location` block first).
+---
 
-3. **Publish** 443 in Compose: `443:443` on the `nginx` service.
+## B) Let’s Encrypt (when you have a domain)
 
-4. **Open** TCP **443** in your cloud firewall / security group if needed.
-
-5. Reload:
+Let’s Encrypt **does not** issue certs for a bare IP — you need a hostname with an **A record** to the server.
 
 ```bash
-docker compose -f docker-compose.deploy.yml up -d nginx
-docker exec kiplombe_nginx nginx -t && docker exec kiplombe_nginx nginx -s reload
+sudo apt update && sudo apt install -y certbot
+sudo bash deploy/setup-https.sh your.hostname.org admin@your.org
+# optional:  ... --redirect
 ```
 
-## 6. Renewals
+See comments inside `deploy/setup-https.sh` and use **`FRONTEND_URL=https://your.hostname.org`**.
 
-Certbot renews with `certbot renew`. After renewal, **reload** nginx so it picks up new certs:
+---
 
-```bash
-sudo certbot renew --deploy-hook "docker exec kiplombe_nginx nginx -s reload"
-```
+## Other notes
 
-Or a weekly cron:
-
-```cron
-0 3 * * * certbot renew --quiet --deploy-hook "docker exec kiplombe_nginx nginx -s reload"
-```
-
-## 7. App env
-
-Set `FRONTEND_URL`, `NEXT_PUBLIC_BASE_URL`, and CORS-related vars to `https://your.hostname.org` (not `http://41.89.173.8`).
+- **Port 443** must be open in the firewall / cloud security group.
+- If **host** `nginx` (systemd) uses port 80, stop it: `sudo systemctl disable --now nginx` while Docker serves the app.
+- **Renewal** applies only to Let’s Encrypt; self-signed certs are long-lived (script uses 825 days).

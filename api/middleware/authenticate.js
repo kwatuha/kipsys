@@ -1,6 +1,5 @@
 // Authentication middleware
 const jwt = require('jsonwebtoken');
-require('dotenv').config();
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your_fallback_secret_for_dev_only_change_this_asap';
 

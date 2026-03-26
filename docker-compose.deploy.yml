@@ -49,8 +49,10 @@ services:
     depends_on:
       mysql_db:
         condition: service_healthy
-    # Same as dev docker-compose.yml: load secrets (JWT, Zoom Meeting SDK, etc.) from project .env on the server.
-    # Without this, ZOOM_CLIENT_ID / ZOOM_CLIENT_SECRET never reach the API container and embedded Zoom stays hidden.
+    # Load secrets (JWT, Zoom Meeting SDK, DB_*, etc.). Use project root `.env` next to this compose file,
+    # or add another line: `- /path/on/server/.env` — Docker merges multiple env_file entries.
+    # The API also reads `api/.env` and repo root `.env` at runtime via `api/config/load-env.js` when not set in the container.
+    # Force one file: set `API_ENV_FILE` in the container or on the host before compose.
     env_file:
       - .env
     environment:
@@ -95,6 +97,9 @@ services:
     restart: unless-stopped
     expose:
       - "3000"
+    # Same `.env` as API so NEXT_PUBLIC_* and other vars are available (Compose also interpolates ${VAR} from .env).
+    env_file:
+      - .env
     environment:
       NODE_ENV: production
       # Runtime env var (for server-side rendering and build)
@@ -128,14 +133,17 @@ services:
     restart: unless-stopped
     ports:
       - "${NGINX_PORT:-80}:80"
-      # After TLS is configured in deploy/nginx.conf, publish HTTPS:
-      # - "443:443"
+      - "443:443"
     volumes:
       - ./deploy/nginx.conf:/etc/nginx/nginx.conf:ro
-      # Shared with host: sudo certbot certonly --webroot -w ./deploy/certbot/www -d your.domain
+      # ACME HTTP-01 + optional TLS snippets (see deploy/setup-https.sh, deploy/HTTPS.md)
       - ./deploy/certbot/www:/var/www/certbot
-      # After certificates exist, mount Let’s Encrypt (read-only) for ssl_certificate paths:
-      # - /etc/letsencrypt:/etc/letsencrypt:ro
+      - ./deploy/nginx-https.conf:/etc/nginx/snippets/kiplombe-https.conf:ro
+      - ./deploy/nginx-http-redirect.conf:/etc/nginx/snippets/kiplombe-http-redirect.conf:ro
+      # Self-signed certs from deploy/setup-https-selfsigned.sh (fullchain.pem + privkey.pem)
+      - ./deploy/ssl:/etc/nginx/ssl:ro
+      # Optional: Let’s Encrypt when you have a domain (deploy/setup-https.sh). Safe if empty.
+      - /etc/letsencrypt:/etc/letsencrypt:ro
       - nginx_cache:/var/cache/nginx
       - nginx_logs:/var/log/nginx
     depends_on:

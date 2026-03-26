@@ -67,3 +67,7 @@ logs/
 # Uploads and temporary files
 /api/uploads/*
 !/api/uploads/.gitkeep
+
+# Self-signed TLS (deploy/setup-https-selfsigned.sh) — never commit keys
+deploy/ssl/*.pem
+deploy/ssl/*.key

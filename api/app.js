@@ -1,7 +1,7 @@
+require('./config/load-env');
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-require('dotenv').config();
 
 // Import route groups
 const authRoutes = require('./routes/authRoutes');

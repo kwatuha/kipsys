@@ -469,6 +469,12 @@ export function ZoomEmbeddedMeeting({ sessionId, compact, className }: ZoomEmbed
         if (!data?.signature || data.meetingNumber == null || String(data.meetingNumber).trim() === "") {
           throw new Error("Invalid Zoom SDK signature response from server (missing signature or meeting number).")
         }
+        const sdkKeyFromApi = data.sdkKey != null && String(data.sdkKey).trim() !== "" ? String(data.sdkKey).trim() : ""
+        if (!sdkKeyFromApi) {
+          throw new Error(
+            "Meeting SDK join is missing sdkKey from the API. Ensure POST /zoom-sdk-signature returns sdkKey (Meeting SDK credentials on the API server).",
+          )
+        }
 
         const client = zoomEmbedded.createClient()
         clientRef.current = client
@@ -489,6 +495,13 @@ export function ZoomEmbeddedMeeting({ sessionId, compact, className }: ZoomEmbed
 
         const { width: viewW, height: viewH } = viewSizesForSdk(el, compactRef.current)
 
+        // Zoom 5.x minified code uses `in` on nested customize.* objects; missing keys must be objects, not undefined.
+        if (typeof window !== "undefined" && (!window.React || !window.ReactDOM)) {
+          throw new Error(
+            "Zoom Meeting SDK needs React 18 globals from /vendor/zoom-react18.min.js — scripts missing or blocked (check nginx serves public/vendor, CSP, and HTTPS).",
+          )
+        }
+
         await withTimeout(
           client.init({
             zoomAppRoot: el,
@@ -499,6 +512,7 @@ export function ZoomEmbeddedMeeting({ sessionId, compact, className }: ZoomEmbed
             /**
              * Size the component view; height leaves room for the bottom toolbar inside the root.
              * `updateVideoOptions` + ResizeObserver keep this in sync after resize / “Larger video”.
+             * Include empty objects for optional customize branches so SDK never does `prop in undefined`.
              */
             customize: {
               video: {
@@ -509,6 +523,15 @@ export function ZoomEmbeddedMeeting({ sessionId, compact, className }: ZoomEmbed
                   ribbon: { width: viewW, height: viewH },
                 },
               },
+              toolbar: {},
+              meeting: {},
+              chat: {},
+              setting: {},
+              participants: {},
+              invite: {},
+              callMe: {},
+              activeApps: {},
+              sharing: {},
             },
           }),
           ZOOM_INIT_TIMEOUT_MS,
@@ -517,7 +540,7 @@ export function ZoomEmbeddedMeeting({ sessionId, compact, className }: ZoomEmbed
         if (stale()) return
 
         const joinPayload: Record<string, unknown> = {
-          ...(data.sdkKey ? { sdkKey: String(data.sdkKey) } : {}),
+          sdkKey: sdkKeyFromApi,
           signature: String(data.signature),
           meetingNumber: String(data.meetingNumber),
           password: data.password != null ? String(data.password) : "",

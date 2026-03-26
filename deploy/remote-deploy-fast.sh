@@ -72,6 +72,8 @@ if [ "$DRY_RUN" = "1" ]; then
         --exclude 'mobile' \
         --exclude 'api/database/dumps' \
         --exclude '**/.git' \
+        --exclude 'deploy/ssl/*.pem' \
+        --exclude 'deploy/ssl/*.key' \
         ./ "${SSH_USER}@${SERVER_IP}:~/${REMOTE_DIR}/"
     exit 0
 fi
@@ -135,6 +137,8 @@ rsync -avz \
     --exclude 'mobile' \
     --exclude 'api/database/dumps' \
     --exclude '**/.git' \
+    --exclude 'deploy/ssl/*.pem' \
+    --exclude 'deploy/ssl/*.key' \
     ./ "${SSH_USER}@${SERVER_IP}:~/${REMOTE_DIR}/"
 
 echo -e "${GREEN}✓ rsync complete${NC}"

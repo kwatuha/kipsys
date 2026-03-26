@@ -12,7 +12,7 @@
 const mysql = require('mysql2/promise');
 const fs = require('fs');
 const path = require('path');
-require('dotenv').config({ path: path.join(__dirname, '../.env') });
+require('../config/load-env');
 
 async function run() {
   let connection;
